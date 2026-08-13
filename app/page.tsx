@@ -314,11 +314,12 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               <strong style={{ color: "var(--text-dim)" }}>How weights work</strong>
             </div>
             <div>
-              Due today or later: <code>1 / (days away + 1)</code> — today 1, tomorrow
-              1/2, day after 1/3.
+              Due tomorrow or later: <code>1 / days away</code> — tomorrow 1, day after
+              1/2, in 3 days 1/3.
             </div>
             <div>
-              Overdue: <code>days between + 2</code> — yesterday 2, day before 3.
+              Due today or overdue: <code>2 + days overdue</code> — today 2, yesterday 3,
+              day before 4.
             </div>
             <div>
               Completed: <code>0</code>. Hidden <code>Rest</code> task: always{" "}

@@ -6,22 +6,20 @@ export const REST_WEIGHT = 1 / 7;
 export const REST_LABEL = "Rest";
 
 /**
- * A task's pull on the recommender.
+ * A task's pull on the recommender, where `n` is the number of days until it is
+ * due (negative once it is overdue).
  *
- *   due today or later  ->  1 / (days until due + 1)
- *                           today = 1, tomorrow = 1/2, day after = 1/3 ...
- *   overdue             ->  days strictly between the two dates + 2
- *                           yesterday = 2, day before = 3, ...
- *   completed           ->  0, so it can never be drawn again
+ *   due tomorrow or later  ->  1 / n
+ *                              tomorrow = 1, day after = 1/2, in 3 days = 1/3 ...
+ *   due today or overdue   ->  2 - n
+ *                              today = 2, yesterday = 3, day before = 4, ...
+ *   completed              ->  0, so it can never be drawn again
  */
 export function taskWeight(task: Task, today: DateKey = todayKey()): number {
   if (task.completed) return 0;
 
-  const delta = diffDays(task.dueDate, today);
-  if (delta >= 0) return 1 / (delta + 1);
-
-  const daysBetween = -delta - 1;
-  return daysBetween + 2;
+  const n = diffDays(task.dueDate, today);
+  return n >= 1 ? 1 / n : 2 - n;
 }
 
 export type WeightedTask = {

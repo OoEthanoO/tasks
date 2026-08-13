@@ -49,19 +49,24 @@ always override the date by hand in the details section or by editing the task.
 
 ## Weights
 
+With `n` = days until due (negative once overdue):
+
 | Situation | Weight |
 | --- | --- |
-| Due today | `1` |
-| Due tomorrow | `1/2` |
-| Due `n` days out | `1 / (n + 1)` |
-| Due yesterday | `2` |
-| Due `n` days ago | `n + 1` |
+| Due tomorrow | `1` |
+| Due the day after tomorrow | `1/2` |
+| Due in `n` days | `1 / n` |
+| Due today | `2` |
+| Due yesterday | `3` |
+| Due `d` days ago | `d + 2` |
 | Completed | `0` |
+
+In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
 
 There is a hidden task called **Rest** permanently in the pool at a weight of
 `1/7`. It is never listed and cannot be completed, but it competes for every
-draw — one task due today gives a total weight of `8/7`, so that task has a
-`7/8` = 87.5% chance and Rest takes the remaining 12.5%.
+draw — one task due today gives a total weight of `2 + 1/7 = 15/7`, so that task
+has a `14/15` = 93.3% chance and Rest takes the remaining 6.7%.
 
 Each task row shows its own percentage, which is its weight over the total
 including Rest. Completing a task zeroes its weight, so it can never be drawn

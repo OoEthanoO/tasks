@@ -97,24 +97,35 @@ const mk = (offset, completed = false) => ({
   createdAt: "",
   completedAt: null,
 });
-eq(taskWeight(mk(0), today), 1, "due today -> 1");
-eq(taskWeight(mk(1), today), 1 / 2, "tomorrow -> 1/2");
-eq(taskWeight(mk(2), today), 1 / 3, "day after -> 1/3");
-eq(taskWeight(mk(6), today), 1 / 7, "6 days out -> 1/7");
-eq(taskWeight(mk(-1), today), 2, "yesterday -> 2");
-eq(taskWeight(mk(-2), today), 3, "day before yesterday -> 3");
-eq(taskWeight(mk(-5), today), 6, "5 days overdue -> 6");
+eq(taskWeight(mk(0), today), 2, "due today -> 2");
+eq(taskWeight(mk(1), today), 1, "tomorrow -> 1");
+eq(taskWeight(mk(2), today), 1 / 2, "day after -> 1/2");
+eq(taskWeight(mk(3), today), 1 / 3, "in 3 days -> 1/3");
+eq(taskWeight(mk(7), today), 1 / 7, "7 days out -> 1/7");
+eq(taskWeight(mk(-1), today), 3, "yesterday -> 3");
+eq(taskWeight(mk(-2), today), 4, "day before yesterday -> 4");
+eq(taskWeight(mk(-5), today), 7, "5 days overdue -> 7");
 eq(taskWeight(mk(0, true), today), 0, "completed -> 0");
+
+// Strictly decreasing as the due date moves further out.
+let prev = Infinity;
+let monotonic = true;
+for (let n = -5; n <= 10; n++) {
+  const w = taskWeight(mk(n), today);
+  if (w >= prev) monotonic = false;
+  prev = w;
+}
+eq(monotonic, true, "weight strictly decreases from overdue through future");
 
 console.log("== probability with hidden Rest ==");
 const one = buildWeightTable([mk(0)], today);
-eq(one.total, 1 + 1 / 7, "one task due today: total = 8/7");
-eq(one.entries[0].probability.toFixed(4), (7 / 8).toFixed(4), "task = 7/8 = 87.5%");
-eq(one.restProbability.toFixed(4), (1 / 8).toFixed(4), "rest = 1/8 = 12.5%");
+eq(one.total, 2 + 1 / 7, "one task due today: total = 15/7");
+eq(one.entries[0].probability.toFixed(4), (14 / 15).toFixed(4), "task = 14/15 = 93.3%");
+eq(one.restProbability.toFixed(4), (1 / 15).toFixed(4), "rest = 1/15 = 6.7%");
 
 const mixed = buildWeightTable([mk(0), mk(1), mk(-1)], today);
-eq(mixed.taskTotal, 1 + 0.5 + 2, "weights sum");
-eq(mixed.total.toFixed(6), (3.5 + 1 / 7).toFixed(6), "total includes rest");
+eq(mixed.taskTotal, 2 + 1 + 3, "weights sum");
+eq(mixed.total.toFixed(6), (6 + 1 / 7).toFixed(6), "total includes rest");
 
 const empty = buildWeightTable([], today);
 eq(empty.total, REST_WEIGHT, "no tasks -> only rest");
@@ -132,7 +143,11 @@ function pickWeightedOnce(table) {
   return null;
 }
 const restPct = rest / 10000;
-eq(Math.abs(restPct - 0.125) < 0.015, true, `rest drawn ${(restPct * 100).toFixed(1)}% (expect ~12.5%)`);
+eq(
+  Math.abs(restPct - 1 / 15) < 0.012,
+  true,
+  `rest drawn ${(restPct * 100).toFixed(1)}% (expect ~6.7%)`,
+);
 
 console.log("== schedule blocks ==");
 const blocks = buildBlockTimes(NOW, "23:00");
