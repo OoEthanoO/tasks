@@ -1,25 +1,35 @@
 import { DateKey, diffDays, todayKey } from "./dates";
 import { Task } from "./types";
 
-/** The hidden "Rest" task is always in the pool at a fixed weight. */
-export const REST_WEIGHT = 1 / 7;
-export const REST_LABEL = "Rest";
-
 /**
- * A task's pull on the recommender, where `n` is the number of days until it is
- * due (negative once it is overdue).
+ * The weight curve, where `n` is the number of days until a task is due
+ * (negative once it is overdue).
  *
  *   due tomorrow or later  ->  1 / n
  *                              tomorrow = 1, day after = 1/2, in 3 days = 1/3 ...
  *   due today or overdue   ->  2 - n
  *                              today = 2, yesterday = 3, day before = 4, ...
- *   completed              ->  0, so it can never be drawn again
  */
+export function weightForDaysOut(n: number): number {
+  return n >= 1 ? 1 / n : 2 - n;
+}
+
+/**
+ * The hidden "Rest" task sits in the pool permanently, weighted the same as one
+ * task due tomorrow — in effect an extra tomorrow-task that never gets crossed
+ * off. Because it is a constant while the task pile is not, its share shrinks
+ * as work accumulates and grows back as you complete things.
+ *
+ * Deriving it from the curve rather than hardcoding a number keeps that meaning
+ * intact if the curve is ever retuned.
+ */
+export const REST_WEIGHT = weightForDaysOut(1);
+export const REST_LABEL = "Rest";
+
+/** A task's pull on the recommender. Completed tasks weigh 0 and never win. */
 export function taskWeight(task: Task, today: DateKey = todayKey()): number {
   if (task.completed) return 0;
-
-  const n = diffDays(task.dueDate, today);
-  return n >= 1 ? 1 / n : 2 - n;
+  return weightForDaysOut(diffDays(task.dueDate, today));
 }
 
 export type WeightedTask = {
@@ -54,7 +64,7 @@ export function buildWeightTable(
 
 /**
  * Draw one task proportional to its weight. Returns null when Rest wins.
- * Rest occupies its 1/7 slice of the wheel whether or not anything else does.
+ * Rest occupies its slice of the wheel whether or not anything else does.
  */
 export function pickWeighted(table: WeightTable): Task | null {
   let roll = Math.random() * table.total;

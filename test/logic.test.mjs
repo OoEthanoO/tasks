@@ -118,14 +118,37 @@ for (let n = -5; n <= 10; n++) {
 eq(monotonic, true, "weight strictly decreases from overdue through future");
 
 console.log("== probability with hidden Rest ==");
+eq(REST_WEIGHT, 1, "rest weighs the same as a task due tomorrow");
+eq(REST_WEIGHT, taskWeight(mk(1), today), "rest is pinned to the curve, not a literal");
+
 const one = buildWeightTable([mk(0)], today);
-eq(one.total, 2 + 1 / 7, "one task due today: total = 15/7");
-eq(one.entries[0].probability.toFixed(4), (14 / 15).toFixed(4), "task = 14/15 = 93.3%");
-eq(one.restProbability.toFixed(4), (1 / 15).toFixed(4), "rest = 1/15 = 6.7%");
+eq(one.total, 3, "one task due today: total = 3");
+eq(one.entries[0].probability.toFixed(4), (2 / 3).toFixed(4), "task = 2/3 = 66.7%");
+eq(one.restProbability.toFixed(4), (1 / 3).toFixed(4), "rest = 1/3 = 33.3%");
 
 const mixed = buildWeightTable([mk(0), mk(1), mk(-1)], today);
 eq(mixed.taskTotal, 2 + 1 + 3, "weights sum");
-eq(mixed.total.toFixed(6), (6 + 1 / 7).toFixed(6), "total includes rest");
+eq(mixed.total, 7, "total includes rest");
+
+// Rest is constant, so its share must fall as work piles up and recover as
+// tasks get completed. That trade-off is the whole point of a fixed weight.
+const shares = [[1], [0], [0, 0], [0, 0, 0]].map(
+  (ds) => buildWeightTable(ds.map((d, i) => ({ ...mk(d), id: `s${i}` })), today).restProbability,
+);
+eq(shares.map((s) => (s * 100).toFixed(1)), ["50.0", "33.3", "20.0", "14.3"], "rest share shrinks as the plate fills");
+eq(
+  shares.every((s, i) => i === 0 || s < shares[i - 1]),
+  true,
+  "strictly monotonic decline",
+);
+
+const busy = [mk(0), mk(0), mk(0)].map((t, i) => ({ ...t, id: `b${i}` }));
+const beforeDone = buildWeightTable(busy, today).restProbability;
+const afterDone = buildWeightTable(
+  busy.map((t, i) => (i === 0 ? { ...t, completed: true } : t)),
+  today,
+).restProbability;
+eq(afterDone > beforeDone, true, "completing a task wins rest share back");
 
 const empty = buildWeightTable([], today);
 eq(empty.total, REST_WEIGHT, "no tasks -> only rest");
@@ -144,9 +167,9 @@ function pickWeightedOnce(table) {
 }
 const restPct = rest / 10000;
 eq(
-  Math.abs(restPct - 1 / 15) < 0.012,
+  Math.abs(restPct - 1 / 3) < 0.02,
   true,
-  `rest drawn ${(restPct * 100).toFixed(1)}% (expect ~6.7%)`,
+  `rest drawn ${(restPct * 100).toFixed(1)}% (expect ~33.3%)`,
 );
 
 console.log("== schedule blocks ==");

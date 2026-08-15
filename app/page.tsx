@@ -15,6 +15,7 @@ import { localStore, newId } from "@/lib/storage";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
 import {
   REST_LABEL,
+  REST_WEIGHT,
   buildWeightTable,
   formatProbability,
   pickWeighted,
@@ -491,7 +492,7 @@ export default function Page() {
                 Tasks <b>{table.taskTotal.toFixed(3)}</b>
               </span>
               <span>
-                Rest <b>0.143</b>
+                Rest <b>{REST_WEIGHT.toFixed(3)}</b>
               </span>
             </div>
           )}
@@ -583,8 +584,12 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               day before 4.
             </div>
             <div>
-              Completed: <code>0</code>. Hidden <code>Rest</code> task: always{" "}
-              <code>1/7</code>.
+              Completed: <code>0</code>.
+            </div>
+            <div>
+              The hidden <code>Rest</code> task always weighs <code>1</code> — one extra
+              task due tomorrow that never gets crossed off. The more work you pile up,
+              the smaller its share; completing tasks wins it back.
             </div>
           </div>
         </div>

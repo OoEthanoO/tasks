@@ -133,9 +133,22 @@ With `n` = days until due (negative once overdue):
 In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
 
 There is a hidden task called **Rest** permanently in the pool at a weight of
-`1/7`. It is never listed and cannot be completed, but it competes for every
-draw — one task due today gives a total weight of `2 + 1/7 = 15/7`, so that task
-has a `14/15` = 93.3% chance and Rest takes the remaining 6.7%.
+`1` — the same pull as one task due tomorrow, in effect an extra tomorrow-task
+that never gets crossed off. It is never listed and cannot be completed, but it
+competes for every draw: one task due today gives a total weight of `2 + 1 = 3`,
+so that task has a `2/3` = 66.7% chance and Rest takes the remaining 33.3%.
+
+Because Rest is a constant while the task pile is not, its share shrinks as work
+accumulates and grows back as you finish things:
+
+| Your plate | Rest's share |
+| --- | --- |
+| 1 task due tomorrow | 50% |
+| 1 task due today | 33% |
+| 2 due today | 20% |
+| 3 due today | 14% |
+| a dozen mixed tasks | ~9% |
+| 4 overdue plus a full list | ~4% |
 
 Each task row shows its own percentage, which is its weight over the total
 including Rest. Completing a task zeroes its weight, so it can never be drawn
@@ -160,8 +173,9 @@ since the weights are unchanged.
 npm test
 ```
 
-181 assertions covering date parsing, the weight formulas, probability with the
-hidden Rest task, block boundaries, schedule staleness, credential rules,
+186 assertions covering date parsing, the weight formulas, probability with the
+hidden Rest task and how its share moves as work piles up, block boundaries,
+schedule staleness, credential rules,
 password hashing, sanitizing untrusted state, login throttling, when a
 migration is worth offering, and an account/session/migration round-trip. The database tests run against PGlite —
 real Postgres, in-process — so the SQL that ships to Neon is the SQL under test.
