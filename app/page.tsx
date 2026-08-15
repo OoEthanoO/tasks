@@ -1,14 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AccountMenu from "@/components/AccountMenu";
+import AuthDialog from "@/components/AuthDialog";
 import QuickAdd from "@/components/QuickAdd";
 import RecommendationCard from "@/components/RecommendationCard";
 import SchedulePanel from "@/components/SchedulePanel";
 import TaskList from "@/components/TaskList";
+import { DEFAULT_END_TIME, emptyState } from "@/lib/app-state";
 import { formatDueDate, todayKey } from "@/lib/dates";
+import { ApiError, api } from "@/lib/remote";
 import { generateSchedule, scheduleStaleReason } from "@/lib/schedule";
-import { newId, storage } from "@/lib/storage";
-import { Recommendation, Schedule, Task } from "@/lib/types";
+import { localStore, newId } from "@/lib/storage";
+import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
 import {
   REST_LABEL,
   buildWeightTable,
@@ -16,37 +20,211 @@ import {
   pickWeighted,
 } from "@/lib/weights";
 
+/** Identifies which store the in-memory state belongs to. */
+function storeKey(user: User | null): string {
+  return user ? `remote:${user.id}` : "local";
+}
+
+const SAVE_DEBOUNCE_MS = 500;
+
 export default function Page() {
-  const [mounted, setMounted] = useState(false);
+  const [ready, setReady] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
-  const [endTime, setEndTime] = useState("23:00");
+  const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
   const [now, setNow] = useState(() => new Date());
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
-  // Hydrate from localStorage after mount so server and client markup match.
-  useEffect(() => {
-    setTasks(storage.loadTasks());
-    setRecommendation(storage.loadRecommendation());
-    setSchedule(storage.loadSchedule());
-    setEndTime(storage.loadEndTime());
-    setMounted(true);
+  const [account, setAccount] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authDialog, setAuthDialog] = useState<"signin" | "signup" | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Which store the current state came from, and what was last written to it.
+  // Together these stop a load from echoing straight back out as a save, and
+  // stop guest data from being written into an account (or the reverse).
+  const loadedForRef = useRef<string | null>(null);
+  const lastSavedRef = useRef<string | null>(null);
+
+  const applyState = useCallback((state: AppState, key: string) => {
+    setTasks(state.tasks);
+    setRecommendation(state.recommendation);
+    setSchedule(state.schedule);
+    setEndTime(state.endTime);
+    loadedForRef.current = key;
+    lastSavedRef.current = JSON.stringify(state);
+    setReady(true);
   }, []);
 
+  // Decide where this browser's data lives, then load it.
   useEffect(() => {
-    if (mounted) storage.saveTasks(tasks);
-  }, [tasks, mounted]);
+    let cancelled = false;
+
+    (async () => {
+      let user: User | null = null;
+      try {
+        user = await api.me();
+      } catch {
+        // Server unreachable — carry on as a guest rather than showing nothing.
+      }
+      if (cancelled) return;
+
+      if (user) {
+        try {
+          const state = await api.loadState();
+          if (cancelled) return;
+          setAccount(user);
+          applyState(state, storeKey(user));
+          setAuthLoading(false);
+          return;
+        } catch {
+          if (cancelled) return;
+        }
+      }
+
+      setAccount(null);
+      applyState(localStore.load(), storeKey(null));
+      setAuthLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyState]);
+
+  /* ---------- persistence ---------- */
+
+  const pendingRef = useRef<AppState | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushRemote = useCallback(
+    async (opts: { keepalive?: boolean } = {}) => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      const state = pendingRef.current;
+      if (!state) return;
+      pendingRef.current = null;
+
+      setSyncing(true);
+      try {
+        await api.saveState(state, opts);
+        lastSavedRef.current = JSON.stringify(state);
+        setSyncError(null);
+      } catch (error) {
+        // A dead session must not keep silently dropping edits on the floor.
+        if (error instanceof ApiError && error.status === 401) {
+          setAccount(null);
+          applyState(localStore.load(), storeKey(null));
+          setNotice("Your session expired. You're working on this device again.");
+          return;
+        }
+        setSyncError(
+          error instanceof Error ? error.message : "Could not save to your account.",
+        );
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [applyState],
+  );
+
   useEffect(() => {
-    if (mounted) storage.saveRecommendation(recommendation);
-  }, [recommendation, mounted]);
+    if (!ready) return;
+
+    const key = storeKey(account);
+    // Ignore the render in between swapping stores.
+    if (loadedForRef.current !== key) return;
+
+    const state: AppState = { tasks, recommendation, schedule, endTime };
+    const serialized = JSON.stringify(state);
+    if (serialized === lastSavedRef.current) return;
+
+    if (!account) {
+      localStore.save(state);
+      lastSavedRef.current = serialized;
+      return;
+    }
+
+    pendingRef.current = state;
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
+  }, [tasks, recommendation, schedule, endTime, ready, account, flushRemote]);
+
+  // Don't lose the tail of a debounce when the tab goes away.
   useEffect(() => {
-    if (mounted) storage.saveSchedule(schedule);
-  }, [schedule, mounted]);
-  useEffect(() => {
-    if (mounted) storage.saveEndTime(endTime);
-  }, [endTime, mounted]);
+    if (!account) return;
+    const onHide = () => {
+      if (pendingRef.current) void flushRemote({ keepalive: true });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") onHide();
+    };
+    window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [account, flushRemote]);
+
+  /* ---------- accounts ---------- */
+
+  const stateRef = useRef<AppState>(emptyState());
+  stateRef.current = { tasks, recommendation, schedule, endTime };
+
+  const signIn = useCallback(
+    async (username: string, password: string) => {
+      const { user, state } = await api.signIn(username, password);
+      setAccount(user);
+      applyState(state, storeKey(user));
+      setSyncError(null);
+      setNotice(`Signed in as ${user.username}.`);
+    },
+    [applyState],
+  );
+
+  const signUp = useCallback(
+    async (username: string, password: string, migrate: boolean) => {
+      const { user, state, migrated } = await api.signUp({
+        username,
+        password,
+        importState: migrate ? stateRef.current : null,
+      });
+      // Only clear the device copy once the server confirms it took it.
+      if (migrated) localStore.clear();
+
+      setAccount(user);
+      applyState(state, storeKey(user));
+      setSyncError(null);
+      setNotice(
+        migrated
+          ? `Welcome, ${user.username} — your local data moved into the account.`
+          : `Welcome, ${user.username}.`,
+      );
+    },
+    [applyState],
+  );
+
+  const signOut = useCallback(async () => {
+    await flushRemote();
+    try {
+      await api.signOut();
+    } catch {
+      // The cookie may already be gone; drop to guest mode either way.
+    }
+    setAccount(null);
+    setSyncError(null);
+    applyState(localStore.load(), storeKey(null));
+    setNotice("Signed out. You're back to the data saved on this device.");
+  }, [applyState, flushRemote]);
+
+  /* ---------- task state ---------- */
 
   // Keeps the "Now" block, weights, and day rollover honest without a reload.
   useEffect(() => {
@@ -130,6 +308,7 @@ export default function Page() {
   }, []);
 
   // Global hotkeys. Typing in a field always wins over a shortcut.
+  const modalOpen = quickAddOpen || authDialog !== null;
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -147,7 +326,7 @@ export default function Page() {
         setHelpOpen(false);
         return;
       }
-      if (typing || quickAddOpen) return;
+      if (typing || modalOpen) return;
 
       const key = e.key.toLowerCase();
       if (key === "q") {
@@ -167,7 +346,14 @@ export default function Page() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [quickAddOpen, recommend, regenerateSchedule]);
+  }, [modalOpen, recommend, regenerateSchedule]);
+
+  // Notices are informational; they should not pile up.
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(id);
+  }, [notice]);
 
   const probabilityOf = useCallback(
     (taskId: string) =>
@@ -188,8 +374,17 @@ export default function Page() {
         </div>
         <div className="topbar-actions">
           <span className="today-chip">
-            {mounted ? formatDueDate(today, today) + " · " + formatFullDate(today) : "…"}
+            {ready ? formatDueDate(today, today) + " · " + formatFullDate(today) : "…"}
           </span>
+          <AccountMenu
+            user={account}
+            loading={authLoading}
+            syncing={syncing}
+            syncError={syncError}
+            onSignIn={() => setAuthDialog("signin")}
+            onSignUp={() => setAuthDialog("signup")}
+            onSignOut={() => void signOut()}
+          />
           <button
             type="button"
             className="btn btn-ghost"
@@ -208,18 +403,35 @@ export default function Page() {
         </div>
       </header>
 
+      {notice && (
+        <div className="banner ok toast" role="status">
+          {notice}
+        </div>
+      )}
+      {syncError && account && (
+        <div className="banner danger toast" role="alert">
+          <span>
+            <strong>Not saved.</strong> {syncError}
+          </span>
+          <div className="spacer" />
+          <button type="button" className="btn btn-ghost" onClick={() => void flushRemote()}>
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="columns">
         <section className="card">
           <div className="card-head">
             <h2 className="card-title">
-              Tasks {mounted && openCount > 0 && <span>· {openCount} open</span>}
+              Tasks {ready && openCount > 0 && <span>· {openCount} open</span>}
             </h2>
             <span className="hint">
               Rest holds {formatProbability(table.restProbability)}
             </span>
           </div>
 
-          {mounted ? (
+          {ready ? (
             <TaskList
               entries={table.entries}
               today={today}
@@ -232,7 +444,7 @@ export default function Page() {
             <div className="empty">Loading…</div>
           )}
 
-          {mounted && tasks.length > 0 && (
+          {ready && tasks.length > 0 && (
             <div className="stats">
               <span>
                 Total weight <b>{table.total.toFixed(3)}</b>
@@ -249,16 +461,16 @@ export default function Page() {
 
         <div className="stack">
           <RecommendationCard
-            recommendation={mounted ? recommendation : null}
+            recommendation={ready ? recommendation : null}
             tasks={tasks}
             today={today}
             probabilityOf={probabilityOf}
             onRecommend={recommend}
-            canRecommend={mounted}
+            canRecommend={ready}
           />
 
           <SchedulePanel
-            schedule={mounted ? schedule : null}
+            schedule={ready ? schedule : null}
             tasks={tasks}
             endTime={endTime}
             now={now}
@@ -271,6 +483,16 @@ export default function Page() {
 
       {quickAddOpen && (
         <QuickAdd onCreate={addTask} onClose={() => setQuickAddOpen(false)} />
+      )}
+
+      {authDialog && (
+        <AuthDialog
+          initialMode={authDialog}
+          localState={stateRef.current}
+          onSignIn={signIn}
+          onSignUp={signUp}
+          onClose={() => setAuthDialog(null)}
+        />
       )}
 
       {helpOpen && <HelpPanel onClose={() => setHelpOpen(false)} />}

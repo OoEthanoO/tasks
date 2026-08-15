@@ -34,3 +34,20 @@ export type Schedule = {
   signature: string;
   endTime: string;
 };
+
+export type User = {
+  id: string;
+  username: string;
+  createdAt: string;
+};
+
+/**
+ * Everything the app persists for one user. Guest mode keeps this in
+ * localStorage; a signed-in user keeps it on the server.
+ */
+export type AppState = {
+  tasks: Task[];
+  recommendation: Recommendation | null;
+  schedule: Schedule | null;
+  endTime: string;
+};

@@ -1,5 +1,8 @@
-import { Recommendation, Schedule, Task } from "./types";
+import { sanitizeEndTime } from "./app-state";
+import { AppState, Recommendation, Schedule, Task } from "./types";
 
+// Unchanged key names: data written before accounts existed still loads, which
+// is exactly the data a migration offers to move.
 const KEYS = {
   tasks: "yantasks.tasks.v1",
   recommendation: "yantasks.recommendation.v1",
@@ -28,18 +31,35 @@ function write(key: string, value: unknown): void {
   }
 }
 
-export const storage = {
-  loadTasks: () => read<Task[]>(KEYS.tasks, []),
-  saveTasks: (tasks: Task[]) => write(KEYS.tasks, tasks),
+/** The signed-out store: everything this browser is holding on its own. */
+export const localStore = {
+  load(): AppState {
+    return {
+      tasks: read<Task[]>(KEYS.tasks, []),
+      recommendation: read<Recommendation | null>(KEYS.recommendation, null),
+      schedule: read<Schedule | null>(KEYS.schedule, null),
+      endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),
+    };
+  },
 
-  loadRecommendation: () => read<Recommendation | null>(KEYS.recommendation, null),
-  saveRecommendation: (rec: Recommendation | null) => write(KEYS.recommendation, rec),
+  save(state: AppState): void {
+    write(KEYS.tasks, state.tasks);
+    write(KEYS.recommendation, state.recommendation);
+    write(KEYS.schedule, state.schedule);
+    write(KEYS.endTime, state.endTime);
+  },
 
-  loadSchedule: () => read<Schedule | null>(KEYS.schedule, null),
-  saveSchedule: (schedule: Schedule | null) => write(KEYS.schedule, schedule),
-
-  loadEndTime: () => read<string>(KEYS.endTime, "23:00"),
-  saveEndTime: (endTime: string) => write(KEYS.endTime, endTime),
+  /** Called after a successful migration — the data now lives in the account. */
+  clear(): void {
+    if (typeof window === "undefined") return;
+    for (const key of Object.values(KEYS)) {
+      try {
+        window.localStorage.removeItem(key);
+      } catch {
+        // Nothing to do; the account copy is already authoritative.
+      }
+    }
+  },
 };
 
 export function newId(): string {

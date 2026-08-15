@@ -9,8 +9,67 @@ npm install
 npm run dev
 ```
 
-Everything lives in `localStorage` — tasks, the last recommendation, and the
-schedule all survive a reload. No backend.
+Accounts need a Postgres connection string. Create a free database at
+[neon.tech](https://neon.tech) and put its URL in `.env.local`:
+
+```bash
+DATABASE_URL="postgresql://user:password@host.neon.tech/dbname?sslmode=require"
+```
+
+Without it the app still runs — you just stay in "On this device" mode, and the
+account buttons report that the server is unreachable. The tables are created on
+first use, so there is no migration step.
+
+Signed out, everything lives in `localStorage` — tasks, the last
+recommendation, and the schedule all survive a reload. Sign in and the same data
+lives in your account instead, so it follows you between browsers.
+
+## Accounts
+
+Accounts are backed by Neon Postgres over its HTTP driver, which is what makes
+them work on Vercel: every query is a stateless `fetch`, so there is no
+connection pool to exhaust across serverless instances and nothing is written to
+the function filesystem — which is read-only, and thrown away between requests
+anyway. Set `DATABASE_URL` (the Neon integration in the Vercel dashboard does
+this for you under Storage → Neon); `POSTGRES_URL` is accepted too.
+
+- Passwords are hashed with scrypt and a per-user salt. The parameters are
+  stored alongside the hash, so they can be raised later without a migration.
+- Sessions are an httpOnly, SameSite=Lax cookie holding a 256-bit random token.
+  Only the token's SHA-256 digest is stored, so a stolen copy of the database
+  cannot be replayed as a live login. Sessions last 30 days.
+- Sign-in failures are one message for both a wrong name and a wrong password,
+  so the endpoint cannot be used to discover who has an account.
+- The password endpoints are throttled per IP. The counters live in Postgres,
+  not in process memory, because each serverless instance would otherwise hand
+  out its own separate allowance.
+- Usernames are unique by database index, not just by the check before the
+  insert, so two signups racing on the same name resolve to one winner and a
+  clean "already taken" for the other.
+- Deleting a user cascades to their sessions, tasks and preferences.
+
+Using it without an account is still a first-class path — the "On this device"
+chip means the browser is the only place your tasks exist.
+
+### Migrating local data into a new account
+
+If you have been using YanTasks signed out and then create an account, it asks
+what to do with the data already on the device before the account is created:
+
+- **Move it into my account** — tasks, schedule, last recommendation and end
+  time are written to the account, and the device copy is cleared. The local
+  copy is only cleared once the server confirms it stored them, so a failed
+  signup (a taken username, say) leaves your data exactly where it was.
+- **Start fresh** — the account begins empty and the device keeps its copy. Sign
+  out and it is there again.
+
+Signing in to an *existing* account does not touch local data; it stays on the
+device and reappears when you sign out.
+
+Whichever store is active, the app writes to one and only one of them: switching
+accounts never bleeds one user's tasks into another's, or into the guest space.
+Signed-in edits are debounced and flushed on tab hide, and the chip beside your
+username shows a live sync state — including a retry if a save fails.
 
 ## Keyboard shortcuts
 
@@ -91,5 +150,9 @@ since the weights are unchanged.
 npm test
 ```
 
-80 assertions covering date parsing, the weight formulas, probability with the
-hidden Rest task, block boundaries, and schedule staleness.
+171 assertions covering date parsing, the weight formulas, probability with the
+hidden Rest task, block boundaries, schedule staleness, credential rules,
+password hashing, sanitizing untrusted state, login throttling, and an
+account/session/migration round-trip. The database tests run against PGlite —
+real Postgres, in-process — so the SQL that ships to Neon is the SQL under test.
+They need no `DATABASE_URL` and reach no network.

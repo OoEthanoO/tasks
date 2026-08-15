@@ -219,5 +219,280 @@ let alwaysRest = true;
 for (let i = 0; i < 500; i++) if (pickWeightedOnce(doneOnly) !== null) alwaysRest = false;
 eq(alwaysRest, true, "500 draws all return Rest");
 
+console.log("== credential rules ==");
+const { validateUsername, validatePassword, normalizeUsername } = require("../.test-build/auth-rules.js");
+
+eq(validateUsername("yan"), null, "3 chars is allowed");
+eq(validateUsername("yan.xu_1-a"), null, "dot, underscore and dash are allowed");
+eq(typeof validateUsername("ab"), "string", "2 chars is rejected");
+eq(typeof validateUsername("x".repeat(33)), "string", "33 chars is rejected");
+eq(typeof validateUsername("yan xu"), "string", "spaces are rejected");
+eq(typeof validateUsername("yan@example.com"), "string", "@ is rejected");
+eq(validateUsername("  yan  "), null, "surrounding space is trimmed before checking");
+eq(validatePassword("12345678"), null, "8 chars is allowed");
+eq(typeof validatePassword("1234567"), "string", "7 chars is rejected");
+eq(normalizeUsername("  YanXu "), "yanxu", "lookup name is trimmed and lowercased");
+
+console.log("== password hashing ==");
+const { hashPassword, verifyPassword, hashToken, newToken } = require("../.test-build/auth.js");
+
+const stored = hashPassword("correct horse battery");
+eq(stored.startsWith("scrypt$16384$8$1$"), true, "hash records its own parameters");
+eq(stored.includes("correct horse battery"), false, "hash does not contain the password");
+eq(verifyPassword("correct horse battery", stored), true, "right password verifies");
+eq(verifyPassword("correct horse batter", stored), false, "wrong password fails");
+eq(verifyPassword("", stored), false, "empty password fails");
+eq(hashPassword("same") === hashPassword("same"), false, "salted: same password, different hash");
+eq(verifyPassword("x", "not-a-hash"), false, "malformed record fails instead of throwing");
+eq(verifyPassword("x", "scrypt$a$b$c$d$e"), false, "non-numeric parameters fail");
+eq(hashToken("abc") === hashToken("abc"), true, "token digest is stable");
+eq(hashToken("abc") === hashToken("abd"), false, "token digest is sensitive");
+eq(newToken() === newToken(), false, "tokens are unique");
+
+console.log("== untrusted state is sanitized ==");
+const {
+  sanitizeState,
+  sanitizeEndTime,
+  isEmptyState,
+  summarizeState,
+  emptyState,
+} = require("../.test-build/app-state.js");
+
+eq(sanitizeState(null), emptyState(), "null becomes an empty state");
+eq(sanitizeState("nope"), emptyState(), "a string becomes an empty state");
+eq(sanitizeState({ tasks: "not an array" }).tasks, [], "a non-array task list is dropped");
+
+const goodTask = {
+  id: "t1",
+  title: "Write it up",
+  description: "notes",
+  dueDate: T(1),
+  completed: false,
+  createdAt: "2026-08-12T00:00:00.000Z",
+  completedAt: null,
+};
+eq(sanitizeState({ tasks: [goodTask] }).tasks, [goodTask], "a well-formed task survives intact");
+eq(sanitizeState({ tasks: [{ title: "no id" }] }).tasks, [], "a task without an id is dropped");
+eq(sanitizeState({ tasks: [{ id: "t", title: "   " }] }).tasks, [], "a blank title is dropped");
+eq(
+  sanitizeState({ tasks: [goodTask, { ...goodTask, title: "dupe" }] }).tasks.length,
+  1,
+  "duplicate ids are collapsed (they are the primary key)",
+);
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "x", dueDate: "not-a-date" }] }).tasks[0].dueDate,
+  toKey(new Date()),
+  "an unparseable due date falls back to today",
+);
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "x", completed: "yes" }] }).tasks[0].completed,
+  false,
+  "only a real boolean marks a task complete",
+);
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "x", completed: true, completedAt: "junk" }] })
+    .tasks[0].completedAt !== null,
+  true,
+  "a completed task always gets a completion timestamp",
+);
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "x", completed: false, completedAt: "2026-01-01T00:00:00.000Z" }] })
+    .tasks[0].completedAt,
+  null,
+  "an open task never keeps a completion timestamp",
+);
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "y".repeat(900) }] }).tasks[0].title.length,
+  500,
+  "an oversized title is clipped",
+);
+eq(
+  sanitizeState({ tasks: Array.from({ length: 2500 }, (_, i) => ({ id: `t${i}`, title: "x" })) })
+    .tasks.length,
+  2000,
+  "the task list is capped",
+);
+
+eq(sanitizeEndTime("9:05"), "09:05", "a short time is zero-padded");
+eq(sanitizeEndTime("23:00"), "23:00", "a valid time is kept");
+eq(sanitizeEndTime("24:00"), "23:00", "an out-of-range hour falls back");
+eq(sanitizeEndTime("23:71"), "23:00", "an out-of-range minute falls back");
+eq(sanitizeEndTime(17), "23:00", "a non-string falls back");
+
+eq(sanitizeState({ recommendation: { taskId: "t", title: "" } }).recommendation, null, "a titleless recommendation is dropped");
+eq(sanitizeState({ schedule: { blocks: "nope" } }).schedule, null, "a schedule without blocks is dropped");
+eq(
+  sanitizeState({ schedule: { blocks: [{ start: "bad", end: "bad" }] } }).schedule.blocks,
+  [],
+  "unparseable blocks are dropped, the schedule survives",
+);
+
+console.log("== describing what a migration would move ==");
+eq(isEmptyState(emptyState()), true, "a fresh state is empty");
+eq(isEmptyState({ ...emptyState(), tasks: [goodTask] }), false, "one task is not empty");
+eq(
+  isEmptyState({ ...emptyState(), endTime: "18:00" }),
+  true,
+  "an end time alone is not worth migrating",
+);
+eq(summarizeState(emptyState()), "nothing", "nothing to move");
+eq(summarizeState({ ...emptyState(), tasks: [goodTask] }), "1 task", "singular");
+eq(summarizeState({ ...emptyState(), tasks: [goodTask, goodTask] }), "2 tasks", "plural");
+eq(
+  summarizeState({ ...emptyState(), tasks: [goodTask], schedule: { blocks: [] } }),
+  "1 task and a saved schedule",
+  "two things are joined with 'and'",
+);
+eq(
+  summarizeState({
+    ...emptyState(),
+    tasks: [goodTask],
+    schedule: { blocks: [] },
+    recommendation: { taskId: null, title: "Rest" },
+  }),
+  "1 task, a saved schedule and your last recommendation",
+  "three things use a serial list",
+);
+
+console.log("== accounts and migration round-trip (in-process postgres) ==");
+// The data layer is pointed at PGlite — real Postgres, in this process — so the
+// SQL that ships to Neon is the SQL under test here.
+const { PGlite } = await import("@electric-sql/pglite");
+const pg = await PGlite.create();
+
+const { setSql } = require("../.test-build/sql.js");
+setSql({
+  query: async (text, params = []) => (await pg.query(text, params)).rows,
+  transaction: async (statements) => {
+    await pg.exec("BEGIN");
+    try {
+      for (const s of statements) await pg.query(s.text, s.params ?? []);
+      await pg.exec("COMMIT");
+    } catch (error) {
+      await pg.exec("ROLLBACK");
+      throw error;
+    }
+  },
+});
+
+const db = require("../.test-build/db.js");
+
+const alice = await db.createUser({
+  id: "u-alice",
+  username: "Alice",
+  usernameLower: "alice",
+  passwordHash: hashPassword("hunter2hunter2"),
+});
+eq(alice.username, "Alice", "typed casing is preserved");
+eq(await db.usernameTaken("alice"), true, "the name is taken");
+eq(await db.usernameTaken("ALICE".toLowerCase()), true, "lookup is case-insensitive");
+eq(await db.usernameTaken("bob"), false, "an unrelated name is free");
+eq((await db.loadState(alice.id)).tasks, [], "a new account starts empty");
+eq((await db.loadState(alice.id)).endTime, "23:00", "a new account gets the default end time");
+
+const found = await db.findUserByUsername("alice");
+eq(found.id, alice.id, "the user is found by lowercase name");
+eq(verifyPassword("hunter2hunter2", found.passwordHash), true, "the stored hash verifies");
+eq(await db.findUserByUsername("nobody"), null, "an unknown name returns null");
+
+// The unique index, not the pre-check, is what settles a concurrent signup.
+let duplicate = null;
+try {
+  await db.createUser({
+    id: "u-other",
+    username: "ALICE",
+    usernameLower: "alice",
+    passwordHash: hashPassword("whatever12345"),
+  });
+} catch (error) {
+  duplicate = error;
+}
+eq(duplicate !== null, true, "a duplicate username is rejected by the database");
+eq(db.isUniqueViolation(duplicate), true, "and is recognized as a unique violation");
+eq(db.isUniqueViolation(new Error("boom")), false, "an unrelated error is not");
+eq(await db.findUserByUsername("alice").then((u) => u.id), alice.id, "the original user survives the failed race");
+
+// This is the migration itself: the guest payload written under a new account.
+const guestState = {
+  tasks: [goodTask, { ...goodTask, id: "t2", title: "Second", completed: true, completedAt: "2026-08-12T09:00:00.000Z" }],
+  recommendation: { taskId: "t1", title: "Write it up", generatedAt: "2026-08-12T08:00:00.000Z" },
+  schedule: {
+    blocks: [{ start: "2026-08-12T08:32:00.000Z", end: "2026-08-12T09:00:00.000Z", taskId: "t1", title: "Write it up" }],
+    generatedAt: "2026-08-12T08:32:00.000Z",
+    dayKey: T(0),
+    signature: "sig",
+    endTime: "22:00",
+  },
+  endTime: "22:00",
+};
+await db.saveState(alice.id, guestState);
+const restored = await db.loadState(alice.id);
+eq(restored.tasks.map((t) => t.id), ["t1", "t2"], "task order is preserved");
+eq(restored.tasks[0], goodTask, "a migrated task round-trips unchanged");
+eq(restored.tasks[1].completed, true, "completion survives the round-trip");
+eq(restored.recommendation, guestState.recommendation, "the recommendation round-trips");
+eq(restored.schedule.blocks, guestState.schedule.blocks, "schedule blocks round-trip");
+eq(restored.endTime, "22:00", "the end time round-trips");
+
+const bob = await db.createUser({
+  id: "u-bob",
+  username: "bob",
+  usernameLower: "bob",
+  passwordHash: hashPassword("password123"),
+});
+eq((await db.loadState(bob.id)).tasks, [], "a second account does not see the first's tasks");
+await db.saveState(bob.id, { ...emptyState(), tasks: [{ ...goodTask, title: "Bob's own" }] });
+eq((await db.loadState(bob.id)).tasks[0].title, "Bob's own", "each account keeps its own copy");
+eq((await db.loadState(alice.id)).tasks.length, 2, "writing one account leaves the other alone");
+
+await db.saveState(alice.id, emptyState());
+eq((await db.loadState(alice.id)).tasks, [], "a full replace clears removed tasks");
+eq((await db.loadState(bob.id)).tasks.length, 1, "the replace was scoped to one account");
+
+console.log("== sessions ==");
+const token = newToken();
+const future = new Date(Date.now() + 60_000);
+await db.createSession(alice.id, hashToken(token), future);
+eq((await db.findSessionUser(hashToken(token))).id, alice.id, "a live token resolves to its user");
+eq(await db.findSessionUser(hashToken(newToken())), null, "an unknown token resolves to null");
+
+const stale = newToken();
+await db.createSession(bob.id, hashToken(stale), new Date(Date.now() - 60_000));
+eq(await db.findSessionUser(hashToken(stale)), null, "an expired token is refused");
+eq(await db.findSessionUser(hashToken(stale)), null, "and stays refused after cleanup");
+
+await db.deleteSession(hashToken(token));
+eq(await db.findSessionUser(hashToken(token)), null, "signing out kills the token");
+
+// Deleting an account takes its sessions, tasks and prefs with it.
+const doomed = newToken();
+await db.createSession(bob.id, hashToken(doomed), new Date(Date.now() + 60_000));
+await pg.query("DELETE FROM users WHERE id = $1", [bob.id]);
+eq(await db.findSessionUser(hashToken(doomed)), null, "sessions cascade when a user is removed");
+eq((await pg.query("SELECT 1 FROM tasks WHERE user_id = $1", [bob.id])).rows.length, 0, "tasks cascade too");
+
+console.log("== login throttling ==");
+// A window of three, so the boundary is cheap to walk.
+const KEY = "login:198.51.100.7";
+eq(await db.countAttempt(KEY, 3, 60_000), true, "the first attempt is allowed");
+eq(await db.countAttempt(KEY, 3, 60_000), true, "the second is allowed");
+eq(await db.countAttempt(KEY, 3, 60_000), true, "the third reaches the cap");
+eq(await db.countAttempt(KEY, 3, 60_000), false, "the fourth is refused");
+eq(await db.countAttempt("login:203.0.113.9", 3, 60_000), true, "a different client is unaffected");
+
+await db.clearAttempts(KEY);
+eq(await db.countAttempt(KEY, 3, 60_000), true, "a successful sign-in resets the counter");
+
+// An elapsed window starts the count over rather than staying locked out.
+await db.countAttempt(KEY, 3, 60_000);
+await db.countAttempt(KEY, 3, 60_000);
+eq(await db.countAttempt(KEY, 3, 60_000), false, "still refused inside the window");
+await pg.query("UPDATE rate_limits SET reset_at = $1 WHERE key = $2", [
+  new Date(Date.now() - 1000).toISOString(),
+  KEY,
+]);
+eq(await db.countAttempt(KEY, 3, 60_000), true, "the window rolling over clears the block");
+
 console.log(`\n${pass} passed, ${fail} failed`);
+await pg.close();
 process.exit(fail ? 1 : 0);
