@@ -51,20 +51,30 @@ this for you under Storage → Neon); `POSTGRES_URL` is accepted too.
 Using it without an account is still a first-class path — the "On this device"
 chip means the browser is the only place your tasks exist.
 
-### Migrating local data into a new account
+### Migrating local data into an account
 
-If you have been using YanTasks signed out and then create an account, it asks
-what to do with the data already on the device before the account is created:
+If you have been using YanTasks signed out, it never strands the data on the
+device. Two moments raise the question, and both offer the same two answers:
 
 - **Move it into my account** — tasks, schedule, last recommendation and end
   time are written to the account, and the device copy is cleared. The local
-  copy is only cleared once the server confirms it stored them, so a failed
-  signup (a taken username, say) leaves your data exactly where it was.
-- **Start fresh** — the account begins empty and the device keeps its copy. Sign
-  out and it is there again.
+  copy is only cleared once the server confirms it stored them, so a failure
+  along the way (a taken username, say) leaves your data exactly where it was.
+- **Leave it on this device** — the account stays empty and the device keeps
+  its copy. Sign out and it is there again.
 
-Signing in to an *existing* account does not touch local data; it stays on the
-device and reappears when you sign out.
+**Creating an account** asks before the account exists, so the data is part of
+the signup itself.
+
+**Signing in** asks only when the account is completely empty — no tasks, no
+schedule, no saved recommendation — and this device has something. An account
+holding anything at all is left alone: both copies matter at that point, and
+silently overwriting either one is not a call to make on your behalf. A
+customized end time does not count as data, since it is a preference rather
+than something you would lose.
+
+Because you are already signed in by the time this question comes up, dismissing
+it is a real answer — the same as leaving the copy on the device.
 
 Whichever store is active, the app writes to one and only one of them: switching
 accounts never bleeds one user's tasks into another's, or into the guest space.
@@ -150,9 +160,9 @@ since the weights are unchanged.
 npm test
 ```
 
-171 assertions covering date parsing, the weight formulas, probability with the
+181 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task, block boundaries, schedule staleness, credential rules,
-password hashing, sanitizing untrusted state, login throttling, and an
-account/session/migration round-trip. The database tests run against PGlite —
+password hashing, sanitizing untrusted state, login throttling, when a
+migration is worth offering, and an account/session/migration round-trip. The database tests run against PGlite —
 real Postgres, in-process — so the SQL that ships to Neon is the SQL under test.
 They need no `DATABASE_URL` and reach no network.

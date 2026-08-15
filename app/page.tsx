@@ -7,7 +7,7 @@ import QuickAdd from "@/components/QuickAdd";
 import RecommendationCard from "@/components/RecommendationCard";
 import SchedulePanel from "@/components/SchedulePanel";
 import TaskList from "@/components/TaskList";
-import { DEFAULT_END_TIME, emptyState } from "@/lib/app-state";
+import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
 import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api } from "@/lib/remote";
 import { generateSchedule, scheduleStaleReason } from "@/lib/schedule";
@@ -178,13 +178,51 @@ export default function Page() {
   const stateRef = useRef<AppState>(emptyState());
   stateRef.current = { tasks, recommendation, schedule, endTime };
 
+  const accountRef = useRef<User | null>(account);
+  accountRef.current = account;
+
   const signIn = useCallback(
     async (username: string, password: string) => {
+      // Read the device copy before signing in swaps the active store. Signing
+      // in never writes to localStorage, so it is still there afterwards.
+      const local = localStore.load();
       const { user, state } = await api.signIn(username, password);
       setAccount(user);
       applyState(state, storeKey(user));
       setSyncError(null);
+
+      if (shouldOfferMigration(state, local)) {
+        // Leave the dialog open on the migrate step rather than announcing a
+        // sign-in the user is about to make a decision about.
+        return { needsMigrationChoice: true };
+      }
+
       setNotice(`Signed in as ${user.username}.`);
+      return { needsMigrationChoice: false };
+    },
+    [applyState],
+  );
+
+  /** Answer to "your account is empty — fill it from this device?". */
+  const adoptLocal = useCallback(
+    async (migrate: boolean) => {
+      const user = accountRef.current;
+      if (!user) return;
+
+      if (!migrate) {
+        setNotice(
+          `Signed in as ${user.username}. Your device copy stayed where it was.`,
+        );
+        return;
+      }
+
+      const local = localStore.load();
+      await api.saveState(local);
+      // Only clear the device copy once the server confirms it took it.
+      localStore.clear();
+      applyState(local, storeKey(user));
+      setSyncError(null);
+      setNotice(`Your local data moved into ${user.username}'s account.`);
     },
     [applyState],
   );
@@ -491,6 +529,7 @@ export default function Page() {
           localState={stateRef.current}
           onSignIn={signIn}
           onSignUp={signUp}
+          onAdoptLocal={adoptLocal}
           onClose={() => setAuthDialog(null)}
         />
       )}

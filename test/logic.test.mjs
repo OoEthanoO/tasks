@@ -254,6 +254,7 @@ const {
   sanitizeState,
   sanitizeEndTime,
   isEmptyState,
+  shouldOfferMigration,
   summarizeState,
   emptyState,
 } = require("../.test-build/app-state.js");
@@ -352,6 +353,39 @@ eq(
   }),
   "1 task, a saved schedule and your last recommendation",
   "three things use a serial list",
+);
+
+console.log("== when to offer a migration ==");
+const withTask = { ...emptyState(), tasks: [goodTask] };
+const withSchedule = {
+  ...emptyState(),
+  schedule: { blocks: [], generatedAt: "2026-08-12T08:00:00.000Z", dayKey: T(0), signature: "s", endTime: "23:00" },
+};
+const withRec = {
+  ...emptyState(),
+  recommendation: { taskId: "t1", title: "Write it up", generatedAt: "2026-08-12T08:00:00.000Z" },
+};
+
+eq(shouldOfferMigration(emptyState(), withTask), true, "empty account + local tasks asks");
+eq(shouldOfferMigration(emptyState(), withSchedule), true, "a lone saved schedule is worth asking about");
+eq(shouldOfferMigration(emptyState(), withRec), true, "a lone recommendation is too");
+eq(shouldOfferMigration(emptyState(), emptyState()), false, "nothing on either side asks nothing");
+eq(shouldOfferMigration(withTask, withTask), false, "an account with tasks is never overwritten");
+eq(shouldOfferMigration(withTask, emptyState()), false, "a full account and an empty device asks nothing");
+eq(shouldOfferMigration(withSchedule, withTask), false, "a schedule alone still counts as a used account");
+eq(shouldOfferMigration(withRec, withTask), false, "so does a recommendation alone");
+
+// End time is a preference, not data: an account that only differs there is
+// still untouched, and a device that only differs there has nothing to move.
+eq(
+  shouldOfferMigration({ ...emptyState(), endTime: "22:00" }, withTask),
+  true,
+  "a customized end time does not make an account non-empty",
+);
+eq(
+  shouldOfferMigration(emptyState(), { ...emptyState(), endTime: "22:00" }),
+  false,
+  "and does not make a device copy worth migrating",
 );
 
 console.log("== accounts and migration round-trip (in-process postgres) ==");

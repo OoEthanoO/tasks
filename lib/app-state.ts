@@ -157,6 +157,22 @@ export function isEmptyState(state: AppState): boolean {
   );
 }
 
+/**
+ * Whether signing in should stop and ask about the data on this device.
+ *
+ * Only when the account has nothing in it at all. If the account already holds
+ * tasks there is no question worth asking — the two copies both matter, and
+ * silently overwriting either one would be the wrong call to make on the
+ * user's behalf. An untouched account is the one case where the device copy is
+ * unambiguously the more useful of the two.
+ */
+export function shouldOfferMigration(
+  accountState: AppState,
+  localState: AppState,
+): boolean {
+  return isEmptyState(accountState) && !isEmptyState(localState);
+}
+
 /** "5 tasks", "1 task and a saved schedule" — what a migration would move. */
 export function summarizeState(state: AppState): string {
   const parts: string[] = [];
