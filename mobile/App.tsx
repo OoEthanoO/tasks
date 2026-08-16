@@ -22,6 +22,7 @@ import {
   formatProbability,
   pickWeighted,
 } from "../lib/weights";
+import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
 import RecommendCard from "./src/components/RecommendCard";
 import ScheduleCard from "./src/components/ScheduleCard";
@@ -54,6 +55,7 @@ function YanTasks() {
   const [account, setAccount] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authSheet, setAuthSheet] = useState<"signin" | "signup" | null>(null);
+  const [accountSheet, setAccountSheet] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -279,6 +281,25 @@ function YanTasks() {
     [applyState],
   );
 
+  /**
+   * Erase the account outright. Required by App Store guideline 5.1.1(v), and
+   * the pending save is dropped first so an in-flight write cannot recreate
+   * rows for a user who no longer exists.
+   */
+  const deleteAccount = useCallback(async () => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    pendingRef.current = null;
+
+    await api.deleteAccount();
+    setAccount(null);
+    setSyncError(null);
+    applyState(await guestStore.load(), storeKey(null));
+    setNotice("Your account and everything in it were deleted.");
+  }, [applyState]);
+
   const signOut = useCallback(async () => {
     await flushRemote();
     try {
@@ -388,10 +409,12 @@ function YanTasks() {
         </View>
 
         <Pressable
-          onPress={() => (account ? void signOut() : setAuthSheet("signin"))}
+          onPress={() => (account ? setAccountSheet(true) : setAuthSheet("signin"))}
           style={s.accountChip}
           accessibilityRole="button"
-          accessibilityLabel={account ? `Signed in as ${account.username}. Sign out.` : "Sign in"}
+          accessibilityLabel={
+            account ? `Signed in as ${account.username}. Account options.` : "Sign in"
+          }
         >
           <View
             style={[
@@ -523,6 +546,16 @@ function YanTasks() {
             setEditing(null);
           }}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {accountSheet && account && (
+        <AccountSheet
+          user={account}
+          state={stateRef.current}
+          onSignOut={signOut}
+          onDeleteAccount={deleteAccount}
+          onClose={() => setAccountSheet(false)}
         />
       )}
 

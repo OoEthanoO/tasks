@@ -250,6 +250,45 @@ export default function Page() {
     [applyState],
   );
 
+  /**
+   * Erase the account outright — the same deletion the iOS app offers, which
+   * App Store guideline 5.1.1(v) requires to exist in the app itself. The
+   * pending save is dropped first so an in-flight write cannot recreate rows
+   * for a user who no longer exists.
+   */
+  const deleteAccount = useCallback(async () => {
+    const user = accountRef.current;
+    if (!user) return;
+    if (
+      !window.confirm(
+        `Permanently delete ${user.username}? Every task, your schedule and your ` +
+          `sign-in are erased from the server. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    pendingRef.current = null;
+
+    try {
+      await api.deleteAccount();
+    } catch (error) {
+      setSyncError(
+        error instanceof Error ? error.message : "Could not delete the account.",
+      );
+      return;
+    }
+
+    setAccount(null);
+    setSyncError(null);
+    applyState(localStore.load(), storeKey(null));
+    setNotice("Your account and everything in it were deleted.");
+  }, [applyState]);
+
   const signOut = useCallback(async () => {
     await flushRemote();
     try {
@@ -423,6 +462,7 @@ export default function Page() {
             onSignIn={() => setAuthDialog("signin")}
             onSignUp={() => setAuthDialog("signup")}
             onSignOut={() => void signOut()}
+            onDeleteAccount={() => void deleteAccount()}
           />
           <button
             type="button"

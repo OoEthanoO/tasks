@@ -10,6 +10,7 @@ type Props = {
   onSignIn: () => void;
   onSignUp: () => void;
   onSignOut: () => void;
+  onDeleteAccount: () => void;
 };
 
 export default function AccountMenu({
@@ -20,6 +21,7 @@ export default function AccountMenu({
   onSignIn,
   onSignUp,
   onSignOut,
+  onDeleteAccount,
 }: Props) {
   if (loading) {
     return <span className="account-chip is-quiet">…</span>;
@@ -64,6 +66,14 @@ export default function AccountMenu({
       </span>
       <button type="button" className="btn btn-ghost" onClick={onSignOut}>
         Sign out
+      </button>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={onDeleteAccount}
+        title="Permanently erase this account and everything in it"
+      >
+        Delete account
       </button>
     </div>
   );

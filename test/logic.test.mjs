@@ -567,6 +567,41 @@ await pg.query("DELETE FROM users WHERE id = $1", [bob.id]);
 eq(await db.findSessionUser(hashToken(doomed)), null, "sessions cascade when a user is removed");
 eq((await pg.query("SELECT 1 FROM tasks WHERE user_id = $1", [bob.id])).rows.length, 0, "tasks cascade too");
 
+console.log("== deleting an account ==");
+// App Store guideline 5.1.1(v): the app must be able to erase the account, and
+// it has to be a real deletion rather than a flag.
+const carol = await db.createUser({
+  id: "u-carol",
+  username: "carol",
+  usernameLower: "carol",
+  passwordHash: hashPassword("password123"),
+});
+await db.saveState(carol.id, { ...emptyState(), tasks: [{ ...goodTask, id: "c1" }] });
+const carolToken = newToken();
+await db.createSession(carol.id, hashToken(carolToken), new Date(Date.now() + 60_000));
+
+await db.saveState(alice.id, { ...emptyState(), tasks: [{ ...goodTask, id: "a1" }] });
+
+await db.deleteUser(carol.id);
+eq(await db.findUserByUsername("carol"), null, "the account is gone");
+eq(await db.usernameTaken("carol"), false, "and the username is free again");
+eq(await db.findSessionUser(hashToken(carolToken)), null, "its sessions no longer resolve");
+eq(
+  (await pg.query("SELECT 1 FROM tasks WHERE user_id = $1", [carol.id])).rows.length,
+  0,
+  "its tasks are gone",
+);
+eq(
+  (await pg.query("SELECT 1 FROM prefs WHERE user_id = $1", [carol.id])).rows.length,
+  0,
+  "its preferences are gone",
+);
+eq((await db.loadState(alice.id)).tasks.length, 1, "another account is untouched");
+// Deleting an account that is already gone is not an error — a second tap, or a
+// retry after a dropped response, must not fail.
+await db.deleteUser(carol.id);
+eq(await db.findUserByUsername("carol"), null, "deleting twice is harmless");
+
 console.log("== login throttling ==");
 // A window of three, so the boundary is cheap to walk.
 const KEY = "login:198.51.100.7";

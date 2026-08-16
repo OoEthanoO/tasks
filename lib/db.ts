@@ -65,6 +65,15 @@ export async function createUser(input: {
   return { id: input.id, username: input.username, createdAt };
 }
 
+/**
+ * Erase an account and everything hanging off it. `sessions`, `tasks` and
+ * `prefs` all reference `users(id) ON DELETE CASCADE`, so one statement is the
+ * whole deletion — there is no soft-delete flag and no copy left behind.
+ */
+export async function deleteUser(userId: string): Promise<void> {
+  await query(`DELETE FROM users WHERE id = $1`, [userId]);
+}
+
 export async function usernameTaken(usernameLower: string): Promise<boolean> {
   const rows = await query<{ hit: number }>(
     `SELECT 1 AS hit FROM users WHERE username_lower = $1`,

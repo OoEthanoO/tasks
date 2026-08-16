@@ -93,6 +93,11 @@ export const api = {
     await request<{ ok: true }>("/api/auth/logout", { method: "POST" });
   },
 
+  /** Erases the account and everything in it. There is no undo. */
+  async deleteAccount(): Promise<void> {
+    await request<{ ok: true }>("/api/auth/me", { method: "DELETE" });
+  },
+
   async loadState(): Promise<AppState> {
     const body = await request<{ state: AppState }>("/api/state");
     return sanitizeState(body.state);
