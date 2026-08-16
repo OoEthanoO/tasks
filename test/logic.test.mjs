@@ -337,6 +337,33 @@ eq(
   "the task list is capped",
 );
 
+// A NUL byte rides in on pasted text and a Postgres TEXT column refuses it, so
+// one of these anywhere in the state used to fail the entire save.
+const scrubbed = sanitizeState({
+  tasks: [{ id: "t\u00001", title: "Tutor\u0000ing", description: "pas\u0000ted" }],
+}).tasks[0];
+eq(scrubbed.id, "t1", "a NUL is stripped from an id");
+eq(scrubbed.title, "Tutoring", "and from a title");
+eq(scrubbed.description, "pasted", "and from a description");
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "\u0000" }] }).tasks,
+  [],
+  "a title that was only a NUL is left blank, and a blank title drops the task",
+);
+
+// Clipping counts UTF-16 units, so the cut can land between the two halves of
+// an emoji. The leftover half is not encodable as UTF-8 at all.
+const clipped = sanitizeState({
+  tasks: [{ id: "t", title: `${"y".repeat(499)}🎯` }],
+}).tasks[0].title;
+eq(clipped.length, 499, "clipping never leaves half an emoji behind");
+eq(/\p{Cs}/u.test(clipped), false, "nothing unpaired survives");
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "keep 🎯 whole" }] }).tasks[0].title,
+  "keep 🎯 whole",
+  "an emoji that fits is left alone",
+);
+
 eq(sanitizeEndTime("9:05"), "09:05", "a short time is zero-padded");
 eq(sanitizeEndTime("23:00"), "23:00", "a valid time is kept");
 eq(sanitizeEndTime("24:00"), "23:00", "an out-of-range hour falls back");
@@ -505,6 +532,18 @@ eq((await db.loadState(alice.id)).tasks.length, 2, "writing one account leaves t
 await db.saveState(alice.id, emptyState());
 eq((await db.loadState(alice.id)).tasks, [], "a full replace clears removed tasks");
 eq((await db.loadState(bob.id)).tasks.length, 1, "the replace was scoped to one account");
+
+// Against a real Postgres: the write that used to come back as a 500.
+await db.saveState(alice.id, {
+  ...emptyState(),
+  tasks: [{ ...goodTask, title: "Tutor\u0000ing", description: "pas\u0000ted" }],
+});
+eq(
+  (await db.loadState(alice.id)).tasks[0].title,
+  "Tutoring",
+  "a task carrying a NUL is saved clean rather than failing the whole write",
+);
+await db.saveState(alice.id, emptyState());
 
 console.log("== sessions ==");
 const token = newToken();

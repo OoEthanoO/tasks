@@ -31,8 +31,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The two things a JS string can hold that Postgres cannot store: a NUL, which
+ * TEXT rejects outright (SQLSTATE 22021), and an unpaired surrogate, which is
+ * not encodable as UTF-8 — the `slice` below can produce one by cutting an
+ * emoji in half. Either one fails the whole save, and because the offending
+ * character stays in the client's state, every retry fails the same way. They
+ * come out here, at the boundary, so nothing unstorable ever reaches a query.
+ */
+const UNSTORABLE = /[\0\p{Cs}]/gu;
+
 function str(value: unknown, max: number, fallback = ""): string {
-  return typeof value === "string" ? value.slice(0, max) : fallback;
+  if (typeof value !== "string") return fallback;
+  return value.slice(0, max).replace(UNSTORABLE, "");
 }
 
 function dateKey(value: unknown, fallback: string): string {
@@ -78,7 +89,7 @@ function sanitizeRecommendation(raw: unknown, now: string): Recommendation | nul
   const title = str(raw.title, MAX_TITLE);
   if (!title) return null;
   return {
-    taskId: typeof raw.taskId === "string" ? raw.taskId.slice(0, 100) : null,
+    taskId: typeof raw.taskId === "string" ? str(raw.taskId, 100) : null,
     title,
     generatedAt: iso(raw.generatedAt, now),
   };
@@ -92,7 +103,7 @@ function sanitizeBlock(raw: unknown): ScheduleBlock | null {
   return {
     start,
     end,
-    taskId: typeof raw.taskId === "string" ? raw.taskId.slice(0, 100) : null,
+    taskId: typeof raw.taskId === "string" ? str(raw.taskId, 100) : null,
     title: str(raw.title, MAX_TITLE, "Rest"),
   };
 }
