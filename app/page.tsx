@@ -125,6 +125,10 @@ export default function Page() {
           setNotice("Your session expired. You're working on this device again.");
           return;
         }
+        // Put the state back so it is still queued: without this the edits are
+        // dropped on the floor and the Retry button has nothing to send, which
+        // makes it look like retrying does nothing at all.
+        pendingRef.current = state;
         setSyncError(
           error instanceof Error ? error.message : "Could not save to your account.",
         );

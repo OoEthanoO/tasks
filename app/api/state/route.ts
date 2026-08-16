@@ -26,6 +26,31 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Malformed request." }, { status: 400 });
   }
 
-  await saveState(user.id, sanitizeState((body as { state?: unknown })?.state));
+  const state = sanitizeState((body as { state?: unknown })?.state);
+
+  try {
+    await saveState(user.id, state);
+  } catch (error) {
+    // This is the failure the client shows as "the server had a problem", and
+    // an uncaught throw here leaves nothing in the logs but a stack. Postgres
+    // puts the useful part in `code` (SQLSTATE) — 22021 is a NUL in the text,
+    // 40P01 a deadlock, 23505 a duplicate key — so record that, plus enough
+    // shape to tell which write it was. Never echoed to the browser.
+    const e = error as { code?: string; message?: string; detail?: string };
+    console.error("[state.save] failed", {
+      userId: user.id,
+      tasks: state.tasks.length,
+      hasSchedule: state.schedule !== null,
+      blocks: state.schedule?.blocks.length ?? 0,
+      code: e.code,
+      message: e.message,
+      detail: e.detail,
+    });
+    return NextResponse.json(
+      { error: "The server had a problem. Please try again in a moment." },
+      { status: 500 },
+    );
+  }
+
   return NextResponse.json({ ok: true });
 }
