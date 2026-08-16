@@ -14,9 +14,16 @@
  *   DEMO_PASSWORD='...' API_BASE=http://localhost:3000 node scripts/seed-demo.mjs
  */
 
+import { randomBytes } from "node:crypto";
+
 const API_BASE = (process.env.API_BASE ?? "https://tasks.ethanyanxu.com").replace(/\/+$/, "");
 const USERNAME = process.env.DEMO_USERNAME ?? "appreview";
-const PASSWORD = process.env.DEMO_PASSWORD;
+// Generated here when not supplied, because the password has to end up in the
+// App Review notes: a caller-generated one (DEMO_PASSWORD="$(openssl rand …)")
+// exists only in that subshell, and is unrecoverable the moment it exits.
+// Either way it is printed at the end, in full.
+const PASSWORD = process.env.DEMO_PASSWORD || randomBytes(12).toString("base64url");
+const GENERATED = !process.env.DEMO_PASSWORD;
 
 /* ---------- the demo data ---------- */
 
@@ -105,14 +112,6 @@ async function call(path, method, body) {
 }
 
 async function main() {
-  if (!PASSWORD) {
-    throw new Error(
-      'DEMO_PASSWORD is not set. Choose one — it goes in the App Review notes, so it\n' +
-        '  should not be a password you use anywhere else:\n\n' +
-        '  DEMO_PASSWORD="$(openssl rand -base64 12)" node scripts/seed-demo.mjs',
-    );
-  }
-
   const state = buildDemoState();
   console.log(`→ ${API_BASE} as "${USERNAME}"`);
 
@@ -153,7 +152,14 @@ async function main() {
   const stored = check.payload?.state?.tasks ?? [];
   const open = stored.filter((t) => !t.completed).length;
   console.log(`✓ seeded ${stored.length} tasks (${open} open, ${stored.length - open} completed)`);
-  console.log("\nApp Review notes:\n" + `  Username: ${USERNAME}\n  Password: (the DEMO_PASSWORD you passed)`);
+
+  // Printed in full, every run. This is the only copy: the server keeps a
+  // scrypt hash and cannot tell anyone what the password was.
+  console.log("\n─── paste into App Review notes ───");
+  console.log(`  Username: ${USERNAME}`);
+  console.log(`  Password: ${PASSWORD}`);
+  console.log("───────────────────────────────────");
+  if (GENERATED) console.log("(generated for you — save it now, it is not stored anywhere)");
 }
 
 // Only when run directly, so the data above can be imported and checked.
