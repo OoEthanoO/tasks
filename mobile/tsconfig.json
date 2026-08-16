@@ -1,0 +1,22 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true
+  },
+  // Shared logic is imported by relative path (../../lib/...) rather than an
+  // alias, so Metro and tsc agree on where it lives without extra resolver
+  // configuration.
+  "include": ["**/*.ts", "**/*.tsx", "../lib/**/*.ts"],
+  // lib/server is Next.js server code (Postgres, sessions) that the app never
+  // imports and cannot resolve — it uses the web app's "@/" alias.
+  // lib/server, lib/db, lib/sql and lib/auth are Next.js server code (Postgres,
+  // node:crypto) that the app never imports. The rules it does share with the
+  // server — username and password validation — live in lib/auth-rules.
+  "exclude": [
+    "node_modules",
+    "../lib/server",
+    "../lib/db.ts",
+    "../lib/sql.ts",
+    "../lib/auth.ts"
+  ]
+}

@@ -10,11 +10,26 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Where the API lives. The web app talks to its own origin, so the default is
+ * the empty string and every path stays relative. A native client has no
+ * origin of its own and points this at the deployment once, on startup.
+ */
+let apiBase = "";
+
+export function setApiBase(base: string): void {
+  apiBase = base.replace(/\/+$/, "");
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetch(`${apiBase}${url}`, {
       ...init,
+      // The session is an httpOnly cookie: the browser attaches it to a
+      // same-origin request on its own, and iOS keeps a persistent cookie
+      // store per domain that does the same for the native client.
+      credentials: "include",
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     });
   } catch {

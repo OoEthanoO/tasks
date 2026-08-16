@@ -39,11 +39,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * character stays in the client's state, every retry fails the same way. They
  * come out here, at the boundary, so nothing unstorable ever reaches a query.
  */
-const UNSTORABLE = /[\0\p{Cs}]/gu;
+const NUL = /\0/g;
+// A well-formed pair first, so only the surrogates left over on their own —
+// the ones a mid-emoji cut creates — fall through to the second branch. Spelled
+// out with ranges rather than \p{Cs} because Hermes, which runs the native
+// client, does not promise Unicode property escapes.
+const SURROGATE = /[\uD800-\uDBFF][\uDC00-\uDFFF]|[\uD800-\uDFFF]/g;
 
 function str(value: unknown, max: number, fallback = ""): string {
   if (typeof value !== "string") return fallback;
-  return value.slice(0, max).replace(UNSTORABLE, "");
+  return value
+    .slice(0, max)
+    .replace(NUL, "")
+    .replace(SURROGATE, (match) => (match.length === 2 ? match : ""));
 }
 
 function dateKey(value: unknown, fallback: string): string {

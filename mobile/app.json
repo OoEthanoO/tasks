@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "YanTasks",
+    "slug": "yantasks",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "yantasks",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0b0e"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ethanyanxu.yantasks"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0b0e"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.ethanyanxu.yantasks"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    }
+  }
+}
