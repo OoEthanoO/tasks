@@ -15,12 +15,16 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.ethanyanxu.yantasks"
+      "bundleIdentifier": "com.ethanyanxu.yantasks",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0a0b0e"
+        "backgroundImage": "./assets/android-icon-background.png",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.ethanyanxu.yantasks"
@@ -28,6 +32,12 @@
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "dc14806a-ea83-4b0a-a0f5-7002ee8e7bf0"
+      }
+    },
+    "owner": "xxooethanooxx"
   }
 }
