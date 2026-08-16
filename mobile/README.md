@@ -7,7 +7,10 @@ exist in exactly one place.
 
 ## Run it on your iPhone
 
-No Mac required.
+No Mac required. The project is pinned to **Expo SDK 54** to match the Expo Go
+build the App Store ships — that is a lower number than npm's `latest`, and the
+phone's "Supported SDK" (Expo Go → Settings → App Info) is what decides it, not
+the newest SDK published. Check there before bumping `expo` in package.json.
 
 1. Install **Expo Go** from the App Store.
 2. From the repo root:
