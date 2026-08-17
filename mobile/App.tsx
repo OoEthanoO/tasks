@@ -15,6 +15,7 @@ import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "../lib/app-s
 import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
 import { generateSchedule, scheduleStaleReason } from "../lib/schedule";
+import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
 import {
   REST_WEIGHT,
@@ -41,6 +42,8 @@ function storeKey(user: User | null): string {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
+/** How often a foregrounded app asks whether anything changed elsewhere. */
+const REFRESH_MS = 30_000;
 
 function YanTasks() {
   const insets = useSafeAreaInsets();
@@ -120,6 +123,14 @@ function YanTasks() {
   const pendingRef = useRef<AppState | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Read by callbacks that outlive the render they were created in — the
+  // refresh poller needs the values as they are now, not as they were when it
+  // was defined.
+  const accountRef = useRef<User | null>(account);
+  accountRef.current = account;
+  const syncingRef = useRef(false);
+  syncingRef.current = syncing;
+
   const flushRemote = useCallback(async () => {
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
@@ -174,15 +185,64 @@ function YanTasks() {
     timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
   }, [tasks, recommendation, schedule, endTime, ready, account, flushRemote]);
 
+  /**
+   * Pull the account's copy back down, so edits made on the website (or another
+   * phone) show up without tugging the list. Same rule as the web client: an
+   * unsent edit here is newer than anything the server can return.
+   */
+  const refreshFromServer = useCallback(async () => {
+    if (!accountRef.current) return;
+
+    let remote: AppState;
+    try {
+      remote = await api.loadState();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setAccount(null);
+        applyState(await guestStore.load(), storeKey(null));
+        setNotice("Your session expired. You're working on this device again.");
+      }
+      // Anything else is a bad moment on the network; the next tick retries.
+      return;
+    }
+
+    const user = accountRef.current;
+    if (!user) return;
+
+    if (
+      !shouldAdoptRemote({
+        hasPendingWrite: pendingRef.current !== null,
+        saveInFlight: syncingRef.current,
+        local: lastSavedRef.current ?? "",
+        remote: JSON.stringify(remote),
+      })
+    ) {
+      return;
+    }
+
+    applyState(remote, storeKey(user));
+    setNotice("Updated with changes from another device.");
+  }, [applyState]);
+
   // Backgrounding the app is the phone's version of closing the tab: flush the
-  // tail of a debounce before iOS stops giving us time to run.
+  // tail of a debounce before iOS stops giving us time to run. Coming back is
+  // the moment another device's edits are most likely to be waiting.
   useEffect(() => {
     if (!account) return;
+
     const sub = RNAppState.addEventListener("change", (next) => {
-      if (next !== "active" && pendingRef.current) void flushRemote();
+      if (next === "active") void refreshFromServer();
+      else if (pendingRef.current) void flushRemote();
     });
-    return () => sub.remove();
-  }, [account, flushRemote]);
+    const id = setInterval(() => {
+      if (RNAppState.currentState === "active") void refreshFromServer();
+    }, REFRESH_MS);
+
+    return () => {
+      sub.remove();
+      clearInterval(id);
+    };
+  }, [account, flushRemote, refreshFromServer]);
 
   /** Pull to refresh: take the account copy as authoritative again. */
   const refresh = useCallback(async () => {
@@ -208,9 +268,6 @@ function YanTasks() {
 
   const stateRef = useRef<AppState>(emptyState());
   stateRef.current = { tasks, recommendation, schedule, endTime };
-
-  const accountRef = useRef<User | null>(account);
-  accountRef.current = account;
 
   const [guestSnapshot, setGuestSnapshot] = useState<AppState>(emptyState());
   useEffect(() => {
