@@ -36,6 +36,13 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    // The Expo app is a separate project with its own tsconfig and its own
+    // node_modules. Left in, `next build` type-checks React Native source
+    // against the web app's dependencies — which works locally, because tsc
+    // walks up into mobile/node_modules, and fails on Vercel, which only
+    // installs this package.json.
+    "mobile",
+    ".test-build"
   ]
 }
