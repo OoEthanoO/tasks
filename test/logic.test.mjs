@@ -378,6 +378,34 @@ eq(
   "unparseable blocks are dropped, the schedule survives",
 );
 
+console.log("== taking the server's copy ==");
+const { shouldAdoptRemote } = require("../.test-build/sync.js");
+const base = { hasPendingWrite: false, saveInFlight: false, local: "A", remote: "B" };
+
+eq(shouldAdoptRemote(base), true, "a differing server copy is adopted");
+eq(
+  shouldAdoptRemote({ ...base, remote: "A" }),
+  false,
+  "an identical copy is not, so nothing re-renders",
+);
+// The whole point of the guard: an edit that has not reached the server yet is
+// newer than anything the server can return, and must not be overwritten.
+eq(
+  shouldAdoptRemote({ ...base, hasPendingWrite: true }),
+  false,
+  "a queued local edit blocks adoption",
+);
+eq(
+  shouldAdoptRemote({ ...base, saveInFlight: true }),
+  false,
+  "so does a save already on the wire",
+);
+eq(
+  shouldAdoptRemote({ ...base, hasPendingWrite: true, remote: "A" }),
+  false,
+  "and a pending write still blocks it when the copies match",
+);
+
 console.log("== describing what a migration would move ==");
 eq(isEmptyState(emptyState()), true, "a fresh state is empty");
 eq(isEmptyState({ ...emptyState(), tasks: [goodTask] }), false, "one task is not empty");

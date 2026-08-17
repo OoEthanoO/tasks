@@ -12,6 +12,7 @@ import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api } from "@/lib/remote";
 import { generateSchedule, scheduleStaleReason } from "@/lib/schedule";
 import { localStore, newId } from "@/lib/storage";
+import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
 import {
   REST_LABEL,
@@ -27,6 +28,8 @@ function storeKey(user: User | null): string {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
+/** How often a visible tab asks the server whether anything changed elsewhere. */
+const REFRESH_MS = 30_000;
 
 export default function Page() {
   const [ready, setReady] = useState(false);
@@ -102,6 +105,14 @@ export default function Page() {
   const pendingRef = useRef<AppState | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Read by callbacks that outlive the render they were created in — the
+  // refresh poller and the save flush both need the current values, not the
+  // ones captured when they were defined.
+  const accountRef = useRef<User | null>(account);
+  accountRef.current = account;
+  const syncingRef = useRef(false);
+  syncingRef.current = syncing;
+
   const flushRemote = useCallback(
     async (opts: { keepalive?: boolean } = {}) => {
       if (timerRef.current !== null) {
@@ -161,6 +172,64 @@ export default function Page() {
     timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
   }, [tasks, recommendation, schedule, endTime, ready, account, flushRemote]);
 
+  /**
+   * Pull the account's copy back down, so edits made on the phone (or another
+   * tab) show up here without a reload. Runs when the tab is looked at again
+   * and on a slow timer while it is visible — a poll rather than a push,
+   * because the server is serverless and has nowhere to hold a connection.
+   */
+  const refreshFromServer = useCallback(async () => {
+    if (!accountRef.current || document.visibilityState !== "visible") return;
+
+    let remote: AppState;
+    try {
+      remote = await api.loadState();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setAccount(null);
+        applyState(localStore.load(), storeKey(null));
+        setNotice("Your session expired. You're working on this device again.");
+      }
+      // Anything else is a bad moment on the network; the next tick tries again.
+      return;
+    }
+
+    const account = accountRef.current;
+    if (!account) return;
+
+    const serialized = JSON.stringify(remote);
+    if (
+      !shouldAdoptRemote({
+        hasPendingWrite: pendingRef.current !== null,
+        saveInFlight: syncingRef.current,
+        local: lastSavedRef.current ?? "",
+        remote: serialized,
+      })
+    ) {
+      return;
+    }
+
+    applyState(remote, storeKey(account));
+    setNotice("Updated with changes from another device.");
+  }, [applyState]);
+
+  useEffect(() => {
+    if (!account) return;
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshFromServer();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    const id = setInterval(() => void refreshFromServer(), REFRESH_MS);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      clearInterval(id);
+    };
+  }, [account, refreshFromServer]);
+
   // Don't lose the tail of a debounce when the tab goes away.
   useEffect(() => {
     if (!account) return;
@@ -182,9 +251,6 @@ export default function Page() {
 
   const stateRef = useRef<AppState>(emptyState());
   stateRef.current = { tasks, recommendation, schedule, endTime };
-
-  const accountRef = useRef<User | null>(account);
-  accountRef.current = account;
 
   const signIn = useCallback(
     async (username: string, password: string) => {
