@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AccountMenu from "@/components/AccountMenu";
 import AuthDialog from "@/components/AuthDialog";
 import QuickAdd from "@/components/QuickAdd";
-import RecommendationCard from "@/components/RecommendationCard";
 import SchedulePanel from "@/components/SchedulePanel";
 import TaskList from "@/components/TaskList";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
@@ -14,13 +13,7 @@ import { generateSchedule, scheduleStaleReason } from "@/lib/schedule";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
-import {
-  REST_LABEL,
-  REST_WEIGHT,
-  buildWeightTable,
-  formatProbability,
-  pickWeighted,
-} from "@/lib/weights";
+import { REST_WEIGHT, buildWeightTable, formatProbability } from "@/lib/weights";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -435,15 +428,6 @@ export default function Page() {
   const tableRef = useRef(table);
   tableRef.current = table;
 
-  const recommend = useCallback(() => {
-    const picked = pickWeighted(tableRef.current);
-    setRecommendation({
-      taskId: picked ? picked.id : null,
-      title: picked ? picked.title : REST_LABEL,
-      generatedAt: new Date().toISOString(),
-    });
-  }, []);
-
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
   const endTimeRef = useRef(endTime);
@@ -480,9 +464,6 @@ export default function Page() {
       if (key === "q") {
         e.preventDefault();
         setQuickAddOpen(true);
-      } else if (key === "r") {
-        e.preventDefault();
-        recommend();
       } else if (key === "g") {
         e.preventDefault();
         regenerateSchedule();
@@ -494,7 +475,7 @@ export default function Page() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, recommend, regenerateSchedule]);
+  }, [modalOpen, regenerateSchedule]);
 
   // Notices are informational; they should not pile up.
   useEffect(() => {
@@ -502,12 +483,6 @@ export default function Page() {
     const id = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(id);
   }, [notice]);
-
-  const probabilityOf = useCallback(
-    (taskId: string) =>
-      table.entries.find((e) => e.task.id === taskId)?.probability ?? 0,
-    [table],
-  );
 
   const openCount = tasks.filter((t) => !t.completed).length;
 
@@ -609,15 +584,6 @@ export default function Page() {
         </section>
 
         <div className="stack">
-          <RecommendationCard
-            recommendation={ready ? recommendation : null}
-            tasks={tasks}
-            today={today}
-            probabilityOf={probabilityOf}
-            onRecommend={recommend}
-            canRecommend={ready}
-          />
-
           <SchedulePanel
             schedule={ready ? schedule : null}
             tasks={tasks}
@@ -663,9 +629,6 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
         <ul className="help-list">
           <li>
             <span className="kbd">Q</span> New task — type the name, trail it with a date
-          </li>
-          <li>
-            <span className="kbd">R</span> Draw a recommendation
           </li>
           <li>
             <span className="kbd">G</span> Generate today&apos;s schedule

@@ -17,15 +17,9 @@ import { ApiError, api, setApiBase } from "../lib/remote";
 import { generateSchedule, scheduleStaleReason } from "../lib/schedule";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
-import {
-  REST_WEIGHT,
-  buildWeightTable,
-  formatProbability,
-  pickWeighted,
-} from "../lib/weights";
+import { REST_WEIGHT, buildWeightTable, formatProbability } from "../lib/weights";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
-import RecommendCard from "./src/components/RecommendCard";
 import ScheduleCard from "./src/components/ScheduleCard";
 import TaskListView from "./src/components/TaskListView";
 import TaskSheet, { TaskDraft } from "./src/components/TaskSheet";
@@ -424,15 +418,6 @@ function YanTasks() {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
 
-  const recommend = useCallback(() => {
-    const picked = pickWeighted(table);
-    setRecommendation({
-      taskId: picked ? picked.id : null,
-      title: picked ? picked.title : "Rest",
-      generatedAt: new Date().toISOString(),
-    });
-  }, [table]);
-
   const regenerateSchedule = useCallback(() => {
     setSchedule(generateSchedule(tasks, table, endTime, new Date()));
   }, [tasks, table, endTime]);
@@ -443,11 +428,6 @@ function YanTasks() {
     const id = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(id);
   }, [notice]);
-
-  const probabilityOf = useCallback(
-    (taskId: string) => table.entries.find((e) => e.task.id === taskId)?.probability ?? 0,
-    [table],
-  );
 
   const openCount = tasks.filter((t) => !t.completed).length;
 
@@ -515,15 +495,6 @@ function YanTasks() {
             Working on this device only. Sign in to sync with the web app.
           </Banner>
         )}
-
-        <RecommendCard
-          recommendation={ready ? recommendation : null}
-          tasks={tasks}
-          today={today}
-          probabilityOf={probabilityOf}
-          onRecommend={recommend}
-          canRecommend={ready}
-        />
 
         <ScheduleCard
           schedule={ready ? schedule : null}
