@@ -379,8 +379,8 @@ function YanTasks() {
     [table],
   );
   const staleReason = useMemo(
-    () => scheduleStaleReason(schedule, tasks, today),
-    [schedule, tasks, today],
+    () => scheduleStaleReason(schedule, tasks, endTime, now),
+    [schedule, tasks, endTime, now],
   );
 
   const addTask = useCallback((draft: TaskDraft) => {

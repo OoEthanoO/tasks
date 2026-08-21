@@ -1,13 +1,35 @@
-import { toKey, todayKey } from "./dates";
+import { toKey } from "./dates";
 import { Schedule, ScheduleBlock, Task } from "./types";
 import { REST_LABEL, WeightTable, pickWeighted, taskSignature } from "./weights";
 
 export const BLOCK_MINUTES = 30;
 
-/** Parse "23:00" into a Date on the same calendar day as `ref`. */
-export function endOfDayFrom(ref: Date, endTime: string): Date {
+/** An end time before this hour reads as the end of a night, not a morning. */
+const SMALL_HOURS_BEFORE = 5;
+
+/**
+ * The moment the work day ends.
+ *
+ * Usually that is today at `endTime`. But an end time in the small hours means
+ * the night that is beginning, not one already gone: "my day ends at 12:00 AM",
+ * set at nine in the morning, means tonight's midnight fifteen hours away.
+ * Reading it as this morning's put the end before the start, which left the
+ * schedule permanently empty and told the user to pick a later time — advice
+ * there is no way to follow when the time you want is midnight.
+ *
+ * It only shifts when the end has genuinely not happened yet. At 2 AM an end
+ * time of 1 AM really has gone by, and the work day really is over.
+ */
+export function endOfWorkDay(now: Date, endTime: string): Date {
   const [h, m] = endTime.split(":").map(Number);
-  return new Date(ref.getFullYear(), ref.getMonth(), ref.getDate(), h, m, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0, 0);
+
+  const endsInSmallHours = h < SMALL_HOURS_BEFORE;
+  const nowInSmallHours = now.getHours() < SMALL_HOURS_BEFORE;
+  if (end <= now && endsInSmallHours && !nowInSmallHours) {
+    end.setDate(end.getDate() + 1);
+  }
+  return end;
 }
 
 /**
@@ -16,7 +38,7 @@ export function endOfDayFrom(ref: Date, endTime: string): Date {
  * half hour, and the last block is clipped to the end of the work day.
  */
 export function buildBlockTimes(now: Date, endTime: string): Array<[Date, Date]> {
-  const end = endOfDayFrom(now, endTime);
+  const end = endOfWorkDay(now, endTime);
   const start = new Date(now);
   start.setSeconds(0, 0);
   if (start >= end) return [];
@@ -76,18 +98,50 @@ export function generateSchedule(
   };
 }
 
-export type StaleReason = "day" | "tasks" | null;
+export type StaleReason = "elapsed" | "hours" | "tasks" | null;
 
-/** A schedule is only good for the day and task list it was built from. */
+/**
+ * Whether a stored schedule still describes the day in front of you.
+ *
+ * The span it covers is what matters, not the calendar day it was built on. A
+ * schedule generated at 11:50 PM to run until 1 AM is still the current plan at
+ * half past midnight, even though the date has rolled over; one built yesterday
+ * morning is not, whatever today's date is.
+ */
 export function scheduleStaleReason(
   schedule: Schedule | null,
   tasks: Task[],
-  today: string = todayKey(),
+  endTime: string,
+  now: Date = new Date(),
 ): StaleReason {
   if (!schedule) return null;
-  if (schedule.dayKey !== today) return "day";
+
+  const last = schedule.blocks[schedule.blocks.length - 1];
+  if (last) {
+    if (now.getTime() >= new Date(last.end).getTime()) return "elapsed";
+  } else if (schedule.dayKey !== toKey(now)) {
+    // No blocks to run out, so fall back to the day it was generated for.
+    return "elapsed";
+  }
+
+  // The stored end time was written on every schedule but never read, so moving
+  // the end of your day left a schedule that stops short of it — or runs past
+  // it — with nothing prompting a regenerate.
+  if (schedule.endTime !== endTime) return "hours";
   if (schedule.signature !== taskSignature(tasks)) return "tasks";
   return null;
+}
+
+/** One wording for why a schedule is stale, so the two apps cannot drift. */
+export function staleMessage(reason: Exclude<StaleReason, null>): string {
+  switch (reason) {
+    case "elapsed":
+      return "It has run past the end of its work day.";
+    case "hours":
+      return "Your work day now ends at a different time.";
+    case "tasks":
+      return "Your task list has changed since it was generated.";
+  }
 }
 
 export type ResolvedBlock = {

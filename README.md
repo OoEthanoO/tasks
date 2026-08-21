@@ -166,10 +166,19 @@ to the next :00 or :30, so at 8:32 AM you get 8:32–9:00, then 9:00–9:30, and
 on until the end of the work day (configurable, default 11:00 PM). The block
 covering the current time is highlighted.
 
-A schedule is only valid for the day and the task list it was built from. It is
-flagged as outdated when the day rolls over, or when any task is added, deleted,
-completed, or has its due date moved. Renaming a task does not invalidate it,
-since the weights are unchanged — the block simply picks up the new name.
+An end time in the small hours means the night that is starting, not one that
+has already gone: set the day to end at 12:00 AM at nine in the morning and you
+get a schedule running until tonight's midnight. Once it is actually the small
+hours that stops applying — at 2 AM a 1 AM end really has passed, and the day
+really is over.
+
+A schedule stays valid for as long as the span it covers, rather than for a
+calendar day, so one generated at 11:50 PM to run until 1 AM is still the
+current plan at half past midnight. It is flagged as outdated when it has run
+past its last block, when the work day is set to end at a different time, or
+when any task is added, deleted, completed, or has its due date moved. Renaming
+a task does not invalidate it, since the weights are unchanged — the block
+simply picks up the new name.
 
 ## Tests
 
@@ -177,9 +186,10 @@ since the weights are unchanged — the block simply picks up the new name.
 npm test
 ```
 
-229 assertions covering date parsing, the weight formulas, probability with the
+257 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
-schedule staleness, how blocks resolve against a changed task list, rejecting
+when a schedule goes stale, work days that end after midnight, how blocks
+resolve against a changed task list, rejecting
 due dates that are only digit-shaped, credential rules,
 password hashing, sanitizing untrusted state, login throttling, when a
 migration is worth offering, and an account/session/migration round-trip. The database tests run against PGlite —

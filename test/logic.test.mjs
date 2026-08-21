@@ -10,6 +10,8 @@ const {
   buildBlockTimes,
   generateSchedule,
   scheduleStaleReason,
+  staleMessage,
+  endOfWorkDay,
   indexTasks,
   resolveBlock,
 } = require("../.test-build/schedule.js");
@@ -193,6 +195,52 @@ eq(buildBlockTimes(new Date(2026, 7, 12, 23, 30), "23:00").length, 0, "past end 
 eq(buildBlockTimes(new Date(2026, 7, 12, 22, 45), "23:00").length, 1, "22:45 -> single stub");
 eq(buildBlockTimes(new Date(2026, 7, 12, 9, 0), "10:00").length, 2, "on boundary -> no sliver");
 
+console.log("== a work day that ends after midnight ==");
+// An end time in the small hours means the night starting now, not the one
+// that already passed. Read as this morning it put the end before the start,
+// so the schedule came back empty and told you to pick a later time — which is
+// not a thing you can do when the time you want is midnight.
+{
+  const at = (h, m) => new Date(2026, 7, 12, h, m);
+  const when = (d) => [d.getDate(), d.getHours(), d.getMinutes()];
+
+  eq(when(endOfWorkDay(at(9, 8), "23:00")), [12, 23, 0], "an evening end stays today");
+  eq(when(endOfWorkDay(at(9, 8), "00:00")), [13, 0, 0], "midnight means tonight");
+  eq(when(endOfWorkDay(at(9, 8), "01:00")), [13, 1, 0], "1 AM means tonight");
+  eq(when(endOfWorkDay(at(23, 10), "00:00")), [13, 0, 0], "still tonight late in the evening");
+
+  // Once it is actually the small hours, a small-hours end has really gone by.
+  eq(when(endOfWorkDay(at(2, 0), "01:00")), [12, 1, 0], "at 2 AM, a 1 AM end is over");
+  eq(when(endOfWorkDay(at(2, 0), "03:00")), [12, 3, 0], "at 2 AM, a 3 AM end is an hour away");
+
+  // A morning end that has passed is a finished day, not a 23-hour one.
+  eq(when(endOfWorkDay(at(9, 8), "08:00")), [12, 8, 0], "a passed morning end stays passed");
+  eq(when(endOfWorkDay(at(9, 8), "05:00")), [12, 5, 0], "5 AM is a morning, not a small hour");
+
+  // The behaviour that matters: these produce a usable schedule now.
+  eq(buildBlockTimes(at(9, 8), "00:00").length, 30, "9:08 AM to midnight -> 30 blocks");
+  eq(buildBlockTimes(at(23, 10), "01:00").length, 4, "11:10 PM to 1 AM -> 4 blocks");
+  eq(buildBlockTimes(at(2, 0), "01:00").length, 0, "at 2 AM a 1 AM end is still over");
+  eq(buildBlockTimes(at(9, 8), "08:00").length, 0, "a finished morning is still finished");
+
+  const overnight = buildBlockTimes(at(23, 10), "01:00");
+  eq(when(overnight[overnight.length - 1][1]), [13, 1, 0], "last block lands on tomorrow 1 AM");
+
+  // A schedule running past midnight is still the current plan at 00:30.
+  const table = buildWeightTable([mk(0)], today);
+  const night = generateSchedule([mk(0)], table, "01:00", at(23, 10));
+  eq(
+    scheduleStaleReason(night, [mk(0)], "01:00", new Date(2026, 7, 13, 0, 30)),
+    null,
+    "half past midnight -> still fresh, despite the date rolling over",
+  );
+  eq(
+    scheduleStaleReason(night, [mk(0)], "01:00", new Date(2026, 7, 13, 1, 0)),
+    "elapsed",
+    "1 AM -> the plan has run out",
+  );
+}
+
 const sched = generateSchedule([mk(0)], one, "23:00", NOW);
 eq(sched.blocks.length, 29, "schedule fills the day");
 eq(sched.dayKey, today, "schedule stamped with its day");
@@ -207,34 +255,74 @@ const baseTasks = [mk(0), mk(1)];
 const baseTable = buildWeightTable(baseTasks, today);
 const s = generateSchedule(baseTasks, baseTable, "23:00", NOW);
 
-eq(scheduleStaleReason(s, baseTasks, today), null, "unchanged -> fresh");
-eq(scheduleStaleReason(null, baseTasks, today), null, "no schedule -> no warning");
-eq(scheduleStaleReason(s, baseTasks, toKey(addDays(NOW, 1))), "day", "next day -> stale");
+const staleFor = (schedule, tasks, endTime = "23:00", when = NOW) =>
+  scheduleStaleReason(schedule, tasks, endTime, when);
+
+eq(staleFor(s, baseTasks), null, "unchanged -> fresh");
+eq(staleFor(null, baseTasks), null, "no schedule -> no warning");
+eq(staleFor(s, [...baseTasks, mk(3)]), "tasks", "task added -> stale");
+eq(staleFor(s, [baseTasks[0]]), "tasks", "task deleted -> stale");
 eq(
-  scheduleStaleReason(s, [...baseTasks, mk(3)], today),
-  "tasks",
-  "task added -> stale",
-);
-eq(scheduleStaleReason(s, [baseTasks[0]], today), "tasks", "task deleted -> stale");
-eq(
-  scheduleStaleReason(s, [baseTasks[0], { ...baseTasks[1], dueDate: T(4) }], today),
+  staleFor(s, [baseTasks[0], { ...baseTasks[1], dueDate: T(4) }]),
   "tasks",
   "due date moved -> stale",
 );
 eq(
-  scheduleStaleReason(s, [baseTasks[0], { ...baseTasks[1], completed: true }], today),
+  staleFor(s, [baseTasks[0], { ...baseTasks[1], completed: true }]),
   "tasks",
   "task completed -> stale",
 );
 eq(
-  scheduleStaleReason(s, [baseTasks[0], { ...baseTasks[1], title: "renamed" }], today),
+  staleFor(s, [baseTasks[0], { ...baseTasks[1], title: "renamed" }]),
   null,
   "rename only -> still fresh (weights unchanged)",
 );
+eq(staleFor(s, [baseTasks[1], baseTasks[0]]), null, "reordering -> still fresh");
+
+// Validity follows the span the schedule covers, not the date it was built on.
+eq(staleFor(s, baseTasks, "23:00", new Date(2026, 7, 12, 22, 59)), null, "before the end -> fresh");
 eq(
-  scheduleStaleReason(s, [baseTasks[1], baseTasks[0]], today),
-  null,
-  "reordering -> still fresh",
+  staleFor(s, baseTasks, "23:00", new Date(2026, 7, 12, 23, 0)),
+  "elapsed",
+  "the moment the last block ends -> stale",
+);
+eq(
+  staleFor(s, baseTasks, "23:00", addDays(NOW, 1)),
+  "elapsed",
+  "next day -> stale",
+);
+
+// The stored end time was previously written and never read.
+eq(staleFor(s, baseTasks, "21:00"), "hours", "work day shortened -> stale");
+eq(staleFor(s, baseTasks, "23:30"), "hours", "work day extended -> stale");
+eq(
+  staleFor(s, [...baseTasks, mk(3)], "21:00"),
+  "hours",
+  "a changed end time outranks a changed task list",
+);
+
+// A schedule with no blocks has nothing to run out, so it falls back to the day.
+{
+  const emptySched = generateSchedule(baseTasks, baseTable, "23:00", new Date(2026, 7, 12, 23, 30));
+  eq(emptySched.blocks.length, 0, "generated after the end -> no blocks");
+  eq(staleFor(emptySched, baseTasks, "23:00", new Date(2026, 7, 12, 23, 40)), null, "same day -> not yet stale");
+  eq(staleFor(emptySched, baseTasks, "23:00", addDays(NOW, 1)), "elapsed", "next day -> stale");
+  eq(
+    staleFor(emptySched, baseTasks, "23:59", new Date(2026, 7, 12, 23, 40)),
+    "hours",
+    "pushing the end time later prompts a regenerate",
+  );
+}
+
+console.log("== one wording for staleness, shared by both apps ==");
+for (const reason of ["elapsed", "hours", "tasks"]) {
+  const msg = staleMessage(reason);
+  eq(typeof msg === "string" && msg.length > 0, true, `${reason} has a message`);
+}
+eq(
+  new Set(["elapsed", "hours", "tasks"].map(staleMessage)).size,
+  3,
+  "each reason reads differently",
 );
 
 console.log("== blocks resolve against the live task list ==");

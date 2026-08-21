@@ -2,7 +2,12 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { formatDateTime, formatTime } from "../../../lib/dates";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { StaleReason, indexTasks, resolveBlock } from "../../../lib/schedule";
+import {
+  StaleReason,
+  indexTasks,
+  resolveBlock,
+  staleMessage,
+} from "../../../lib/schedule";
 import { Schedule, Task } from "../../../lib/types";
 import { c, radius } from "../theme";
 import { Banner, Btn, Card, CardHead, Empty } from "./ui";
@@ -82,9 +87,7 @@ export default function ScheduleCard({
 
       {staleReason && (
         <Banner tone="warn">
-          {staleReason === "day"
-            ? "This schedule was generated on a different day. Regenerate it for fresh picks."
-            : "Your task list changed since this was generated. Regenerate it for fresh picks."}
+          {`${staleMessage(staleReason)} Regenerate it for fresh picks.`}
         </Banner>
       )}
 

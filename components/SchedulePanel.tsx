@@ -1,7 +1,7 @@
 "use client";
 
 import { formatDateTime, formatTime } from "@/lib/dates";
-import { StaleReason, indexTasks, resolveBlock } from "@/lib/schedule";
+import { StaleReason, indexTasks, resolveBlock, staleMessage } from "@/lib/schedule";
 import { Schedule, Task } from "@/lib/types";
 
 type Props = {
@@ -50,9 +50,7 @@ export default function SchedulePanel({
           <span aria-hidden="true">⚠</span>
           <span>
             <strong>This schedule is outdated.</strong>{" "}
-            {staleReason === "day"
-              ? "It was generated on a different day."
-              : "Your task list has changed since it was generated."}{" "}
+            {staleMessage(staleReason)}{" "}
             Regenerate it to get fresh picks.
           </span>
         </div>
