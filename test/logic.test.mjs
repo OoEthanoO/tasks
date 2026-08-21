@@ -391,6 +391,100 @@ eq(
   "each reason reads differently",
 );
 
+console.log("== the four task buckets, shared by both apps ==");
+// This was written out twice, once per app, and covered by nothing. Both lists
+// have to agree on what counts as overdue and on the order inside a bucket.
+{
+  const { groupTasks } = require("../.test-build/grouping.js");
+  const task = (id, offset, extra = {}) => ({
+    task: {
+      id,
+      title: id,
+      description: "",
+      dueDate: T(offset),
+      completed: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      completedAt: null,
+      ...extra,
+    },
+    weight: 1,
+    probability: 0.1,
+  });
+  const shape = (gs) => gs.map((g) => [g.key, g.items.map((i) => i.task.id)]);
+
+  eq(groupTasks([], today), [], "no tasks -> no groups");
+
+  eq(
+    shape(groupTasks([task("future", 3), task("late", -2), task("now", 0)], today)),
+    [["overdue", ["late"]], ["today", ["now"]], ["upcoming", ["future"]]],
+    "buckets by due date, in display order",
+  );
+
+  eq(
+    groupTasks([task("late", -2)], today)[0].tone,
+    "overdue",
+    "only the overdue bucket is toned",
+  );
+  eq(
+    groupTasks([task("now", 0)], today)[0].tone,
+    undefined,
+    "today carries no tone",
+  );
+
+  // A finished task is done wherever its due date falls.
+  eq(
+    shape(groupTasks([task("d", -5, { completed: true, completedAt: "2026-08-12T09:00:00.000Z" })], today)),
+    [["done", ["d"]]],
+    "a completed overdue task files as done, not overdue",
+  );
+
+  // Nearest first, ties broken by creation order so the list never reshuffles.
+  eq(
+    shape(groupTasks([task("c", 5), task("a", 1), task("b", 3)], today))[0][1],
+    ["a", "b", "c"],
+    "upcoming runs nearest-first",
+  );
+  eq(
+    shape(
+      groupTasks(
+        [
+          task("second", 2, { createdAt: "2026-02-01T00:00:00.000Z" }),
+          task("first", 2, { createdAt: "2026-01-01T00:00:00.000Z" }),
+        ],
+        today,
+      ),
+    )[0][1],
+    ["first", "second"],
+    "same due date -> oldest first",
+  );
+  eq(
+    shape(groupTasks([task("older", -1), task("oldest", -9)], today))[0][1],
+    ["oldest", "older"],
+    "overdue runs most-overdue first",
+  );
+
+  // Completed asks the opposite question: what did I just finish?
+  const done = (id, at) =>
+    task(id, -1, { completed: true, completedAt: at });
+  eq(
+    shape(groupTasks([done("early", "2026-08-12T08:00:00.000Z"), done("late", "2026-08-12T20:00:00.000Z")], today))[0][1],
+    ["late", "early"],
+    "completed runs most-recently-finished first",
+  );
+  eq(
+    shape(groupTasks([done("dated", "2026-08-12T08:00:00.000Z"), done("undated", null)], today))[0][1],
+    ["dated", "undated"],
+    "a missing completedAt sorts last rather than throwing",
+  );
+
+  // Empty buckets never render as bare headings.
+  eq(
+    groupTasks([task("only", 4)], today).map((g) => g.key),
+    ["upcoming"],
+    "empty buckets are dropped",
+  );
+}
+
 console.log("== blocks resolve against the live task list ==");
 // Titles are snapshotted when a schedule is generated. A rename does not make
 // the schedule stale (the weights are identical), so the block has to read the

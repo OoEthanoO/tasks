@@ -197,10 +197,11 @@ are unchanged — the block simply picks up the new name.
 npm test
 ```
 
-278 assertions covering date parsing, the weight formulas, probability with the
+289 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 when a schedule goes stale, work days that end after midnight, how blocks
-resolve against a changed task list, rejecting
+resolve against a changed task list, how tasks sort into the four buckets,
+rejecting
 due dates that are only digit-shaped, credential rules,
 password hashing, sanitizing untrusted state, login throttling, when a
 migration is worth offering, and an account/session/migration round-trip. The database tests run against PGlite —
