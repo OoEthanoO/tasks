@@ -190,12 +190,22 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
   };
 }
 
+/**
+ * Whether a state holds anything the person would miss.
+ *
+ * A stored recommendation deliberately does not count. Nothing creates or
+ * clears one any more — the Up next card that did both is gone — so anyone who
+ * drew one before it was removed is carrying a value they can neither see nor
+ * get rid of. Letting that count as data meant their account never read as
+ * empty, and signing in silently skipped the offer to move the tasks still
+ * sitting on their device. It is a leftover, in the same way a customized end
+ * time is a preference rather than something you would lose.
+ *
+ * It still round-trips through storage untouched; it just no longer decides
+ * anything on its own.
+ */
 export function isEmptyState(state: AppState): boolean {
-  return (
-    state.tasks.length === 0 &&
-    state.recommendation === null &&
-    state.schedule === null
-  );
+  return state.tasks.length === 0 && state.schedule === null;
 }
 
 /**
@@ -221,7 +231,6 @@ export function summarizeState(state: AppState): string {
     parts.push(`${state.tasks.length} task${state.tasks.length === 1 ? "" : "s"}`);
   }
   if (state.schedule) parts.push("a saved schedule");
-  if (state.recommendation) parts.push("your last recommendation");
 
   if (parts.length === 0) return "nothing";
   if (parts.length === 1) return parts[0];

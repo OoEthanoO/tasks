@@ -66,12 +66,17 @@ device. Two moments raise the question, and both offer the same two answers:
 **Creating an account** asks before the account exists, so the data is part of
 the signup itself.
 
-**Signing in** asks only when the account is completely empty — no tasks, no
-schedule, no saved recommendation — and this device has something. An account
-holding anything at all is left alone: both copies matter at that point, and
-silently overwriting either one is not a call to make on your behalf. A
-customized end time does not count as data, since it is a preference rather
-than something you would lose.
+**Signing in** asks only when the account is completely empty — no tasks and no
+schedule — and this device has something. An account holding anything at all is
+left alone: both copies matter at that point, and silently overwriting either
+one is not a call to make on your behalf.
+
+Two things deliberately do not count as data. A customized end time is a
+preference rather than something you would lose. A stored recommendation is a
+leftover: nothing creates or clears one now that the Up next card is gone, so
+counting it would leave anyone who drew one before then with an account that
+never reads as empty, and no offer to move the tasks still on their device.
+Both still round-trip through storage untouched.
 
 Because you are already signed in by the time this question comes up, dismissing
 it is a real answer — the same as leaving the copy on the device.
@@ -172,7 +177,7 @@ since the weights are unchanged — the block simply picks up the new name.
 npm test
 ```
 
-227 assertions covering date parsing, the weight formulas, probability with the
+229 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 schedule staleness, how blocks resolve against a changed task list, rejecting
 due dates that are only digit-shaped, credential rules,

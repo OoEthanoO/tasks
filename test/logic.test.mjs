@@ -515,8 +515,16 @@ eq(
     schedule: { blocks: [] },
     recommendation: { taskId: null, title: "Rest" },
   }),
-  "1 task, a saved schedule and your last recommendation",
-  "three things use a serial list",
+  "1 task and a saved schedule",
+  "a stored recommendation is not something a person would miss",
+);
+eq(
+  isEmptyState({
+    ...emptyState(),
+    recommendation: { taskId: "t1", title: "Write it up" },
+  }),
+  true,
+  "a lone recommendation does not make a state non-empty",
 );
 
 console.log("== when to offer a migration ==");
@@ -532,12 +540,28 @@ const withRec = {
 
 eq(shouldOfferMigration(emptyState(), withTask), true, "empty account + local tasks asks");
 eq(shouldOfferMigration(emptyState(), withSchedule), true, "a lone saved schedule is worth asking about");
-eq(shouldOfferMigration(emptyState(), withRec), true, "a lone recommendation is too");
+// Nothing can create or clear a recommendation since the Up next card was
+// removed, so treating one as data left anybody who drew one before then with
+// an account that never read as empty — and no offer to move their real tasks.
+eq(
+  shouldOfferMigration(emptyState(), withRec),
+  false,
+  "a lone recommendation is not worth a prompt",
+);
+eq(
+  shouldOfferMigration(withRec, withTask),
+  true,
+  "an account holding only a leftover recommendation still counts as empty",
+);
+eq(
+  shouldOfferMigration(withRec, withSchedule),
+  true,
+  "...and a device schedule is still offered against it",
+);
 eq(shouldOfferMigration(emptyState(), emptyState()), false, "nothing on either side asks nothing");
 eq(shouldOfferMigration(withTask, withTask), false, "an account with tasks is never overwritten");
 eq(shouldOfferMigration(withTask, emptyState()), false, "a full account and an empty device asks nothing");
 eq(shouldOfferMigration(withSchedule, withTask), false, "a schedule alone still counts as a used account");
-eq(shouldOfferMigration(withRec, withTask), false, "so does a recommendation alone");
 
 // End time is a preference, not data: an account that only differs there is
 // still untouched, and a device that only differs there has nothing to move.
