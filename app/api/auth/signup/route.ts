@@ -16,11 +16,14 @@ import {
 } from "@/lib/db";
 import { allowAttempt, clientKey } from "@/lib/server/rate-limit";
 import { startSession } from "@/lib/server/session";
+import { accountsUnavailable } from "@/lib/server/db-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const offline = accountsUnavailable();
+  if (offline) return offline;
   if (!(await allowAttempt(clientKey(req.headers, "signup")))) {
     return NextResponse.json(
       { error: "Too many attempts. Try again in a few minutes." },

@@ -3,11 +3,14 @@ import { normalizeUsername, verifyPassword } from "@/lib/auth";
 import { findUserByUsername, loadState } from "@/lib/db";
 import { allowAttempt, clearAttempts, clientKey } from "@/lib/server/rate-limit";
 import { startSession } from "@/lib/server/session";
+import { accountsUnavailable } from "@/lib/server/db-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const offline = accountsUnavailable();
+  if (offline) return offline;
   const key = clientKey(req.headers, "login");
   if (!(await allowAttempt(key))) {
     return NextResponse.json(

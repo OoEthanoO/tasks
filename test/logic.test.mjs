@@ -391,6 +391,47 @@ eq(
   "each reason reads differently",
 );
 
+console.log("== telling an unconfigured server from a broken one ==");
+// Without a database the first query throws a clear "DATABASE_URL is not set"
+// into the log, but the browser got a bare 500 rendered as "try again in a
+// moment" — advice that never comes true. The routes answer this case
+// separately, and they ask here which variables count so the list is not
+// written out twice.
+{
+  const { configuredDatabaseUrl, setSql } = require("../.test-build/sql.js");
+  const saved = {
+    DATABASE_URL: process.env.DATABASE_URL,
+    POSTGRES_URL: process.env.POSTGRES_URL,
+  };
+  const withEnv = (env) => {
+    delete process.env.DATABASE_URL;
+    delete process.env.POSTGRES_URL;
+    Object.assign(process.env, env);
+    return configuredDatabaseUrl();
+  };
+
+  eq(withEnv({}), undefined, "no variables -> not configured");
+  eq(withEnv({ DATABASE_URL: "postgres://a" }), "postgres://a", "DATABASE_URL counts");
+  eq(withEnv({ POSTGRES_URL: "postgres://b" }), "postgres://b", "POSTGRES_URL counts too");
+  eq(
+    withEnv({ DATABASE_URL: "postgres://a", POSTGRES_URL: "postgres://b" }),
+    "postgres://a",
+    "DATABASE_URL wins when both are set",
+  );
+
+  // An injected driver is a configured database: without this the suite's own
+  // PGlite runs would report the server as having no database at all.
+  withEnv({});
+  setSql({ query: async () => [], transaction: async () => {} });
+  eq(configuredDatabaseUrl() !== undefined, true, "an injected driver counts as configured");
+  setSql(null);
+  eq(configuredDatabaseUrl(), undefined, "and clearing it goes back to the environment");
+
+  delete process.env.DATABASE_URL;
+  delete process.env.POSTGRES_URL;
+  Object.assign(process.env, JSON.parse(JSON.stringify(saved)));
+}
+
 console.log("== how a weight reads ==");
 {
   const { formatWeight, weightForDaysOut } = require("../.test-build/weights.js");

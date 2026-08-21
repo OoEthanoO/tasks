@@ -69,10 +69,20 @@ const SCHEMA: string[] = [
    )`,
 ];
 
+/**
+ * The Neon integration sets DATABASE_URL; the older Vercel Postgres
+ * integration sets POSTGRES_URL. Accept either.
+ *
+ * Exported so the routes can tell "this server has no database" apart from
+ * "the database failed", without repeating which variables count.
+ */
+export function configuredDatabaseUrl(): string | undefined {
+  if (override) return "override";
+  return process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+}
+
 function connectionString(): string {
-  // The Neon integration sets DATABASE_URL; the older Vercel Postgres
-  // integration sets POSTGRES_URL. Accept either.
-  const url = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
+  const url = configuredDatabaseUrl();
   if (!url) {
     throw new Error(
       "DATABASE_URL is not set. Add a Neon Postgres database from the Vercel " +

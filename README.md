@@ -16,9 +16,9 @@ Accounts need a Postgres connection string. Create a free database at
 DATABASE_URL="postgresql://user:password@host.neon.tech/dbname?sslmode=require"
 ```
 
-Without it the app still runs — you just stay in "On this device" mode, and the
-account buttons report that the server is unreachable. The tables are created on
-first use, so there is no migration step.
+Without it the app still runs — you stay in "On this device" mode, and the
+account buttons say accounts are not set up on this server rather than blaming
+the network. The tables are created on first use, so there is no migration step.
 
 Signed out, everything lives in `localStorage` — tasks, the last
 recommendation, and the schedule all survive a reload. Sign in and the same data
@@ -197,7 +197,7 @@ are unchanged — the block simply picks up the new name.
 npm test
 ```
 
-305 assertions covering date parsing, the weight formulas, probability with the
+311 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 when a schedule goes stale, work days that end after midnight, how blocks
 resolve against a changed task list, how tasks sort into the four buckets,

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteUser } from "@/lib/db";
 import { currentUser, endSession } from "@/lib/server/session";
+import { accountsUnavailable } from "@/lib/server/db-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const offline = accountsUnavailable();
+  if (offline) return offline;
   return NextResponse.json({ user: await currentUser(req) });
 }
 
@@ -15,6 +18,8 @@ export async function GET(req: NextRequest) {
  * and it has to be a real deletion, not a disable flag.
  */
 export async function DELETE(req: NextRequest) {
+  const offline = accountsUnavailable();
+  if (offline) return offline;
   const user = await currentUser(req);
   if (!user) {
     return NextResponse.json({ error: "Not signed in." }, { status: 401 });

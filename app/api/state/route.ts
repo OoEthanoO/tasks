@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sanitizeState } from "@/lib/app-state";
 import { loadState, saveState } from "@/lib/db";
 import { currentUser } from "@/lib/server/session";
+import { accountsUnavailable } from "@/lib/server/db-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,12 +11,16 @@ const unauthorized = () =>
   NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
 export async function GET(req: NextRequest) {
+  const offline = accountsUnavailable();
+  if (offline) return offline;
   const user = await currentUser(req);
   if (!user) return unauthorized();
   return NextResponse.json({ state: await loadState(user.id) });
 }
 
 export async function PUT(req: NextRequest) {
+  const offline = accountsUnavailable();
+  if (offline) return offline;
   const user = await currentUser(req);
   if (!user) return unauthorized();
 
