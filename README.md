@@ -112,9 +112,15 @@ Recognized trailing phrases:
   so `wednesday` typed on a Wednesday lands on the following Wednesday.
 - `aug 28`, `august 28th`, `28 aug`, `aug 28 2027`
 - `8/28`, `8/28/2027`, `2026-09-01`
-- `in 3 days`, `in 2 weeks`, `5 days ago`, `next week`, `day after tomorrow`
+- `in 3 days`, `in a week`, `in 2 weeks`, `5 days ago`, `next week`, `next month`
+- `this weekend` / `next weekend` — the coming Saturday
+- `the 25th` — that day this month, or the next month that has it
 
-A leading connector is swallowed too, so `essay due tomorrow` is named "essay".
+The words introducing the date are swallowed too, all of them, so `essay draft
+by next thursday` is named "essay draft" and not "essay draft by". `on`, `by`,
+`due`, `at`, `for`, `before`, `until`, `this`, `next` and `the` all count. `in`
+deliberately does not: `turn in tomorrow` keeps its particle and stays "turn
+in".
 Month/day without a year stays in the current year when it is at most 90 days
 past (an overdue task) and rolls to next year beyond that. Anything unrecognized
 is left alone as part of the name, and the date defaults to today. You can
@@ -191,7 +197,7 @@ are unchanged — the block simply picks up the new name.
 npm test
 ```
 
-266 assertions covering date parsing, the weight formulas, probability with the
+278 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 when a schedule goes stale, work days that end after midnight, how blocks
 resolve against a changed task list, rejecting

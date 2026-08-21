@@ -76,7 +76,21 @@ const MONTHS: Record<string, number> = {
 };
 
 /** Words that introduce a date and should be swallowed along with it. */
-const CONNECTORS = new Set(["on", "by", "due", "at", "for", "@", "this", "next"]);
+const CONNECTORS = new Set([
+  "on",
+  "by",
+  "due",
+  "at",
+  "for",
+  "@",
+  "this",
+  "next",
+  "before",
+  "until",
+  "til",
+  "till",
+  "the",
+]);
 
 const MAX_PHRASE_WORDS = 4;
 
@@ -116,6 +130,31 @@ function resolveYearless(month: number, day: number, today: Date): Date | null {
   return thisYear;
 }
 
+/** Same day, `n` months on, clamped to the last day of a shorter month. */
+function addMonths(d: Date, n: number): Date {
+  const target = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  return new Date(target.getFullYear(), target.getMonth(), Math.min(d.getDate(), lastDay));
+}
+
+/**
+ * A bare day of the month — "the 25th". This month if it has not gone by,
+ * otherwise the next month that actually has that day, so "the 31st" skips
+ * February rather than sliding into March.
+ */
+function dayOfMonth(day: number, today: Date): Date | null {
+  if (day < 1 || day > 31) return null;
+  const thisMonth = new Date(today.getFullYear(), today.getMonth(), day);
+  if (thisMonth.getDate() === day && thisMonth.getTime() >= today.getTime()) {
+    return thisMonth;
+  }
+  for (let i = 1; i <= 12; i++) {
+    const probe = new Date(today.getFullYear(), today.getMonth() + i, day);
+    if (probe.getDate() === day) return probe;
+  }
+  return null;
+}
+
 /** Next occurrence of a weekday, always strictly in the future. */
 function nextWeekday(target: number, today: Date): Date {
   const delta = (target - today.getDay() + 7) % 7;
@@ -130,6 +169,13 @@ function matchPhrase(words: string[], today: Date): Date | null {
     const w = words[0];
     if (w in DAY_WORDS) return addDays(today, DAY_WORDS[w]);
     if (w in WEEKDAYS) return nextWeekday(WEEKDAYS[w], today);
+    // "this weekend" and "next weekend" reach here too: both leading words are
+    // connectors, so they are stripped from the title anyway.
+    if (w === "weekend") return nextWeekday(6, today);
+
+    // "the 25th" — the leading "the" is a connector.
+    const ordinal = /^(\d{1,2})(?:st|nd|rd|th)$/.exec(w);
+    if (ordinal) return dayOfMonth(Number(ordinal[1]), today);
 
     // 8/28, 8-28, 8/28/2026, 2026-08-28
     const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(w);
@@ -161,7 +207,7 @@ function matchPhrase(words: string[], today: Date): Date | null {
 
     if (t === "next week") return addDays(today, 7);
     if (t === "this week") return addDays(today, 7);
-    if (t === "next month") return addDays(today, 30);
+    if (t === "next month") return addMonths(today, 1);
 
     // "aug 28" / "august 28th"
     if (a in MONTHS) {
@@ -186,11 +232,14 @@ function matchPhrase(words: string[], today: Date): Date | null {
     if (t === "day after tomorrow") return addDays(today, 2);
     if (t === "day before yesterday") return addDays(today, -2);
 
-    // "in 3 days" / "in 2 weeks"
-    if (a === "in" && /^\d{1,3}$/.test(b)) {
-      const n = Number(b);
-      if (/^days?$/.test(c)) return addDays(today, n);
-      if (/^weeks?$/.test(c)) return addDays(today, n * 7);
+    // "in 3 days" / "in 2 weeks" / "in a week"
+    if (a === "in") {
+      const n = b === "a" || b === "an" ? 1 : /^\d{1,3}$/.test(b) ? Number(b) : null;
+      if (n !== null) {
+        if (/^days?$/.test(c)) return addDays(today, n);
+        if (/^weeks?$/.test(c)) return addDays(today, n * 7);
+        if (/^months?$/.test(c)) return addMonths(today, n);
+      }
     }
     // "3 days ago"
     if (/^\d{1,3}$/.test(a) && /^days?$/.test(b) && c === "ago") {
@@ -237,8 +286,10 @@ export function parseTrailingDate(raw: string, now: Date = new Date()): ParsedTi
     if (!date) continue;
 
     let cut = tokens.length - k;
-    // Swallow a preceding connector ("finish report by tomorrow").
-    if (cut > 0 && CONNECTORS.has(normalize(tokens[cut - 1]))) {
+    // Swallow the words that introduced the date. All of them, not one: "essay
+    // draft by next thursday" matches on "thursday" and leaves "next" and "by"
+    // behind, and a task called "essay draft by" is visibly wrong.
+    while (cut > 0 && CONNECTORS.has(normalize(tokens[cut - 1]))) {
       cut -= 1;
     }
 
