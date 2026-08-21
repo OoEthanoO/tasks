@@ -172,10 +172,10 @@ since the weights are unchanged — the block simply picks up the new name.
 npm test
 ```
 
-213 assertions covering date parsing, the weight formulas, probability with the
+227 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
-schedule staleness, how blocks resolve against a changed task list, credential
-rules,
+schedule staleness, how blocks resolve against a changed task list, rejecting
+due dates that are only digit-shaped, credential rules,
 password hashing, sanitizing untrusted state, login throttling, when a
 migration is worth offering, and an account/session/migration round-trip. The database tests run against PGlite —
 real Postgres, in-process — so the SQL that ships to Neon is the SQL under test.

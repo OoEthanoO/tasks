@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { parseTrailingDate } = require("../.test-build/parse-date.js");
 const { taskWeight, buildWeightTable, REST_WEIGHT } = require("../.test-build/weights.js");
-const { toKey, addDays } = require("../.test-build/dates.js");
+const { toKey, addDays, todayKey } = require("../.test-build/dates.js");
 const {
   buildBlockTimes,
   generateSchedule,
@@ -328,6 +328,49 @@ const {
 eq(sanitizeState(null), emptyState(), "null becomes an empty state");
 eq(sanitizeState("nope"), emptyState(), "a string becomes an empty state");
 eq(sanitizeState({ tasks: "not an array" }).tasks, [], "a non-array task list is dropped");
+
+// A due date that is only digit-shaped is more dangerous than one that is
+// obviously junk: an overdue task's weight grows with the day count, so a date
+// JS silently rolls over produces a weight that swamps every real task.
+{
+  const withDue = (dueDate) =>
+    sanitizeState({
+      tasks: [{ id: "t", title: "task", dueDate }],
+    }).tasks[0].dueDate;
+
+  const todayIs = todayKey();
+  eq(withDue("0000-01-01"), todayIs, "year 0 (JS reads it as 1900) is rejected");
+  eq(withDue("0050-06-01"), todayIs, "a two-digit year is rejected");
+  eq(withDue("2026-02-30"), todayIs, "Feb 30 does not roll into March");
+  eq(withDue("2026-13-01"), todayIs, "month 13 is rejected");
+  eq(withDue("2026-00-10"), todayIs, "month 0 is rejected");
+  eq(withDue("2026-00-00"), todayIs, "all-zero month and day is rejected");
+  eq(withDue("2026-04-31"), todayIs, "April 31 is rejected");
+  eq(withDue("2027-02-29"), todayIs, "Feb 29 in a common year is rejected");
+  eq(withDue("not-a-date"), todayIs, "unshaped junk still falls back");
+
+  // Real dates, including the awkward ones, must survive untouched.
+  eq(withDue("2028-02-29"), "2028-02-29", "Feb 29 in a leap year is kept");
+  eq(withDue("2026-12-31"), "2026-12-31", "end of year is kept");
+  eq(withDue("1970-01-01"), "1970-01-01", "a genuinely ancient overdue date is kept");
+  eq(withDue(T(3)), T(3), "an ordinary date is kept");
+
+  // The point of the guard: no single task can hijack every draw.
+  const hijacked = buildWeightTable(
+    sanitizeState({
+      tasks: [
+        { id: "bad", title: "bad", dueDate: "0000-01-01" },
+        { id: "real", title: "real", dueDate: todayIs },
+      ],
+    }).tasks,
+    todayIs,
+  );
+  eq(
+    hijacked.entries.every((e) => e.probability < 0.9),
+    true,
+    "a malformed due date can no longer take ~100% of the draw",
+  );
+}
 
 const goodTask = {
   id: "t1",

@@ -54,8 +54,30 @@ function str(value: unknown, max: number, fallback = ""): string {
     .replace(SURROGATE, (match) => (match.length === 2 ? match : ""));
 }
 
+/**
+ * A due date has to be a real calendar day, not merely digit-shaped.
+ *
+ * The weight of an overdue task grows with how long it has been overdue, so a
+ * date that only *looks* valid does not fail loudly — it quietly produces an
+ * enormous day count and a weight that swamps every genuine task. "0000-01-01"
+ * is the worst of them: JS maps years 0-99 into the 1900s, so it lands in 1900
+ * and outweighs a task due today by five orders of magnitude, leaving the
+ * schedule picking it for effectively every block.
+ *
+ * Constructing the date and checking each field survives rejects both that and
+ * the silent rollovers ("2026-02-30" becomes March 2, "2026-00-00" backs into
+ * the previous November).
+ */
 function dateKey(value: unknown, fallback: string): string {
-  return typeof value === "string" && DATE_KEY.test(value) ? value : fallback;
+  if (typeof value !== "string" || !DATE_KEY.test(value)) return fallback;
+
+  const [y, m, d] = value.split("-").map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return fallback;
+
+  const probe = new Date(y, m - 1, d);
+  const roundTrips =
+    probe.getFullYear() === y && probe.getMonth() === m - 1 && probe.getDate() === d;
+  return roundTrips ? value : fallback;
 }
 
 function isoOrNull(value: unknown): string | null {
