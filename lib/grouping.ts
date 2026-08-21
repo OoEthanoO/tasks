@@ -1,5 +1,25 @@
 import { DateKey, diffDays } from "./dates";
+import { Task } from "./types";
 import { WeightedTask } from "./weights";
+
+/** Which of the four lists a task belongs in, and how urgent it reads. */
+export type DueBucket = "overdue" | "today" | "upcoming" | "done";
+
+/**
+ * The one place a task's urgency is decided.
+ *
+ * Both apps need this twice over — once to pick the list a task is filed
+ * under, and again to colour its due date — and each had written it out
+ * separately. Three copies of one rule is three chances for the heading a task
+ * sits under to disagree with the colour beside it.
+ */
+export function dueBucket(task: Task, today: DateKey): DueBucket {
+  if (task.completed) return "done";
+  const delta = diffDays(task.dueDate, today);
+  if (delta < 0) return "overdue";
+  if (delta === 0) return "today";
+  return "upcoming";
+}
 
 export type TaskGroup = {
   key: string;
@@ -27,16 +47,14 @@ export function groupTasks(entries: WeightedTask[], today: DateKey): TaskGroup[]
   const upcoming: WeightedTask[] = [];
   const done: WeightedTask[] = [];
 
+  const buckets: Record<DueBucket, WeightedTask[]> = {
+    overdue,
+    today: dueToday,
+    upcoming,
+    done,
+  };
   for (const entry of entries) {
-    // A finished task is filed as done whatever its due date says.
-    if (entry.task.completed) {
-      done.push(entry);
-      continue;
-    }
-    const delta = diffDays(entry.task.dueDate, today);
-    if (delta < 0) overdue.push(entry);
-    else if (delta === 0) dueToday.push(entry);
-    else upcoming.push(entry);
+    buckets[dueBucket(entry.task, today)].push(entry);
   }
 
   const byDue = (a: WeightedTask, b: WeightedTask) =>

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { DateKey, describeDelta, diffDays, formatDueDate } from "@/lib/dates";
-import { groupTasks } from "@/lib/grouping";
+import { DateKey, describeDelta, formatDueDate } from "@/lib/dates";
+import { dueBucket, groupTasks } from "@/lib/grouping";
 import { Task } from "@/lib/types";
-import { WeightedTask, formatProbability } from "@/lib/weights";
+import { WeightedTask, formatProbability, formatWeight } from "@/lib/weights";
 
 type Props = {
   entries: WeightedTask[];
@@ -94,14 +94,8 @@ function TaskRow({
   onDelete: () => void;
 }) {
   const { task, weight, probability } = entry;
-  const delta = diffDays(task.dueDate, today);
-  const dueClass = task.completed
-    ? ""
-    : delta < 0
-      ? " is-overdue"
-      : delta === 0
-        ? " is-today"
-        : "";
+  const DUE_CLASS = { overdue: " is-overdue", today: " is-today", upcoming: "", done: "" };
+  const dueClass = DUE_CLASS[dueBucket(task, today)];
 
   const barWidth =
     maxProbability > 0 ? Math.max(3, (probability / maxProbability) * 100) : 0;
@@ -233,11 +227,4 @@ function TaskEditor({
       </div>
     </div>
   );
-}
-
-/** Weights are either unit fractions (1/3) or small integers (2, 3, 4…). */
-function formatWeight(weight: number): string {
-  if (weight <= 0) return "0";
-  if (weight >= 1) return String(Math.round(weight * 100) / 100);
-  return `1/${Math.round(1 / weight)}`;
 }

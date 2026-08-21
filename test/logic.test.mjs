@@ -391,6 +391,32 @@ eq(
   "each reason reads differently",
 );
 
+console.log("== how a weight reads ==");
+{
+  const { formatWeight, weightForDaysOut } = require("../.test-build/weights.js");
+  eq(formatWeight(0), "0", "completed reads as 0");
+  eq(formatWeight(2), "2", "due today");
+  eq(formatWeight(1), "1", "due tomorrow");
+  eq(formatWeight(1 / 2), "1/2", "unit fraction");
+  eq(formatWeight(1 / 17), "1/17", "small unit fraction");
+
+  // The comment on formatWeight claims "1/n" is exact for everything the curve
+  // produces, rather than a rounded approximation. Walk the curve and check.
+  let exact = true;
+  const seen = new Set();
+  for (let n = -30; n <= 400; n++) {
+    const w = weightForDaysOut(n);
+    const text = formatWeight(w);
+    seen.add(text);
+    const parsed = text.includes("/")
+      ? 1 / Number(text.split("/")[1])
+      : Number(text);
+    if (Math.abs(parsed - w) > 1e-9) exact = false;
+  }
+  eq(exact, true, "every weight the curve produces round-trips exactly");
+  eq(seen.size, 431, "and each one reads differently");
+}
+
 console.log("== the four task buckets, shared by both apps ==");
 // This was written out twice, once per app, and covered by nothing. Both lists
 // have to agree on what counts as overdue and on the order inside a bucket.
@@ -411,6 +437,25 @@ console.log("== the four task buckets, shared by both apps ==");
     probability: 0.1,
   });
   const shape = (gs) => gs.map((g) => [g.key, g.items.map((i) => i.task.id)]);
+
+  const { dueBucket } = require("../.test-build/grouping.js");
+  const bare = (offset, extra = {}) => task("x", offset, extra).task;
+  eq(dueBucket(bare(-1), today), "overdue", "yesterday -> overdue");
+  eq(dueBucket(bare(0), today), "today", "today -> today");
+  eq(dueBucket(bare(1), today), "upcoming", "tomorrow -> upcoming");
+  eq(dueBucket(bare(-3, { completed: true }), today), "done", "completed wins over overdue");
+
+  // The bucket a task is filed under and the colour beside its date come from
+  // this one call, so a task can never be listed under one and coloured another.
+  for (const offset of [-5, -1, 0, 1, 9]) {
+    const entry = task(`k${offset}`, offset);
+    const groups = groupTasks([entry], today);
+    eq(
+      groups[0].key,
+      dueBucket(entry.task, today),
+      `group key matches dueBucket at ${offset}`,
+    );
+  }
 
   eq(groupTasks([], today), [], "no tasks -> no groups");
 

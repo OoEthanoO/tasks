@@ -1,14 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { DateKey, describeDelta, diffDays, formatDueDate } from "../../../lib/dates";
-import { WeightedTask, formatProbability } from "../../../lib/weights";
+import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
+import { dueBucket } from "../../../lib/grouping";
+import {
+  WeightedTask,
+  formatProbability,
+  formatWeight,
+} from "../../../lib/weights";
 import { c, radius } from "../theme";
-
-/** Weights are either unit fractions (1/3) or small integers (2, 3, 4…). */
-function formatWeight(weight: number): string {
-  if (weight <= 0) return "0";
-  if (weight >= 1) return String(Math.round(weight * 100) / 100);
-  return `1/${Math.round(1 / weight)}`;
-}
 
 export default function TaskRow({
   entry,
@@ -24,14 +22,8 @@ export default function TaskRow({
   onEdit: () => void;
 }) {
   const { task, weight, probability } = entry;
-  const delta = diffDays(task.dueDate, today);
-  const dueColor = task.completed
-    ? c.faint
-    : delta < 0
-      ? c.danger
-      : delta === 0
-        ? c.warn
-        : c.dim;
+  const DUE_COLOR = { overdue: c.danger, today: c.warn, upcoming: c.dim, done: c.faint };
+  const dueColor = DUE_COLOR[dueBucket(task, today)];
 
   const barWidth =
     maxProbability > 0 ? Math.max(3, (probability / maxProbability) * 100) : 0;

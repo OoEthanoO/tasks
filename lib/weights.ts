@@ -93,3 +93,14 @@ export function formatProbability(p: number): string {
   if (p < 0.1) return `${(p * 100).toFixed(1)}%`;
   return `${Math.round(p * 100)}%`;
 }
+
+/**
+ * How a weight reads in the list. The curve only ever produces small integers
+ * (2, 3, 4…) or unit fractions (1/2, 1/3…), so "1/n" is exact rather than an
+ * approximation — see the round-trip test that walks the whole curve.
+ */
+export function formatWeight(weight: number): string {
+  if (weight <= 0) return "0";
+  if (weight >= 1) return String(Math.round(weight * 100) / 100);
+  return `1/${Math.round(1 / weight)}`;
+}
