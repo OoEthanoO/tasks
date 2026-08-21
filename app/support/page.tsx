@@ -37,8 +37,8 @@ export default function SupportPage() {
           How the weighting works
         </h2>
         <p>
-          Every open task gets a weight from its due date, and a recommendation is
-          drawn at random in proportion to those weights.
+          Every open task gets a weight from its due date, and each pick is drawn at
+          random in proportion to those weights.
         </p>
         <ul className="help-list">
           <li>
@@ -69,9 +69,18 @@ export default function SupportPage() {
         <p>
           Generating a schedule spins the wheel once for every half hour between now
           and the end of your work day, which you set with &ldquo;Work day ends
-          at&rdquo;. Blocks that land on Rest are breaks. A schedule is only valid for
-          the day and the task list it was built from — change either and it will tell
-          you it is out of date, so regenerate for fresh picks.
+          at&rdquo;. Blocks that land on Rest are breaks. An end time in the small
+          hours means the night ahead, so setting 12:00 AM in the morning plans your
+          day through to midnight.
+        </p>
+        <p>
+          A schedule only means anything while it matches the weights it was drawn
+          from, so it tells you when it is out of date: once it has run to its last
+          block, when the date changes, when you move the end of your work day, or
+          when you add, finish, delete or re-date a task. The date counts on its own —
+          every weight is measured against today, so at midnight they all move.
+          Renaming a task is the one edit that does not, since the weighting is
+          unchanged; the block just shows the new name.
         </p>
 
         <h2 className="card-title" style={{ marginTop: 26 }}>
