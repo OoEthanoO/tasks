@@ -89,3 +89,42 @@ export function scheduleStaleReason(
   if (schedule.signature !== taskSignature(tasks)) return "tasks";
   return null;
 }
+
+export type ResolvedBlock = {
+  /** What the block should say now — not what it said when generated. */
+  title: string;
+  isRest: boolean;
+  /** The task was deleted after this schedule was built. */
+  isMissing: boolean;
+};
+
+/** Index tasks by id so a whole schedule can be resolved in one pass. */
+export function indexTasks(tasks: Task[]): Map<string, Task> {
+  return new Map(tasks.map((task) => [task.id, task]));
+}
+
+/**
+ * Resolve a stored block against the current task list.
+ *
+ * Block titles are snapshotted at generation time so that a block whose task
+ * was since deleted still reads as something rather than a blank. But renaming
+ * a task deliberately does *not* make the schedule stale — the weights are
+ * unchanged, so there is nothing to regenerate — which means the snapshot would
+ * otherwise keep showing the old name for the rest of the day. Prefer the live
+ * title whenever the task is still there, and fall back to the snapshot only
+ * once it is genuinely gone.
+ */
+export function resolveBlock(
+  block: ScheduleBlock,
+  byId: Map<string, Task>,
+): ResolvedBlock {
+  if (block.taskId === null) {
+    return { title: REST_LABEL, isRest: true, isMissing: false };
+  }
+  const live = byId.get(block.taskId);
+  return {
+    title: live ? live.title : block.title,
+    isRest: false,
+    isMissing: !live,
+  };
+}

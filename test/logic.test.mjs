@@ -10,6 +10,8 @@ const {
   buildBlockTimes,
   generateSchedule,
   scheduleStaleReason,
+  indexTasks,
+  resolveBlock,
 } = require("../.test-build/schedule.js");
 
 let pass = 0,
@@ -234,6 +236,47 @@ eq(
   null,
   "reordering -> still fresh",
 );
+
+console.log("== blocks resolve against the live task list ==");
+// Titles are snapshotted when a schedule is generated. A rename does not make
+// the schedule stale (the weights are identical), so the block has to read the
+// current title or it would show the old name for the rest of the day.
+{
+  const task = { ...mk(0), id: "keep", title: "Chem HW" };
+  const block = { start: "", end: "", taskId: "keep", title: "Chem HW" };
+
+  eq(
+    resolveBlock(block, indexTasks([task])).title,
+    "Chem HW",
+    "unchanged task -> snapshot title",
+  );
+  eq(
+    resolveBlock(block, indexTasks([{ ...task, title: "Chemistry problem set 4" }])).title,
+    "Chemistry problem set 4",
+    "renamed task -> live title, not the snapshot",
+  );
+  eq(
+    resolveBlock(block, indexTasks([task])).isMissing,
+    false,
+    "task still present -> not missing",
+  );
+
+  // Deleted is the one case the snapshot is still the best answer.
+  const orphan = resolveBlock(block, indexTasks([]));
+  eq(orphan.title, "Chem HW", "deleted task -> falls back to the snapshot");
+  eq(orphan.isMissing, true, "deleted task -> flagged missing");
+
+  const restBlock = { start: "", end: "", taskId: null, title: "Rest" };
+  const rest = resolveBlock(restBlock, indexTasks([task]));
+  eq([rest.title, rest.isRest, rest.isMissing], ["Rest", true, false], "rest block");
+
+  // A title that collides with a real task id must not confuse the lookup.
+  eq(
+    resolveBlock({ ...block, taskId: "gone" }, indexTasks([task])).isMissing,
+    true,
+    "unknown id -> missing even when other tasks exist",
+  );
+}
 
 console.log("== completed tasks are never drawn ==");
 const doneOnly = buildWeightTable([mk(0, true), mk(-3, true)], today);

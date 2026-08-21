@@ -1,9 +1,8 @@
 "use client";
 
 import { formatDateTime, formatTime } from "@/lib/dates";
-import { StaleReason } from "@/lib/schedule";
+import { StaleReason, indexTasks, resolveBlock } from "@/lib/schedule";
 import { Schedule, Task } from "@/lib/types";
-import { REST_LABEL } from "@/lib/weights";
 
 type Props = {
   schedule: Schedule | null;
@@ -24,7 +23,7 @@ export default function SchedulePanel({
   onEndTimeChange,
   onGenerate,
 }: Props) {
-  const taskIds = new Set(tasks.map((t) => t.id));
+  const byId = indexTasks(tasks);
 
   return (
     <section className="card">
@@ -79,8 +78,7 @@ export default function SchedulePanel({
               const end = new Date(block.end);
               const isPast = end <= now;
               const isNow = !isPast && start <= now;
-              const isRest = block.taskId === null;
-              const isGone = block.taskId !== null && !taskIds.has(block.taskId);
+              const { title, isRest, isMissing } = resolveBlock(block, byId);
 
               return (
                 <div
@@ -92,10 +90,10 @@ export default function SchedulePanel({
                   </span>
                   <span
                     className={`block-task${isRest ? " is-rest" : ""}${
-                      isGone ? " is-gone" : ""
+                      isMissing ? " is-gone" : ""
                     }`}
                   >
-                    {isRest ? REST_LABEL : block.title}
+                    {title}
                   </span>
                   {isNow && <span className="now-tag">Now</span>}
                 </div>

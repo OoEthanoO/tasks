@@ -2,9 +2,8 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { formatDateTime, formatTime } from "../../../lib/dates";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { StaleReason } from "../../../lib/schedule";
+import { StaleReason, indexTasks, resolveBlock } from "../../../lib/schedule";
 import { Schedule, Task } from "../../../lib/types";
-import { REST_LABEL } from "../../../lib/weights";
 import { c, radius } from "../theme";
 import { Banner, Btn, Card, CardHead, Empty } from "./ui";
 
@@ -27,7 +26,7 @@ export default function ScheduleCard({
   onEndTimeChange: (value: string) => void;
   onGenerate: () => void;
 }) {
-  const taskIds = new Set(tasks.map((t) => t.id));
+  const byId = indexTasks(tasks);
   const [draftEnd, setDraftEnd] = useState(endTime);
 
   // Only the blocks that are still ahead are worth scrolling on a phone; the
@@ -114,8 +113,7 @@ export default function ScheduleCard({
               const end = new Date(block.end);
               const isPast = end <= now;
               const isNow = !isPast && start <= now;
-              const isRest = block.taskId === null;
-              const isGone = block.taskId !== null && !taskIds.has(block.taskId);
+              const { title, isRest, isMissing } = resolveBlock(block, byId);
 
               return (
                 <View
@@ -129,11 +127,11 @@ export default function ScheduleCard({
                     style={[
                       s.blockTask,
                       isRest && { color: c.ok },
-                      isGone && s.blockGone,
+                      isMissing && s.blockGone,
                     ]}
                     numberOfLines={1}
                   >
-                    {isRest ? REST_LABEL : block.title}
+                    {title}
                   </Text>
                   {isNow && <Text style={s.nowTag}>NOW</Text>}
                 </View>

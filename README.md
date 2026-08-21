@@ -1,8 +1,8 @@
 # YanTasks
 
 A task manager that decides what you should work on next. Tasks are weighted by
-how urgent they are, and the recommender draws one at random in proportion to
-those weights.
+how urgent they are, and the scheduler draws from them at random in proportion
+to those weights — once per 30-minute block, to lay out the rest of your day.
 
 ```bash
 npm install
@@ -86,7 +86,6 @@ username shows a live sync state — including a retry if a save fails.
 | Key | Action |
 | --- | --- |
 | `Q` | New task |
-| `R` | Draw a recommendation |
 | `G` | Generate today's schedule |
 | `↵` | Create the task |
 | `Esc` | Close anything |
@@ -165,7 +164,7 @@ covering the current time is highlighted.
 A schedule is only valid for the day and the task list it was built from. It is
 flagged as outdated when the day rolls over, or when any task is added, deleted,
 completed, or has its due date moved. Renaming a task does not invalidate it,
-since the weights are unchanged.
+since the weights are unchanged — the block simply picks up the new name.
 
 ## Tests
 
@@ -173,9 +172,10 @@ since the weights are unchanged.
 npm test
 ```
 
-186 assertions covering date parsing, the weight formulas, probability with the
+213 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
-schedule staleness, credential rules,
+schedule staleness, how blocks resolve against a changed task list, credential
+rules,
 password hashing, sanitizing untrusted state, login throttling, when a
 migration is worth offering, and an account/session/migration round-trip. The database tests run against PGlite —
 real Postgres, in-process — so the SQL that ships to Neon is the SQL under test.
