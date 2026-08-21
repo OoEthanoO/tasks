@@ -186,7 +186,7 @@ simply picks up the new name.
 npm test
 ```
 
-257 assertions covering date parsing, the weight formulas, probability with the
+260 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 when a schedule goes stale, work days that end after midnight, how blocks
 resolve against a changed task list, rejecting

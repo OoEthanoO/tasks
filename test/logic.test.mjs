@@ -314,6 +314,24 @@ eq(
   );
 }
 
+// The "hours" reason compares a stored end time against a live one. Both go
+// through sanitizeEndTime, which pads "9:00" to "09:00" — if only one side were
+// normalized, every loaded schedule would read as stale forever.
+{
+  const { sanitizeState, sanitizeEndTime } = require("../.test-build/app-state.js");
+  const roundTripped = (endTime) => {
+    const clean = sanitizeEndTime(endTime);
+    const sched = generateSchedule(baseTasks, baseTable, clean, NOW);
+    const state = sanitizeState(
+      JSON.parse(JSON.stringify({ tasks: baseTasks, schedule: sched, endTime, recommendation: null })),
+    );
+    return scheduleStaleReason(state.schedule, state.tasks, state.endTime, NOW);
+  };
+  eq(roundTripped("23:00"), null, "a saved schedule reloads as fresh");
+  eq(roundTripped("9:00"), null, "an unpadded end time normalizes on both sides");
+  eq(roundTripped("00:00"), null, "a midnight end time reloads as fresh");
+}
+
 console.log("== one wording for staleness, shared by both apps ==");
 for (const reason of ["elapsed", "hours", "tasks"]) {
   const msg = staleMessage(reason);
