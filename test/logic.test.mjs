@@ -230,14 +230,21 @@ console.log("== a work day that ends after midnight ==");
   const table = buildWeightTable([mk(0)], today);
   const night = generateSchedule([mk(0)], table, "01:00", at(23, 10));
   eq(
-    scheduleStaleReason(night, [mk(0)], "01:00", new Date(2026, 7, 13, 0, 30)),
+    scheduleStaleReason(night, [mk(0)], "01:00", at(23, 40)),
     null,
-    "half past midnight -> still fresh, despite the date rolling over",
+    "before midnight -> fresh",
+  );
+  // It may run past midnight, but it cannot stay valid there: every weight it
+  // was drawn from belongs to the previous day.
+  eq(
+    scheduleStaleReason(night, [mk(0)], "01:00", new Date(2026, 7, 13, 0, 30)),
+    "day",
+    "half past midnight -> stale, the weights have all moved",
   );
   eq(
     scheduleStaleReason(night, [mk(0)], "01:00", new Date(2026, 7, 13, 1, 0)),
     "elapsed",
-    "1 AM -> the plan has run out",
+    "1 AM -> the plan has also run out",
   );
 }
 
@@ -292,6 +299,27 @@ eq(
   "next day -> stale",
 );
 
+// Nothing edited, but the date moved: every weight is measured against today,
+// so a schedule drawn yesterday no longer matches what the list is showing.
+{
+  const openEnded = generateSchedule(baseTasks, baseTable, "23:59", new Date(2026, 7, 12, 23, 50));
+  eq(openEnded.blocks.length, 1, "a late schedule still has one block");
+  eq(
+    scheduleStaleReason(openEnded, baseTasks, "23:59", new Date(2026, 7, 12, 23, 55)),
+    null,
+    "same evening -> fresh",
+  );
+  eq(
+    scheduleStaleReason(openEnded, baseTasks, "23:59", new Date(2026, 7, 13, 0, 1)),
+    "elapsed",
+    "running out takes precedence over the date change",
+  );
+}
+
+// Every weight-bearing edit invalidates, so a task added after generation is
+// never left with a zero chance of being scheduled.
+eq(staleFor(s, [...baseTasks, mk(5)]), "tasks", "an added task always forces a regenerate");
+
 // The stored end time was previously written and never read.
 eq(staleFor(s, baseTasks, "21:00"), "hours", "work day shortened -> stale");
 eq(staleFor(s, baseTasks, "23:30"), "hours", "work day extended -> stale");
@@ -306,7 +334,11 @@ eq(
   const emptySched = generateSchedule(baseTasks, baseTable, "23:00", new Date(2026, 7, 12, 23, 30));
   eq(emptySched.blocks.length, 0, "generated after the end -> no blocks");
   eq(staleFor(emptySched, baseTasks, "23:00", new Date(2026, 7, 12, 23, 40)), null, "same day -> not yet stale");
-  eq(staleFor(emptySched, baseTasks, "23:00", addDays(NOW, 1)), "elapsed", "next day -> stale");
+  eq(
+    staleFor(emptySched, baseTasks, "23:00", addDays(NOW, 1)),
+    "day",
+    "with no blocks to run out, the date change is what catches it",
+  );
   eq(
     staleFor(emptySched, baseTasks, "23:59", new Date(2026, 7, 12, 23, 40)),
     "hours",
@@ -333,13 +365,13 @@ eq(
 }
 
 console.log("== one wording for staleness, shared by both apps ==");
-for (const reason of ["elapsed", "hours", "tasks"]) {
+for (const reason of ["elapsed", "day", "hours", "tasks"]) {
   const msg = staleMessage(reason);
   eq(typeof msg === "string" && msg.length > 0, true, `${reason} has a message`);
 }
 eq(
-  new Set(["elapsed", "hours", "tasks"].map(staleMessage)).size,
-  3,
+  new Set(["elapsed", "day", "hours", "tasks"].map(staleMessage)).size,
+  4,
   "each reason reads differently",
 );
 

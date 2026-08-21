@@ -98,15 +98,20 @@ export function generateSchedule(
   };
 }
 
-export type StaleReason = "elapsed" | "hours" | "tasks" | null;
+export type StaleReason = "elapsed" | "day" | "hours" | "tasks" | null;
 
 /**
  * Whether a stored schedule still describes the day in front of you.
  *
- * The span it covers is what matters, not the calendar day it was built on. A
- * schedule generated at 11:50 PM to run until 1 AM is still the current plan at
- * half past midnight, even though the date has rolled over; one built yesterday
- * morning is not, whatever today's date is.
+ * The rule it has to keep is that a schedule always reflects the weights of the
+ * current task list. Anything that moves a weight has to invalidate it —
+ * otherwise a task added after generation would sit at a zero chance of ever
+ * being scheduled, which is the opposite of what the list is for.
+ *
+ * That is why the date rolling over counts, even though nothing was edited.
+ * Weights are measured against today, so at midnight every one of them moves:
+ * a task due tomorrow becomes a task due today, 1 becomes 2, and the shares
+ * every block was drawn from are no longer the shares on screen.
  */
 export function scheduleStaleReason(
   schedule: Schedule | null,
@@ -117,12 +122,11 @@ export function scheduleStaleReason(
   if (!schedule) return null;
 
   const last = schedule.blocks[schedule.blocks.length - 1];
-  if (last) {
-    if (now.getTime() >= new Date(last.end).getTime()) return "elapsed";
-  } else if (schedule.dayKey !== toKey(now)) {
-    // No blocks to run out, so fall back to the day it was generated for.
-    return "elapsed";
-  }
+  if (last && now.getTime() >= new Date(last.end).getTime()) return "elapsed";
+
+  // A schedule may legitimately run past midnight, but it cannot stay valid
+  // there: every weight it was drawn from belongs to the day before.
+  if (schedule.dayKey !== toKey(now)) return "day";
 
   // The stored end time was written on every schedule but never read, so moving
   // the end of your day left a schedule that stops short of it — or runs past
@@ -137,6 +141,8 @@ export function staleMessage(reason: Exclude<StaleReason, null>): string {
   switch (reason) {
     case "elapsed":
       return "It has run past the end of its work day.";
+    case "day":
+      return "The date has changed, so every task's weight has moved.";
     case "hours":
       return "Your work day now ends at a different time.";
     case "tasks":

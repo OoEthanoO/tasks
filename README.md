@@ -172,13 +172,18 @@ get a schedule running until tonight's midnight. Once it is actually the small
 hours that stops applying — at 2 AM a 1 AM end really has passed, and the day
 really is over.
 
-A schedule stays valid for as long as the span it covers, rather than for a
-calendar day, so one generated at 11:50 PM to run until 1 AM is still the
-current plan at half past midnight. It is flagged as outdated when it has run
-past its last block, when the work day is set to end at a different time, or
-when any task is added, deleted, completed, or has its due date moved. Renaming
-a task does not invalidate it, since the weights are unchanged — the block
-simply picks up the new name.
+A schedule has to reflect the weights of the current task list at all times.
+Anything that moves a weight invalidates it, because the alternative is worse:
+if adding a task did not force a regenerate, that task would sit at a zero
+chance of ever being scheduled.
+
+So it is flagged as outdated when it has run past its last block, when the date
+changes, when the work day is set to end at a different time, or when any task
+is added, deleted, completed, or has its due date moved. The date counts even
+though nothing was edited — weights are measured against today, so at midnight
+every one of them moves and a schedule that ran past midnight is drawing on
+yesterday's shares. Renaming a task does not invalidate it, since the weights
+are unchanged — the block simply picks up the new name.
 
 ## Tests
 
@@ -186,7 +191,7 @@ simply picks up the new name.
 npm test
 ```
 
-260 assertions covering date parsing, the weight formulas, probability with the
+266 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 when a schedule goes stale, work days that end after midnight, how blocks
 resolve against a changed task list, rejecting
