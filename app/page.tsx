@@ -6,6 +6,7 @@ import AuthDialog from "@/components/AuthDialog";
 import QuickAdd from "@/components/QuickAdd";
 import SchedulePanel from "@/components/SchedulePanel";
 import TaskList from "@/components/TaskList";
+import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
 import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api } from "@/lib/remote";
@@ -499,6 +500,7 @@ export default function Page() {
           <span className="today-chip">
             {ready ? formatDueDate(today, today) + " · " + formatFullDate(today) : "…"}
           </span>
+          <ThemeToggle />
           <AccountMenu
             user={account}
             loading={authLoading}

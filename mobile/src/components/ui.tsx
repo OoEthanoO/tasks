@@ -1,13 +1,12 @@
 import { ReactNode } from "react";
 import {
   Pressable,
-  StyleSheet,
   Text,
   TextStyle,
   View,
   ViewStyle,
 } from "react-native";
-import { c, radius } from "../theme";
+import { radius, themed, useStyles, useTheme } from "../theme";
 
 export function Card({
   children,
@@ -16,10 +15,12 @@ export function Card({
   children: ReactNode;
   style?: ViewStyle;
 }) {
+  const s = useStyles(styles);
   return <View style={[s.card, style]}>{children}</View>;
 }
 
 export function CardHead({ title, right }: { title: string; right?: ReactNode }) {
+  const s = useStyles(styles);
   return (
     <View style={s.cardHead}>
       <Text style={s.cardTitle}>{title}</Text>
@@ -38,6 +39,9 @@ type BtnProps = {
 };
 
 export function Btn({ label, onPress, tone = "plain", disabled, style }: BtnProps) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
+
   const toneStyle =
     tone === "primary"
       ? { backgroundColor: c.accent, borderColor: c.accent }
@@ -48,7 +52,7 @@ export function Btn({ label, onPress, tone = "plain", disabled, style }: BtnProp
           : { backgroundColor: c.elev2, borderColor: c.line };
 
   const textColor =
-    tone === "primary" ? "#fff" : tone === "danger" ? c.danger : c.text;
+    tone === "primary" ? c.onAccent : tone === "danger" ? c.danger : c.text;
 
   return (
     <Pressable
@@ -77,10 +81,13 @@ export function Banner({
   children: ReactNode;
   action?: ReactNode;
 }) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
+
   const palette = {
     danger: { bg: c.dangerSoft, border: c.danger, fg: c.danger },
-    ok: { bg: "#4ade8018", border: "#4ade8055", fg: c.ok },
-    warn: { bg: "#ffb45418", border: "#ffb45455", fg: c.warn },
+    ok: { bg: c.okSoft, border: c.okLine, fg: c.ok },
+    warn: { bg: c.warnSoft, border: c.warnLine, fg: c.warn },
   }[tone];
 
   return (
@@ -103,6 +110,8 @@ export function GroupLabel({
   count: number;
   tone?: "overdue";
 }) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
   return (
     <View style={s.groupLabel}>
       <Text
@@ -124,6 +133,7 @@ export function Field({
   children: ReactNode;
   hint?: string;
 }) {
+  const s = useStyles(styles);
   return (
     <View style={s.field}>
       <Text style={s.fieldLabel}>{label}</Text>
@@ -134,6 +144,8 @@ export function Field({
 }
 
 export function Empty({ lines }: { lines: string[] }) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
   return (
     <View style={s.empty}>
       {lines.map((line, i) => (
@@ -145,18 +157,12 @@ export function Empty({ lines }: { lines: string[] }) {
   );
 }
 
-export const inputStyle: TextStyle = {
-  backgroundColor: c.bg,
-  borderWidth: 1,
-  borderColor: c.line,
-  borderRadius: radius.sm,
-  color: c.text,
-  paddingHorizontal: 12,
-  paddingVertical: 10,
-  fontSize: 16,
-};
+/** The text-input look, shared by every sheet that takes typing. */
+export function useInputStyle(): TextStyle {
+  return useStyles(styles).input;
+}
 
-const s = StyleSheet.create({
+const styles = themed((c) => ({
   card: {
     backgroundColor: c.elev,
     borderRadius: radius.lg,
@@ -223,4 +229,14 @@ const s = StyleSheet.create({
   hint: { color: c.faint, fontSize: 12, marginTop: 6 },
   empty: { paddingVertical: 26, alignItems: "center", gap: 4 },
   emptyText: { color: c.dim, fontSize: 14, textAlign: "center" },
-});
+  input: {
+    backgroundColor: c.bg,
+    borderWidth: 1,
+    borderColor: c.line,
+    borderRadius: radius.sm,
+    color: c.text,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+  },
+}));

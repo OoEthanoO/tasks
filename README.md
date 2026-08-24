@@ -191,19 +191,53 @@ every one of them moves and a schedule that ran past midnight is drawing on
 yesterday's shares. Renaming a task does not invalidate it, since the weights
 are unchanged — the block simply picks up the new name.
 
+## Appearance
+
+Light and dark, on both the web app and the phone. The control offers three
+states — **System**, **Light**, **Dark** — and the choice is remembered per
+device (`localStorage` on the web, `AsyncStorage` on the phone). System is the
+default and follows the OS setting live; if the OS will not say which it wants,
+the app stays dark, which is what it has always been.
+
+The two apps share `lib/theme.ts` — the preference type, the storage key, and
+the rule that turns a preference plus an OS setting into a scheme — so a
+preference means the same thing on both. Only the palettes are per-platform:
+CSS custom properties in `app/globals.css`, a plain object in
+`mobile/src/theme.tsx`. The values are kept in step by hand.
+
+Two things worth knowing if you touch this:
+
+- On the web a small inline script in `app/layout.tsx` resolves the theme and
+  stamps `data-theme` on `<html>` before the first paint, so there is no flash
+  of the wrong colours. That is also why `<html>` carries
+  `suppressHydrationWarning` — the server cannot know the stored choice.
+- On the phone `StyleSheet.create` runs at import time, far too early to know
+  the scheme, so themed styles are declared with `themed((c) => ({ … }))` and
+  read with `useStyles(…)`. Both sheets are built once; the hook picks. A new
+  component that hardcodes a colour will simply not follow the theme.
+
+Elevation runs the other way in light: a card is white and the page behind it
+is grey, where in dark the card is the lighter of the two. The accent and the
+three status hues are darkened for light so they still carry 4.5:1 on white.
+
+Note that `mobile/app.json` sets `userInterfaceStyle` to `automatic`. It was
+`dark`, which pins `useColorScheme()` and would keep System from ever reporting
+light — changing it needs a native rebuild, not just a reload.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-311 assertions covering date parsing, the weight formulas, probability with the
+331 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 when a schedule goes stale, work days that end after midnight, how blocks
 resolve against a changed task list, how tasks sort into the four buckets,
 rejecting
 due dates that are only digit-shaped, credential rules,
 password hashing, sanitizing untrusted state, login throttling, when a
-migration is worth offering, and an account/session/migration round-trip. The database tests run against PGlite —
+migration is worth offering, how a stored theme preference resolves against the
+OS setting, and an account/session/migration round-trip. The database tests run against PGlite —
 real Postgres, in-process — so the SQL that ships to Neon is the SQL under test.
 They need no `DATABASE_URL` and reach no network.

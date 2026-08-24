@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
 import { dueBucket } from "../../../lib/grouping";
 import {
@@ -6,7 +6,7 @@ import {
   formatProbability,
   formatWeight,
 } from "../../../lib/weights";
-import { c, radius } from "../theme";
+import { radius, themed, useStyles, useTheme } from "../theme";
 
 export default function TaskRow({
   entry,
@@ -21,6 +21,8 @@ export default function TaskRow({
   onToggle: () => void;
   onEdit: () => void;
 }) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
   const { task, weight, probability } = entry;
   const DUE_COLOR = { overdue: c.danger, today: c.warn, upcoming: c.dim, done: c.faint };
   const dueColor = DUE_COLOR[dueBucket(task, today)];
@@ -96,7 +98,7 @@ export default function TaskRow({
   );
 }
 
-const s = StyleSheet.create({
+const styles = themed((c) => ({
   row: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -117,7 +119,7 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   checkDone: { backgroundColor: c.accent, borderColor: c.accent },
-  checkMark: { color: "#fff", fontSize: 13, fontWeight: "800", lineHeight: 16 },
+  checkMark: { color: c.onAccent, fontSize: 13, fontWeight: "800", lineHeight: 16 },
   main: { flex: 1, gap: 3 },
   title: { color: c.text, fontSize: 16, fontWeight: "600" },
   titleDone: { color: c.faint, textDecorationLine: "line-through" },
@@ -140,4 +142,4 @@ const s = StyleSheet.create({
     overflow: "hidden",
   },
   probFill: { height: 3, backgroundColor: c.accent },
-});
+}));

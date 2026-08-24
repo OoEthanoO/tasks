@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { formatDateTime, formatTime } from "../../../lib/dates";
 import { sanitizeEndTime } from "../../../lib/app-state";
 import {
@@ -9,7 +9,7 @@ import {
   staleMessage,
 } from "../../../lib/schedule";
 import { Schedule, Task } from "../../../lib/types";
-import { c, radius } from "../theme";
+import { radius, themed, useStyles, useTheme } from "../theme";
 import { Banner, Btn, Card, CardHead, Empty } from "./ui";
 
 const PRESETS = ["21:00", "22:00", "23:00", "23:59"];
@@ -31,6 +31,8 @@ export default function ScheduleCard({
   onEndTimeChange: (value: string) => void;
   onGenerate: () => void;
 }) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
   const byId = indexTasks(tasks);
   const [draftEnd, setDraftEnd] = useState(endTime);
 
@@ -155,7 +157,7 @@ export default function ScheduleCard({
   );
 }
 
-const s = StyleSheet.create({
+const styles = themed((c) => ({
   controls: { marginBottom: 12, gap: 8 },
   controlLabel: { color: c.dim, fontSize: 13 },
   timeInput: {
@@ -218,4 +220,4 @@ const s = StyleSheet.create({
     borderTopColor: c.lineSoft,
   },
   stat: { color: c.faint, fontSize: 12 },
-});
+}));

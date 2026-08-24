@@ -5,7 +5,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -13,8 +12,8 @@ import {
 import { DateKey, addDays, formatDueDate, fromKey, toKey, todayKey } from "../../../lib/dates";
 import { parseTrailingDate } from "../../../lib/parse-date";
 import { Task } from "../../../lib/types";
-import { c, radius } from "../theme";
-import { Btn, Field, inputStyle } from "./ui";
+import { radius, themed, useStyles, useTheme } from "../theme";
+import { Btn, Field, useInputStyle } from "./ui";
 
 export type TaskDraft = { title: string; description: string; dueDate: DateKey };
 
@@ -34,6 +33,9 @@ const QUICK: Array<{ label: string; days: number }> = [
 ];
 
 export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
+  const inputStyle = useInputStyle();
   const editing = task !== null;
   const today = todayKey();
 
@@ -185,14 +187,14 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
   );
 }
 
-const s = StyleSheet.create({
+const styles = themed((c) => ({
   backdrop: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#000000aa",
+    backgroundColor: c.scrim,
   },
   sheetWrap: { flex: 1, justifyContent: "flex-end" },
   sheet: {
@@ -256,4 +258,4 @@ const s = StyleSheet.create({
   chipTextActive: { color: c.accent, fontWeight: "700" },
   textarea: { minHeight: 76, textAlignVertical: "top" },
   actions: { flexDirection: "row", gap: 10, marginTop: 14, alignItems: "center" },
-});
+}));

@@ -4,21 +4,124 @@
   box-sizing: border-box;
 }
 
-:root {
+/*
+ * Two palettes, one set of names. The base is dark; `data-theme="light"` swaps
+ * it. A small script in the document head resolves the stored preference (or,
+ * for "system", the OS setting) and stamps `data-theme` on <html> before the
+ * first paint, so exactly one of these blocks ever applies and neither needs
+ * duplicating inside a media query. The app is client-rendered throughout, so
+ * depending on that script costs nothing that was not already the case.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
   --bg: #0a0b0e;
   --bg-elev: #14161c;
   --bg-elev-2: #1b1e26;
+  /* Recessed against its card: rows, inputs, the quick-add footer. */
+  --bg-sunken: #101218;
+  --input-bg: #0c0e13;
+  --kbd-bg: #0f1116;
   --line: #262a34;
   --line-soft: #1e222a;
+  /* Hairlines that are not container edges: separators, unchecked boxes. */
+  --line-strong: #3a4152;
+  --sep: #333947;
+  --track: #23283354;
   --text: #e7e9ee;
   --text-dim: #9aa1b1;
   --text-faint: #6b7383;
+
   --accent: #7c6cff;
   --accent-soft: #7c6cff22;
+  --accent-hover: #8b7dff;
+  --accent-line: #3f37a8;
+  --accent-active: #2a2450;
+  /* The accent as text — lightened here so it carries on a dark surface. */
+  --accent-text: #b6adff;
+  /* Sits on a filled accent surface, so it tracks the accent, not the page. */
+  --on-accent: #fff;
+  --on-accent-line: #ffffff44;
+  --on-accent-bg: #ffffff1f;
+
   --danger: #ff6b6b;
   --danger-soft: #ff6b6b1f;
+  --danger-line: #6b2020;
+  --danger-text: #ffa3a3;
   --warn: #ffb454;
+  --warn-soft: #ffb4540f;
+  --warn-line: #6b4a15;
+  --warn-text: #f0c48a;
   --ok: #4ade80;
+  --ok-soft: #4ade8010;
+  --ok-line: #1f5b39;
+  --ok-text: #86e7ac;
+
+  --btn-hover-bg: #232733;
+  --btn-hover-line: #333949;
+  --row-hover: #ffffff05;
+  --overlay: rgba(4, 5, 8, 0.72);
+  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+/*
+ * Elevation runs the other way here: a card is white and the page behind it is
+ * grey, where in the dark palette the card is the lighter of the two. The
+ * accent and the three status hues are darkened so they still carry 4.5:1
+ * against white — the dark palette's versions are far too pale for that.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f6f7f9;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #eef0f4;
+  --bg-sunken: #fafbfc;
+  --input-bg: #ffffff;
+  --kbd-bg: #eceff4;
+  --line: #d5d9e2;
+  --line-soft: #e4e7ee;
+  --line-strong: #b9c0cd;
+  --sep: #c3c9d5;
+  --track: #e0e4ec;
+  --text: #1a1d24;
+  --text-dim: #5b6373;
+  --text-faint: #6e7686;
+
+  --accent: #5b4bd6;
+  --accent-soft: #5b4bd614;
+  --accent-hover: #4d3ec4;
+  --accent-line: #b9b0f0;
+  --accent-active: #ddd8fa;
+  --accent-text: #4d3ec4;
+  --on-accent: #fff;
+  --on-accent-line: #ffffff66;
+  --on-accent-bg: #ffffff2e;
+
+  --danger: #c8302f;
+  --danger-soft: #c8302f14;
+  --danger-line: #e8a9a8;
+  --danger-text: #a82724;
+  --warn: #a86412;
+  --warn-soft: #a8641210;
+  --warn-line: #e6c48a;
+  --warn-text: #8a5210;
+  --ok: #197a45;
+  --ok-soft: #197a4510;
+  --ok-line: #a9d9be;
+  --ok-text: #12653a;
+
+  --btn-hover-bg: #e3e6ec;
+  --btn-hover-line: #c3c9d5;
+  --row-hover: #00000008;
+  --overlay: rgba(23, 26, 33, 0.45);
+  --shadow-modal: 0 24px 60px rgba(20, 24, 35, 0.18);
+}
+
+/* Scheme-independent. */
+:root {
   --radius: 12px;
   --radius-sm: 8px;
   --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -108,6 +211,41 @@ select {
   border-radius: 999px;
 }
 
+/* ---------- theme toggle ---------- */
+
+.theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--bg-elev);
+}
+
+.theme-option {
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.theme-option:hover {
+  color: var(--text-dim);
+}
+
+.theme-option.is-active {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+
+.theme-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .columns {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -171,20 +309,20 @@ select {
 }
 
 .btn:hover {
-  background: #232733;
-  border-color: #333949;
+  background: var(--btn-hover-bg);
+  border-color: var(--btn-hover-line);
 }
 
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 550;
 }
 
 .btn-primary:hover {
-  background: #8b7dff;
-  border-color: #8b7dff;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .btn-ghost {
@@ -217,14 +355,14 @@ select {
   padding: 3px 5px;
   border-radius: 4px;
   border: 1px solid var(--line);
-  background: #0f1116;
+  background: var(--kbd-bg);
   color: var(--text-dim);
 }
 
 .btn-primary .kbd {
-  border-color: #ffffff44;
-  background: #ffffff1f;
-  color: #fff;
+  border-color: var(--on-accent-line);
+  background: var(--on-accent-bg);
+  color: var(--on-accent);
 }
 
 /* ---------- task list ---------- */
@@ -262,7 +400,7 @@ select {
   padding: 12px;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
-  background: #101218;
+  background: var(--bg-sunken);
   margin-bottom: 8px;
   transition: border-color 0.12s ease;
 }
@@ -281,7 +419,7 @@ select {
   width: 18px;
   height: 18px;
   margin: 2px 0 0;
-  border: 1.5px solid #3a4152;
+  border: 1.5px solid var(--line-strong);
   border-radius: 6px;
   background: transparent;
   cursor: pointer;
@@ -305,7 +443,7 @@ select {
   top: 1px;
   width: 4px;
   height: 9px;
-  border: solid #fff;
+  border: solid var(--on-accent);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -356,7 +494,7 @@ select {
 }
 
 .sep {
-  color: #333947;
+  color: var(--sep);
 }
 
 .prob {
@@ -383,7 +521,7 @@ select {
   width: 52px;
   height: 3px;
   border-radius: 2px;
-  background: #23283354;
+  background: var(--track);
   overflow: hidden;
 }
 
@@ -443,7 +581,7 @@ select {
 .input,
 .textarea {
   width: 100%;
-  background: #0c0e13;
+  background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 9px 11px;
@@ -476,7 +614,7 @@ select {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(4, 5, 8, 0.72);
+  background: var(--overlay);
   backdrop-filter: blur(3px);
   display: flex;
   align-items: flex-start;
@@ -491,7 +629,7 @@ select {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: 14px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -532,9 +670,9 @@ select {
 }
 
 .pill.is-auto {
-  border-color: #3f37a8;
+  border-color: var(--accent-line);
   background: var(--accent-soft);
-  color: #b6adff;
+  color: var(--accent-text);
 }
 
 .strike {
@@ -556,7 +694,7 @@ select {
   gap: 8px;
   padding: 12px 20px;
   border-top: 1px solid var(--line-soft);
-  background: #101218;
+  background: var(--bg-sunken);
 }
 
 .hint {
@@ -594,12 +732,11 @@ select {
 }
 
 .time-input {
-  background: #0c0e13;
+  background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 6px 9px;
   outline: none;
-  color-scheme: dark;
 }
 
 .time-input:focus {
@@ -618,9 +755,9 @@ select {
 }
 
 .banner.warn {
-  border-color: #6b4a15;
-  background: #ffb4540f;
-  color: #f0c48a;
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn-text);
 }
 
 .banner strong {
@@ -647,7 +784,7 @@ select {
 }
 
 .block:hover {
-  background: #ffffff05;
+  background: var(--row-hover);
 }
 
 .block.is-past {
@@ -669,7 +806,7 @@ select {
 }
 
 .block.is-now .block-time {
-  color: #b6adff;
+  color: var(--accent-text);
 }
 
 .block-task {
@@ -760,7 +897,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 20px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-modal);
 }
 
 .help-panel h2 {
@@ -808,7 +945,7 @@ select {
 }
 
 .account-chip.is-error {
-  border-color: #6b2020;
+  border-color: var(--danger-line);
   color: var(--danger);
 }
 
@@ -836,15 +973,15 @@ select {
 }
 
 .banner.ok {
-  border-color: #1f5b39;
-  background: #4ade8010;
-  color: #86e7ac;
+  border-color: var(--ok-line);
+  background: var(--ok-soft);
+  color: var(--ok-text);
 }
 
 .banner.danger {
-  border-color: #6b2020;
+  border-color: var(--danger-line);
   background: var(--danger-soft);
-  color: #ffa3a3;
+  color: var(--danger-text);
 }
 
 .toast {
@@ -860,7 +997,7 @@ select {
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: 14px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-modal);
   overflow: hidden;
 }
 
@@ -941,7 +1078,7 @@ select {
 
 .auth-choice:hover:not(:disabled) {
   border-color: var(--accent);
-  background: #232733;
+  background: var(--btn-hover-bg);
 }
 
 .auth-choice:disabled {
@@ -950,13 +1087,13 @@ select {
 }
 
 .auth-choice.is-primary {
-  border-color: #3f37a8;
+  border-color: var(--accent-line);
   background: var(--accent-soft);
 }
 
 .auth-choice.is-primary:hover:not(:disabled) {
   border-color: var(--accent);
-  background: #2a2450;
+  background: var(--accent-active);
 }
 
 .auth-choice-title {

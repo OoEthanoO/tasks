@@ -5,7 +5,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -13,8 +12,8 @@ import {
 import { isEmptyState, summarizeState } from "../../../lib/app-state";
 import { validatePassword, validateUsername } from "../../../lib/auth-rules";
 import { AppState } from "../../../lib/types";
-import { c, radius } from "../theme";
-import { Banner, Btn, Field, inputStyle } from "./ui";
+import { radius, themed, useStyles, useTheme } from "../theme";
+import { Banner, Btn, Field, useInputStyle } from "./ui";
 
 type Mode = "signin" | "signup";
 type Step = "form" | "migrate";
@@ -42,6 +41,9 @@ export default function AuthSheet({
   onAdoptLocal,
   onClose,
 }: Props) {
+  const { c } = useTheme();
+  const s = useStyles(styles);
+  const inputStyle = useInputStyle();
   const [mode, setMode] = useState<Mode>(initialMode);
   const [step, setStep] = useState<Step>("form");
   const [migrateFor, setMigrateFor] = useState<MigrateFor>("signup");
@@ -256,14 +258,14 @@ export default function AuthSheet({
   );
 }
 
-const s = StyleSheet.create({
+const styles = themed((c) => ({
   backdrop: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#000000aa",
+    backgroundColor: c.scrim,
   },
   sheetWrap: { flex: 1, justifyContent: "flex-end" },
   sheet: {
@@ -293,7 +295,7 @@ const s = StyleSheet.create({
     marginBottom: 18,
   },
   tab: { flex: 1, paddingVertical: 9, borderRadius: 6, alignItems: "center" },
-  tabActive: { backgroundColor: c.elev2 },
+  tabActive: { backgroundColor: c.raised },
   tabText: { color: c.dim, fontSize: 14, fontWeight: "600" },
   tabTextActive: { color: c.text },
   heading: { color: c.text, fontSize: 19, fontWeight: "700", marginBottom: 8 },
@@ -314,4 +316,4 @@ const s = StyleSheet.create({
   note: { color: c.dim, fontSize: 13, lineHeight: 19, marginBottom: 14 },
   hint: { color: c.faint, fontSize: 12 },
   foot: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
-});
+}));

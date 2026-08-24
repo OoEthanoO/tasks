@@ -6,7 +6,6 @@ import {
   RefreshControl,
   ScrollView,
   StatusBar,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -23,10 +22,11 @@ import AuthSheet from "./src/components/AuthSheet";
 import ScheduleCard from "./src/components/ScheduleCard";
 import TaskListView from "./src/components/TaskListView";
 import TaskSheet, { TaskDraft } from "./src/components/TaskSheet";
+import ThemeChip from "./src/components/ThemeChip";
 import { Banner, Btn, Card, CardHead } from "./src/components/ui";
 import { API_BASE } from "./src/config";
 import { guestStore, newId } from "./src/store";
-import { c, radius } from "./src/theme";
+import { ThemeProvider, radius, themed, useStyles, useTheme } from "./src/theme";
 
 setApiBase(API_BASE);
 
@@ -41,6 +41,8 @@ const REFRESH_MS = 30_000;
 
 function YanTasks() {
   const insets = useSafeAreaInsets();
+  const { c, scheme } = useTheme();
+  const s = useStyles(styles);
 
   const [ready, setReady] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -433,7 +435,10 @@ function YanTasks() {
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={c.bg} />
+      <StatusBar
+        barStyle={scheme === "light" ? "dark-content" : "light-content"}
+        backgroundColor={c.bg}
+      />
 
       <View style={s.topbar}>
         <View style={{ flex: 1 }}>
@@ -444,6 +449,8 @@ function YanTasks() {
             {ready ? formatDueDate(today, today) + " · " + fullDate(today) : "…"}
           </Text>
         </View>
+
+        <ThemeChip />
 
         <Pressable
           onPress={() => (account ? setAccountSheet(true) : setAuthSheet("signin"))}
@@ -603,9 +610,11 @@ function YanTasks() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <YanTasks />
-    </SafeAreaProvider>
+    <ThemeProvider>
+      <SafeAreaProvider>
+        <YanTasks />
+      </SafeAreaProvider>
+    </ThemeProvider>
   );
 }
 
@@ -618,7 +627,7 @@ function fullDate(key: string): string {
   });
 }
 
-const s = StyleSheet.create({
+const styles = themed((c) => ({
   root: { flex: 1, backgroundColor: c.bg },
   topbar: {
     flexDirection: "row",
@@ -667,17 +676,17 @@ const s = StyleSheet.create({
     backgroundColor: c.accent,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
+    shadowColor: c.shadow,
     shadowOpacity: 0.4,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
   fabText: {
-    color: "#fff",
+    color: c.onAccent,
     fontSize: 30,
     fontWeight: "500",
     lineHeight: Platform.OS === "ios" ? 34 : 36,
     marginTop: -2,
   },
-});
+}));

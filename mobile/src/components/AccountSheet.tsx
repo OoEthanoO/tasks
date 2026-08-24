@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { AppState, User } from "../../../lib/types";
 import { summarizeState } from "../../../lib/app-state";
-import { c } from "../theme";
+import { themed, useStyles } from "../theme";
 import { Banner, Btn } from "./ui";
 
 const PRIVACY_URL = "https://tasks.ethanyanxu.com/privacy";
@@ -21,6 +21,7 @@ export default function AccountSheet({
   onDeleteAccount: () => Promise<void>;
   onClose: () => void;
 }) {
+  const s = useStyles(styles);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,14 +114,14 @@ export default function AccountSheet({
   );
 }
 
-const s = StyleSheet.create({
+const styles = themed((c) => ({
   backdrop: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#000000aa",
+    backgroundColor: c.scrim,
   },
   sheetWrap: { flex: 1, justifyContent: "flex-end" },
   sheet: {
@@ -159,4 +160,4 @@ const s = StyleSheet.create({
     marginBottom: 6,
   },
   dangerBody: { color: c.dim, fontSize: 13, lineHeight: 19, marginBottom: 12 },
-});
+}));

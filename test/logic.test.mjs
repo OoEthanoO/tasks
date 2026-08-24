@@ -619,6 +619,50 @@ let alwaysRest = true;
 for (let i = 0; i < 500; i++) if (pickWeightedOnce(doneOnly) !== null) alwaysRest = false;
 eq(alwaysRest, true, "500 draws all return Rest");
 
+console.log("== theme preference, shared by both apps ==");
+const {
+  THEME_PREFERENCES,
+  sanitizeThemePreference,
+  resolveColorScheme,
+  nextThemePreference,
+  themePreferenceLabel,
+} = require("../.test-build/theme.js");
+
+eq(sanitizeThemePreference("light"), "light", "an explicit light choice survives");
+eq(sanitizeThemePreference("dark"), "dark", "an explicit dark choice survives");
+eq(sanitizeThemePreference("system"), "system", "following the system survives");
+// Storage that is empty, blocked, or written by an older build.
+eq(sanitizeThemePreference(null), "system", "nothing stored -> follow the system");
+eq(sanitizeThemePreference(""), "system", "an empty value -> follow the system");
+eq(sanitizeThemePreference("Dark"), "system", "the wrong case is not a choice");
+eq(sanitizeThemePreference("sepia"), "system", "an unknown scheme -> follow the system");
+eq(sanitizeThemePreference(7), "system", "a non-string -> follow the system");
+
+// A pinned choice ignores the system entirely, in both directions.
+eq(resolveColorScheme("light", "dark"), "light", "light pinned over a dark system");
+eq(resolveColorScheme("dark", "light"), "dark", "dark pinned over a light system");
+eq(resolveColorScheme("light", null), "light", "a pinned choice needs no system");
+eq(resolveColorScheme("system", "light"), "light", "following a light system");
+eq(resolveColorScheme("system", "dark"), "dark", "following a dark system");
+// The app was dark long before it was anything else: an unreadable system
+// setting stays dark rather than flashing light at someone who never asked.
+eq(resolveColorScheme("system", null), "dark", "an unknown system stays dark");
+
+// The phone's control cycles in place, so the order has to close the loop.
+eq(THEME_PREFERENCES, ["system", "light", "dark"], "three states, in control order");
+eq(nextThemePreference("system"), "light", "system steps to light");
+eq(nextThemePreference("light"), "dark", "light steps to dark");
+eq(nextThemePreference("dark"), "system", "dark wraps back to system");
+let cycled = "system";
+for (let i = 0; i < THEME_PREFERENCES.length; i++) cycled = nextThemePreference(cycled);
+eq(cycled, "system", "a full cycle returns to where it started");
+
+eq(
+  THEME_PREFERENCES.map(themePreferenceLabel),
+  ["System", "Light", "Dark"],
+  "every state has a label",
+);
+
 console.log("== credential rules ==");
 const { validateUsername, validatePassword, normalizeUsername } = require("../.test-build/auth-rules.js");
 
