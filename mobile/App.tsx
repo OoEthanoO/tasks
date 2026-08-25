@@ -13,12 +13,18 @@ import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-cont
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "../lib/app-state";
 import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
-import { generateSchedule, scheduleStaleReason } from "../lib/schedule";
+import {
+  REGENERATE_CONFIRM,
+  generateSchedule,
+  needsRegenerateConfirmation,
+  scheduleStaleReason,
+} from "../lib/schedule";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
 import { REST_WEIGHT, buildWeightTable, formatProbability } from "../lib/weights";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
+import ConfirmSheet from "./src/components/ConfirmSheet";
 import ScheduleCard from "./src/components/ScheduleCard";
 import TaskListView from "./src/components/TaskListView";
 import TaskSheet, { TaskDraft } from "./src/components/TaskSheet";
@@ -55,6 +61,7 @@ function YanTasks() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authSheet, setAuthSheet] = useState<"signin" | "signup" | null>(null);
   const [accountSheet, setAccountSheet] = useState(false);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -421,8 +428,19 @@ function YanTasks() {
   }, []);
 
   const regenerateSchedule = useCallback(() => {
+    setConfirmRegenerate(false);
     setSchedule(generateSchedule(tasks, table, endTime, new Date()));
   }, [tasks, table, endTime]);
+
+  // A schedule that is still accurate is worth one tap to protect; a stale or
+  // empty one is not, and goes straight through.
+  const requestRegenerate = useCallback(() => {
+    if (needsRegenerateConfirmation(schedule, staleReason)) {
+      setConfirmRegenerate(true);
+      return;
+    }
+    regenerateSchedule();
+  }, [schedule, staleReason, regenerateSchedule]);
 
   // Notices are informational; they should not pile up.
   useEffect(() => {
@@ -510,7 +528,7 @@ function YanTasks() {
           now={now}
           staleReason={staleReason}
           onEndTimeChange={setEndTime}
-          onGenerate={regenerateSchedule}
+          onGenerate={requestRegenerate}
         />
 
         <Card>
@@ -591,6 +609,17 @@ function YanTasks() {
           onSignOut={signOut}
           onDeleteAccount={deleteAccount}
           onClose={() => setAccountSheet(false)}
+        />
+      )}
+
+      {confirmRegenerate && (
+        <ConfirmSheet
+          title={REGENERATE_CONFIRM.title}
+          body={REGENERATE_CONFIRM.body}
+          confirmLabel={REGENERATE_CONFIRM.confirm}
+          cancelLabel={REGENERATE_CONFIRM.cancel}
+          onConfirm={regenerateSchedule}
+          onCancel={() => setConfirmRegenerate(false)}
         />
       )}
 

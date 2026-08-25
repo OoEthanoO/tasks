@@ -191,6 +191,15 @@ every one of them moves and a schedule that ran past midnight is drawing on
 yesterday's shares. Renaming a task does not invalidate it, since the weights
 are unchanged — the block simply picks up the new name.
 
+Regenerating when the schedule is *not* outdated asks first. `G` is a single
+unmodified keystroke sitting next to nothing in particular, and a regenerate
+redraws every block, so hitting it by accident would quietly replace a
+schedule that was still describing your day correctly. A schedule that is
+outdated regenerates straight away — it needs to, and a question there would
+only be in the way — and so does one that does not exist yet, or one with no
+blocks in it, since neither holds any picks worth keeping. The rule and the
+wording both live in `lib/schedule.ts` so the two apps cannot drift.
+
 ## Appearance
 
 Light and dark, on both the web app and the phone. The control offers three
@@ -230,9 +239,10 @@ light — changing it needs a native rebuild, not just a reload.
 npm test
 ```
 
-331 assertions covering date parsing, the weight formulas, probability with the
+343 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
-when a schedule goes stale, work days that end after midnight, how blocks
+when a schedule goes stale, when regenerating is worth asking about,
+work days that end after midnight, how blocks
 resolve against a changed task list, how tasks sort into the four buckets,
 rejecting
 due dates that are only digit-shaped, credential rules,

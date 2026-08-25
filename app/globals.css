@@ -917,6 +917,38 @@ select {
   color: var(--text-dim);
 }
 
+/* ---------- confirm dialog ---------- */
+
+.confirm-panel {
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: var(--shadow-modal);
+}
+
+.confirm-title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.confirm-body {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* ---------- accounts ---------- */
 
 .account {

@@ -136,6 +136,35 @@ export function scheduleStaleReason(
   return null;
 }
 
+/**
+ * Whether regenerating would throw away a schedule that is still good, and so
+ * is worth stopping to ask about.
+ *
+ * A stale schedule needs regenerating, so asking would only be in the way. A
+ * schedule that does not exist has nothing to lose, and neither does one with
+ * no blocks in it — that is the work-day-already-over case, where the empty
+ * panel is itself telling you to push the end time out and generate again.
+ * What is left is a live schedule that still describes the day accurately,
+ * where regenerating silently replaces every pick with a fresh draw.
+ */
+export function needsRegenerateConfirmation(
+  schedule: Schedule | null,
+  staleReason: StaleReason,
+): boolean {
+  return schedule !== null && schedule.blocks.length > 0 && staleReason === null;
+}
+
+/** One wording for that question, so the two apps cannot drift. */
+export const REGENERATE_CONFIRM = {
+  title: "Regenerate this schedule?",
+  body:
+    "Nothing has changed since it was generated, so it still describes the rest " +
+    "of your day. Regenerating draws every block again, so the picks on screen " +
+    "now will be replaced.",
+  confirm: "Regenerate",
+  cancel: "Keep it",
+} as const;
+
 /** One wording for why a schedule is stale, so the two apps cannot drift. */
 export function staleMessage(reason: Exclude<StaleReason, null>): string {
   switch (reason) {

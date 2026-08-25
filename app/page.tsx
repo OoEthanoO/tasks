@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AccountMenu from "@/components/AccountMenu";
 import AuthDialog from "@/components/AuthDialog";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import QuickAdd from "@/components/QuickAdd";
 import SchedulePanel from "@/components/SchedulePanel";
 import TaskList from "@/components/TaskList";
@@ -10,7 +11,12 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
 import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api } from "@/lib/remote";
-import { generateSchedule, scheduleStaleReason } from "@/lib/schedule";
+import {
+  REGENERATE_CONFIRM,
+  generateSchedule,
+  needsRegenerateConfirmation,
+  scheduleStaleReason,
+} from "@/lib/schedule";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
@@ -34,6 +40,7 @@ export default function Page() {
   const [now, setNow] = useState(() => new Date());
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
 
   const [account, setAccount] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -435,13 +442,29 @@ export default function Page() {
   endTimeRef.current = endTime;
 
   const regenerateSchedule = useCallback(() => {
+    setConfirmRegenerate(false);
     setSchedule(
       generateSchedule(tasksRef.current, tableRef.current, endTimeRef.current, new Date()),
     );
   }, []);
 
+  // Both the button and G come through here. Refs rather than the values
+  // themselves, because the key handler outlives the render it was bound in.
+  const scheduleRef = useRef(schedule);
+  scheduleRef.current = schedule;
+  const staleReasonRef = useRef(staleReason);
+  staleReasonRef.current = staleReason;
+
+  const requestRegenerate = useCallback(() => {
+    if (needsRegenerateConfirmation(scheduleRef.current, staleReasonRef.current)) {
+      setConfirmRegenerate(true);
+      return;
+    }
+    regenerateSchedule();
+  }, [regenerateSchedule]);
+
   // Global hotkeys. Typing in a field always wins over a shortcut.
-  const modalOpen = quickAddOpen || authDialog !== null;
+  const modalOpen = quickAddOpen || authDialog !== null || confirmRegenerate;
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -457,6 +480,7 @@ export default function Page() {
       if (e.key === "Escape") {
         setQuickAddOpen(false);
         setHelpOpen(false);
+        setConfirmRegenerate(false);
         return;
       }
       if (typing || modalOpen) return;
@@ -467,7 +491,7 @@ export default function Page() {
         setQuickAddOpen(true);
       } else if (key === "g") {
         e.preventDefault();
-        regenerateSchedule();
+        requestRegenerate();
       } else if (e.key === "?") {
         e.preventDefault();
         setHelpOpen((v) => !v);
@@ -476,7 +500,7 @@ export default function Page() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, regenerateSchedule]);
+  }, [modalOpen, requestRegenerate]);
 
   // Notices are informational; they should not pile up.
   useEffect(() => {
@@ -593,7 +617,7 @@ export default function Page() {
             now={now}
             staleReason={staleReason}
             onEndTimeChange={setEndTime}
-            onGenerate={regenerateSchedule}
+            onGenerate={requestRegenerate}
           />
         </div>
       </div>
@@ -610,6 +634,17 @@ export default function Page() {
           onSignUp={signUp}
           onAdoptLocal={adoptLocal}
           onClose={() => setAuthDialog(null)}
+        />
+      )}
+
+      {confirmRegenerate && (
+        <ConfirmDialog
+          title={REGENERATE_CONFIRM.title}
+          body={REGENERATE_CONFIRM.body}
+          confirmLabel={REGENERATE_CONFIRM.confirm}
+          cancelLabel={REGENERATE_CONFIRM.cancel}
+          onConfirm={regenerateSchedule}
+          onCancel={() => setConfirmRegenerate(false)}
         />
       )}
 

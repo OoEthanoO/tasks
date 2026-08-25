@@ -14,6 +14,8 @@ const {
   endOfWorkDay,
   indexTasks,
   resolveBlock,
+  needsRegenerateConfirmation,
+  REGENERATE_CONFIRM,
 } = require("../.test-build/schedule.js");
 
 let pass = 0,
@@ -379,6 +381,60 @@ eq(
   eq(roundTripped("9:00"), null, "an unpadded end time normalizes on both sides");
   eq(roundTripped("00:00"), null, "a midnight end time reloads as fresh");
 }
+
+console.log("== when regenerating is worth asking about ==");
+// `s` is the fresh schedule built above from baseTasks at 23:00.
+eq(
+  needsRegenerateConfirmation(s, staleFor(s, baseTasks)),
+  true,
+  "a live, accurate schedule is worth stopping for",
+);
+eq(
+  needsRegenerateConfirmation(null, staleFor(null, baseTasks)),
+  false,
+  "no schedule -> nothing to lose, no question",
+);
+// Every reason to be stale is a reason to regenerate without being asked.
+for (const [label, reason] of [
+  ["tasks", staleFor(s, [...baseTasks, mk(3)])],
+  ["day", staleFor(s, baseTasks, "23:00", new Date(2026, 7, 13, 8, 0))],
+  ["hours", staleFor(s, baseTasks, "21:00")],
+]) {
+  eq(reason !== null, true, `the ${label} case really is stale`);
+  eq(
+    needsRegenerateConfirmation(s, reason),
+    false,
+    `a schedule stale for ${label} regenerates without asking`,
+  );
+}
+
+// The work-day-already-over case: the panel is already telling you to push the
+// end time out and generate again, so it must not argue when you do.
+const overTasks = [mk(0)];
+const overTable = buildWeightTable(overTasks, today);
+const emptySchedule = generateSchedule(
+  overTasks,
+  overTable,
+  "08:00",
+  new Date(2026, 7, 12, 9, 0),
+);
+eq(emptySchedule.blocks.length, 0, "a work day already over yields no blocks");
+eq(
+  needsRegenerateConfirmation(emptySchedule, null),
+  false,
+  "an empty schedule holds no picks, so there is nothing to protect",
+);
+
+eq(
+  [REGENERATE_CONFIRM.confirm, REGENERATE_CONFIRM.cancel],
+  ["Regenerate", "Keep it"],
+  "both apps offer the same two answers",
+);
+eq(
+  REGENERATE_CONFIRM.title.length > 0 && REGENERATE_CONFIRM.body.length > 0,
+  true,
+  "the question and its explanation are both worded once",
+);
 
 console.log("== one wording for staleness, shared by both apps ==");
 for (const reason of ["elapsed", "day", "hours", "tasks"]) {
