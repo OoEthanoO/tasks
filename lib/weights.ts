@@ -1,5 +1,5 @@
 import { DateKey, diffDays, todayKey } from "./dates";
-import { Task } from "./types";
+import { RestMode, Task } from "./types";
 
 /**
  * The weight curve, where `n` is the number of days until a task is due
@@ -25,6 +25,36 @@ export function weightForDaysOut(n: number): number {
  */
 export const REST_WEIGHT = weightForDaysOut(1);
 export const REST_LABEL = "Rest";
+
+/** Advanced rest off, with the example kinds ready for whoever turns it on. */
+export function defaultRestMode(): RestMode {
+  return { advanced: false, types: ["Code", "Game"] };
+}
+
+/** The kinds in play right now — empty whenever plain "Rest" is what shows. */
+export function activeRestTypes(restMode: RestMode): string[] {
+  return restMode.advanced ? restMode.types : [];
+}
+
+/**
+ * Which kind of rest this one turned out to be.
+ *
+ * Rest has already won by the time this runs: its share of the wheel is fixed
+ * by REST_WEIGHT and decided in `pickWeighted`, and nothing here can widen or
+ * narrow it. This only divides that slice evenly among the kinds on offer, so
+ * two of them are 50/50 and the amount of rest in a day is exactly what it
+ * was before the feature existed.
+ *
+ * `roll` is injectable so the split can be walked deterministically in tests.
+ */
+export function pickRestLabel(restMode: RestMode, roll: number = Math.random()): string {
+  const types = activeRestTypes(restMode);
+  if (types.length === 0) return REST_LABEL;
+  // Clamped rather than modulo'd: a roll of exactly 1 would otherwise wrap to
+  // the first kind and give it a hair more than its share.
+  const index = Math.min(types.length - 1, Math.floor(roll * types.length));
+  return types[index];
+}
 
 /** A task's pull on the recommender. Completed tasks weigh 0 and never win. */
 export function taskWeight(task: Task, today: DateKey = todayKey()): number {

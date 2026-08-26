@@ -233,15 +233,46 @@ Note that `mobile/app.json` sets `userInterfaceStyle` to `automatic`. It was
 `dark`, which pins `useColorScheme()` and would keep System from ever reporting
 light — changing it needs a native rebuild, not just a reload.
 
+## Advanced rest
+
+Rest can be split into kinds — Code, Game, Walk, whatever you like. Turn on
+**Advanced rest** under the schedule and each rest block becomes one of them,
+drawn evenly: two kinds are 50/50, three are a third each.
+
+This is post-processing and nothing more. How often Rest comes up at all is
+still `REST_WEIGHT` against the task pile, decided in `pickWeighted` before any
+of this runs, so a day with advanced rest on has exactly as much rest in it as
+the same day with it off — there is a test that generates both ways and
+compares the counts. The kinds rename the slice; they cannot resize it.
+
+Switching the mode on does not cost you the schedule you are already working
+from. `applyRestMode` re-labels the rest blocks in place, leaving the task
+picks, the block times, the generated timestamp and the signature alone — so
+the schedule does not go stale and nothing asks you to regenerate. Only blocks
+showing a kind that is no longer on offer get redrawn, which makes it stable
+to call on every edit: switching off and back on, or adding a kind, leaves
+valid labels exactly where they were, and deleting a kind moves only the
+blocks that were using it.
+
+Turning the mode off keeps the list, so switching back on does not mean typing
+them again. A kind that has been deleted never lingers on screen either —
+`resolveBlock` only ever shows a kind that is currently on offer, and falls
+back to plain "Rest" otherwise.
+
+Kinds are capped at 20, trimmed, and de-duplicated case-insensitively. That
+last one is not cosmetic: "Code" listed twice next to "Game" would quietly make
+code two-thirds of every rest.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-343 assertions covering date parsing, the weight formulas, probability with the
+398 assertions covering date parsing, the weight formulas, probability with the
 hidden Rest task and how its share moves as work piles up, block boundaries,
 when a schedule goes stale, when regenerating is worth asking about,
+splitting rest into kinds without changing how much rest there is,
 work days that end after midnight, how blocks
 resolve against a changed task list, how tasks sort into the four buckets,
 rejecting

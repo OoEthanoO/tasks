@@ -1,4 +1,9 @@
-import { DEFAULT_END_TIME, sanitizeEndTime, sanitizeState } from "./app-state";
+import {
+  DEFAULT_END_TIME,
+  sanitizeEndTime,
+  sanitizeRestMode,
+  sanitizeState,
+} from "./app-state";
 import { Statement, ensureSchema, getSql } from "./sql";
 import { AppState, Recommendation, Schedule, Task, User } from "./types";
 
@@ -211,9 +216,11 @@ export async function loadState(userId: string): Promise<AppState> {
       end_time: string;
       recommendation: string | null;
       schedule: string | null;
-    }>(`SELECT end_time, recommendation, schedule FROM prefs WHERE user_id = $1`, [
-      userId,
-    ])
+      rest_mode: string | null;
+    }>(
+      `SELECT end_time, recommendation, schedule, rest_mode FROM prefs WHERE user_id = $1`,
+      [userId],
+    )
   )[0];
 
   return {
@@ -221,6 +228,7 @@ export async function loadState(userId: string): Promise<AppState> {
     recommendation: parseJson<Recommendation>(prefs?.recommendation),
     schedule: parseJson<Schedule>(prefs?.schedule),
     endTime: sanitizeEndTime(prefs?.end_time),
+    restMode: sanitizeRestMode(parseJson<unknown>(prefs?.rest_mode)),
   };
 }
 
@@ -264,17 +272,19 @@ export async function saveState(userId: string, incoming: AppState): Promise<voi
   });
 
   statements.push({
-    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule)
-                VALUES ($1, $2, $3, $4)
+    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_mode)
+                VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (user_id) DO UPDATE SET
                 end_time = excluded.end_time,
                 recommendation = excluded.recommendation,
-                schedule = excluded.schedule`,
+                schedule = excluded.schedule,
+                rest_mode = excluded.rest_mode`,
     params: [
       userId,
       state.endTime,
       state.recommendation ? JSON.stringify(state.recommendation) : null,
       state.schedule ? JSON.stringify(state.schedule) : null,
+      JSON.stringify(state.restMode),
     ],
   });
 

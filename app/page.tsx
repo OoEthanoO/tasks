@@ -13,14 +13,20 @@ import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api } from "@/lib/remote";
 import {
   REGENERATE_CONFIRM,
+  applyRestMode,
   generateSchedule,
   needsRegenerateConfirmation,
   scheduleStaleReason,
 } from "@/lib/schedule";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
-import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
-import { REST_WEIGHT, buildWeightTable, formatProbability } from "@/lib/weights";
+import { AppState, Recommendation, RestMode, Schedule, Task, User } from "@/lib/types";
+import {
+  REST_WEIGHT,
+  buildWeightTable,
+  defaultRestMode,
+  formatProbability,
+} from "@/lib/weights";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -37,6 +43,7 @@ export default function Page() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
+  const [restMode, setRestMode] = useState<RestMode>(defaultRestMode);
   const [now, setNow] = useState(() => new Date());
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -60,6 +67,7 @@ export default function Page() {
     setRecommendation(state.recommendation);
     setSchedule(state.schedule);
     setEndTime(state.endTime);
+    setRestMode(state.restMode);
     loadedForRef.current = key;
     lastSavedRef.current = JSON.stringify(state);
     setReady(true);
@@ -158,7 +166,7 @@ export default function Page() {
     // Ignore the render in between swapping stores.
     if (loadedForRef.current !== key) return;
 
-    const state: AppState = { tasks, recommendation, schedule, endTime };
+    const state: AppState = { tasks, recommendation, schedule, endTime, restMode };
     const serialized = JSON.stringify(state);
     if (serialized === lastSavedRef.current) return;
 
@@ -171,7 +179,7 @@ export default function Page() {
     pendingRef.current = state;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
-  }, [tasks, recommendation, schedule, endTime, ready, account, flushRemote]);
+  }, [tasks, recommendation, schedule, endTime, restMode, ready, account, flushRemote]);
 
   /**
    * Pull the account's copy back down, so edits made on the phone (or another
@@ -251,7 +259,7 @@ export default function Page() {
   /* ---------- accounts ---------- */
 
   const stateRef = useRef<AppState>(emptyState());
-  stateRef.current = { tasks, recommendation, schedule, endTime };
+  stateRef.current = { tasks, recommendation, schedule, endTime, restMode };
 
   const signIn = useCallback(
     async (username: string, password: string) => {
@@ -440,11 +448,26 @@ export default function Page() {
   tasksRef.current = tasks;
   const endTimeRef = useRef(endTime);
   endTimeRef.current = endTime;
+  const restModeRef = useRef(restMode);
+  restModeRef.current = restMode;
+
+  // Changing the kinds re-labels the rest blocks already on screen instead of
+  // asking for a regenerate — the task picks are unaffected either way.
+  const changeRestMode = useCallback((next: RestMode) => {
+    setRestMode(next);
+    setSchedule((prev) => applyRestMode(prev, next));
+  }, []);
 
   const regenerateSchedule = useCallback(() => {
     setConfirmRegenerate(false);
     setSchedule(
-      generateSchedule(tasksRef.current, tableRef.current, endTimeRef.current, new Date()),
+      generateSchedule(
+        tasksRef.current,
+        tableRef.current,
+        endTimeRef.current,
+        new Date(),
+        restModeRef.current,
+      ),
     );
   }, []);
 
@@ -616,6 +639,8 @@ export default function Page() {
             endTime={endTime}
             now={now}
             staleReason={staleReason}
+            restMode={restMode}
+            onRestModeChange={changeRestMode}
             onEndTimeChange={setEndTime}
             onGenerate={requestRegenerate}
           />

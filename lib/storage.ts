@@ -1,4 +1,4 @@
-import { sanitizeEndTime } from "./app-state";
+import { sanitizeEndTime, sanitizeRestMode } from "./app-state";
 import { AppState, Recommendation, Schedule, Task } from "./types";
 
 // Unchanged key names: data written before accounts existed still loads, which
@@ -8,6 +8,7 @@ const KEYS = {
   recommendation: "yantasks.recommendation.v1",
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
+  restMode: "yantasks.restMode.v1",
 } as const;
 
 function read<T>(key: string, fallback: T): T {
@@ -39,6 +40,7 @@ export const localStore = {
       recommendation: read<Recommendation | null>(KEYS.recommendation, null),
       schedule: read<Schedule | null>(KEYS.schedule, null),
       endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),
+      restMode: sanitizeRestMode(read<unknown>(KEYS.restMode, null)),
     };
   },
 
@@ -47,6 +49,7 @@ export const localStore = {
     write(KEYS.recommendation, state.recommendation);
     write(KEYS.schedule, state.schedule);
     write(KEYS.endTime, state.endTime);
+    write(KEYS.restMode, state.restMode);
   },
 
   /** Called after a successful migration — the data now lives in the account. */

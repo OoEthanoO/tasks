@@ -57,8 +57,13 @@ const SCHEMA: string[] = [
      user_id        TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
      end_time       TEXT NOT NULL,
      recommendation TEXT,
-     schedule       TEXT
+     schedule       TEXT,
+     rest_mode      TEXT
    )`,
+  // Advanced rest arrived after prefs did, so a database created before it
+  // needs the column added rather than the table created. Same self-healing
+  // idea as the CREATE statements above: no deploy-time migration step.
+  `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_mode TEXT`,
 
   // Login throttling lives here rather than in process memory, because on
   // Vercel each instance would otherwise hand out its own fresh allowance.

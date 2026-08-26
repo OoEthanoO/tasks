@@ -15,13 +15,19 @@ import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
 import {
   REGENERATE_CONFIRM,
+  applyRestMode,
   generateSchedule,
   needsRegenerateConfirmation,
   scheduleStaleReason,
 } from "../lib/schedule";
 import { shouldAdoptRemote } from "../lib/sync";
-import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
-import { REST_WEIGHT, buildWeightTable, formatProbability } from "../lib/weights";
+import { AppState, Recommendation, RestMode, Schedule, Task, User } from "../lib/types";
+import {
+  REST_WEIGHT,
+  buildWeightTable,
+  defaultRestMode,
+  formatProbability,
+} from "../lib/weights";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
 import ConfirmSheet from "./src/components/ConfirmSheet";
@@ -55,6 +61,7 @@ function YanTasks() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
+  const [restMode, setRestMode] = useState<RestMode>(defaultRestMode);
   const [now, setNow] = useState(() => new Date());
 
   const [account, setAccount] = useState<User | null>(null);
@@ -80,6 +87,7 @@ function YanTasks() {
     setRecommendation(state.recommendation);
     setSchedule(state.schedule);
     setEndTime(state.endTime);
+    setRestMode(state.restMode);
     loadedForRef.current = key;
     lastSavedRef.current = JSON.stringify(state);
     setReady(true);
@@ -173,7 +181,7 @@ function YanTasks() {
     // Ignore the render in between swapping stores.
     if (loadedForRef.current !== key) return;
 
-    const state: AppState = { tasks, recommendation, schedule, endTime };
+    const state: AppState = { tasks, recommendation, schedule, endTime, restMode };
     const serialized = JSON.stringify(state);
     if (serialized === lastSavedRef.current) return;
 
@@ -186,7 +194,7 @@ function YanTasks() {
     pendingRef.current = state;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
-  }, [tasks, recommendation, schedule, endTime, ready, account, flushRemote]);
+  }, [tasks, recommendation, schedule, endTime, restMode, ready, account, flushRemote]);
 
   /**
    * Pull the account's copy back down, so edits made on the website (or another
@@ -270,7 +278,7 @@ function YanTasks() {
   /* ---------- accounts ---------- */
 
   const stateRef = useRef<AppState>(emptyState());
-  stateRef.current = { tasks, recommendation, schedule, endTime };
+  stateRef.current = { tasks, recommendation, schedule, endTime, restMode };
 
   const [guestSnapshot, setGuestSnapshot] = useState<AppState>(emptyState());
   useEffect(() => {
@@ -427,10 +435,17 @@ function YanTasks() {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
 
+  // Changing the kinds re-labels the rest blocks already on screen instead of
+  // asking for a regenerate — the task picks are unaffected either way.
+  const changeRestMode = useCallback((next: RestMode) => {
+    setRestMode(next);
+    setSchedule((prev) => applyRestMode(prev, next));
+  }, []);
+
   const regenerateSchedule = useCallback(() => {
     setConfirmRegenerate(false);
-    setSchedule(generateSchedule(tasks, table, endTime, new Date()));
-  }, [tasks, table, endTime]);
+    setSchedule(generateSchedule(tasks, table, endTime, new Date(), restMode));
+  }, [tasks, table, endTime, restMode]);
 
   // A schedule that is still accurate is worth one tap to protect; a stale or
   // empty one is not, and goes straight through.
@@ -527,6 +542,8 @@ function YanTasks() {
           endTime={endTime}
           now={now}
           staleReason={staleReason}
+          restMode={restMode}
+          onRestModeChange={changeRestMode}
           onEndTimeChange={setEndTime}
           onGenerate={requestRegenerate}
         />

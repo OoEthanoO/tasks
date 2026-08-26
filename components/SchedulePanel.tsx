@@ -2,7 +2,8 @@
 
 import { formatDateTime, formatTime } from "@/lib/dates";
 import { StaleReason, indexTasks, resolveBlock, staleMessage } from "@/lib/schedule";
-import { Schedule, Task } from "@/lib/types";
+import { RestMode, Schedule, Task } from "@/lib/types";
+import RestKinds from "./RestKinds";
 
 type Props = {
   schedule: Schedule | null;
@@ -10,6 +11,8 @@ type Props = {
   endTime: string;
   now: Date;
   staleReason: StaleReason;
+  restMode: RestMode;
+  onRestModeChange: (next: RestMode) => void;
   onEndTimeChange: (value: string) => void;
   onGenerate: () => void;
 };
@@ -20,6 +23,8 @@ export default function SchedulePanel({
   endTime,
   now,
   staleReason,
+  restMode,
+  onRestModeChange,
   onEndTimeChange,
   onGenerate,
 }: Props) {
@@ -44,6 +49,8 @@ export default function SchedulePanel({
           onChange={(e) => e.target.value && onEndTimeChange(e.target.value)}
         />
       </div>
+
+      <RestKinds restMode={restMode} onChange={onRestModeChange} />
 
       {staleReason && (
         <div className="banner warn">
@@ -76,7 +83,7 @@ export default function SchedulePanel({
               const end = new Date(block.end);
               const isPast = end <= now;
               const isNow = !isPast && start <= now;
-              const { title, isRest, isMissing } = resolveBlock(block, byId);
+              const { title, isRest, isMissing } = resolveBlock(block, byId, restMode);
 
               return (
                 <div

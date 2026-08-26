@@ -719,6 +719,65 @@ select {
   color: var(--text-dim);
 }
 
+/* ---------- advanced rest ---------- */
+
+.rest-kinds {
+  margin-bottom: 14px;
+}
+
+.rest-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.rest-toggle .check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.rest-kinds-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-left: 24px;
+}
+
+.rest-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill-x {
+  background: transparent;
+  border: none;
+  padding: 0 0 0 2px;
+  margin-right: -2px;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.pill-x:hover {
+  color: var(--danger);
+}
+
+.rest-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rest-add .input {
+  max-width: 260px;
+}
+
 /* ---------- schedule ---------- */
 
 .sched-controls {

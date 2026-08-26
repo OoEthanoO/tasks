@@ -1,6 +1,14 @@
 import { toKey } from "./dates";
-import { Schedule, ScheduleBlock, Task } from "./types";
-import { REST_LABEL, WeightTable, pickWeighted, taskSignature } from "./weights";
+import { RestMode, Schedule, ScheduleBlock, Task } from "./types";
+import {
+  REST_LABEL,
+  WeightTable,
+  activeRestTypes,
+  defaultRestMode,
+  pickRestLabel,
+  pickWeighted,
+  taskSignature,
+} from "./weights";
 
 export const BLOCK_MINUTES = 30;
 
@@ -72,12 +80,21 @@ export function buildBlockTimes(now: Date, endTime: string): Array<[Date, Date]>
   return times;
 }
 
-/** Roll the recommender once per block for the remainder of the day. */
+/**
+ * Roll the recommender once per block for the remainder of the day.
+ *
+ * Which kind of rest a rest block is gets decided here, at the moment it is
+ * drawn, and stored on the block — the same way a task pick is. Deciding it at
+ * render time instead would either re-roll the label on every repaint or need
+ * the block to be hashed into a kind, and neither is what "a schedule" means
+ * everywhere else in this file: a snapshot of one set of rolls.
+ */
 export function generateSchedule(
   tasks: Task[],
   table: WeightTable,
   endTime: string,
   now: Date = new Date(),
+  restMode: RestMode = defaultRestMode(),
 ): Schedule {
   const blocks: ScheduleBlock[] = buildBlockTimes(now, endTime).map(([start, end]) => {
     const task = pickWeighted(table);
@@ -85,7 +102,7 @@ export function generateSchedule(
       start: start.toISOString(),
       end: end.toISOString(),
       taskId: task ? task.id : null,
-      title: task ? task.title : REST_LABEL,
+      title: task ? task.title : pickRestLabel(restMode),
     };
   });
 
@@ -96,6 +113,44 @@ export function generateSchedule(
     signature: taskSignature(tasks),
     endTime,
   };
+}
+
+/**
+ * Re-draw the rest blocks of a schedule you already have for a new rest mode.
+ *
+ * Turning advanced rest on should not cost you the schedule you are working
+ * from. Which kind a rest block is was never part of the draw that decided
+ * *what* each block is — that is the whole point of it being post-processing —
+ * so it can be redrawn on its own. Task blocks, their order, the generated
+ * time and the signature all come through untouched, which means the schedule
+ * does not go stale and nothing asks you to regenerate.
+ *
+ * Only blocks showing a kind that is not currently on offer are redrawn. That
+ * is what makes this safe to call on every edit: switching off and back on, or
+ * adding a kind, leaves labels that are still valid exactly where they were,
+ * and only a removed kind forces the blocks that used it to pick again.
+ */
+export function applyRestMode(
+  schedule: Schedule | null,
+  restMode: RestMode,
+  roll: () => number = Math.random,
+): Schedule | null {
+  if (!schedule) return null;
+
+  const types = activeRestTypes(restMode);
+  // Nothing on offer means every rest block reads "Rest" anyway, and the kinds
+  // already stored are worth keeping for whenever it is switched back on.
+  if (types.length === 0) return schedule;
+
+  const onOffer = new Set(types);
+  let changed = false;
+  const blocks = schedule.blocks.map((block) => {
+    if (block.taskId !== null || onOffer.has(block.title)) return block;
+    changed = true;
+    return { ...block, title: pickRestLabel(restMode, roll()) };
+  });
+
+  return changed ? { ...schedule, blocks } : schedule;
 }
 
 export type StaleReason = "elapsed" | "day" | "hours" | "tasks" | null;
@@ -206,9 +261,15 @@ export function indexTasks(tasks: Task[]): Map<string, Task> {
 export function resolveBlock(
   block: ScheduleBlock,
   byId: Map<string, Task>,
+  restMode: RestMode = defaultRestMode(),
 ): ResolvedBlock {
   if (block.taskId === null) {
-    return { title: REST_LABEL, isRest: true, isMissing: false };
+    // Advanced rest stores the kind here when the block is drawn. Only a kind
+    // that is still on offer is shown, so switching the mode off reads as
+    // plain Rest again, and a kind that was deleted cannot linger on screen.
+    const kind = block.title.trim();
+    const onOffer = activeRestTypes(restMode).includes(kind);
+    return { title: onOffer ? kind : REST_LABEL, isRest: true, isMissing: false };
   }
   const live = byId.get(block.taskId);
   return {
