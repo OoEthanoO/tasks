@@ -15,6 +15,7 @@ const {
   indexTasks,
   resolveBlock,
   needsRegenerateConfirmation,
+  nextTickDelay,
   applyRestMode,
   REGENERATE_CONFIRM,
 } = require("../.test-build/schedule.js");
@@ -275,6 +276,47 @@ eq(
   true,
   "every block is a real task or rest",
 );
+
+console.log("== the clock lands on block boundaries ==");
+// The "Now" highlight is only as punctual as the timer behind it. A fixed
+// heartbeat started whenever the app opened sits at an arbitrary offset from
+// the half hour, so at 9:00 the block that had just begun could still be drawn
+// as upcoming for most of an interval. Each wait is measured to the next edge.
+{
+  // Where a wait started at `at` puts the clock, as [hour, minute, second].
+  const lands = (at, schedule) => {
+    const t = new Date(at.getTime() + nextTickDelay(at, schedule));
+    return [t.getHours(), t.getMinutes(), t.getSeconds()];
+  };
+  const at = (h, m, s = 0) => new Date(2026, 7, 12, h, m, s);
+
+  // `sched` runs 8:32->9:00, then half hours through to 23:00.
+  eq(lands(at(8, 59, 50), sched), [9, 0, 0], "ten seconds out -> wakes at 9:00 exactly");
+  eq(lands(at(8, 59, 59), sched), [9, 0, 0], "one second out -> still 9:00, not 20s late");
+  eq(lands(at(22, 59, 50), sched), [23, 0, 0], "the last block's end is an edge too");
+
+  // Nothing due soon falls back to the heartbeat that keeps weights honest.
+  eq(lands(at(8, 32, 10), sched), [8, 32, 30], "far from an edge -> the 20s cap");
+  eq(lands(at(9, 0, 0), sched), [9, 0, 20], "sitting on an edge -> the next one is 30m off");
+  eq(lands(at(12, 0, 0), null), [12, 0, 20], "no schedule -> the cap");
+
+  // Midnight moves every weight and makes the schedule stale, so it is an edge
+  // in its own right even on a day with no blocks left.
+  eq(lands(at(23, 59, 55), null), [0, 0, 0], "the day rolling over is an edge");
+
+  // The property that matters: from anywhere inside the final interval, the
+  // wait ends on the boundary — never before it, and never a tick past it.
+  const boundary = at(9, 0).getTime();
+  let early = 0;
+  let late = 0;
+  for (let s = 40; s < 60; s++) {
+    const from = at(8, 59, s);
+    const land = from.getTime() + nextTickDelay(from, sched);
+    if (land < boundary) early++;
+    if (land >= boundary + 1000) late++;
+  }
+  eq([early, late], [0, 0], "no wait in the last 20s lands early or overshoots 9:00");
+}
 
 console.log("== schedule staleness ==");
 const baseTasks = [mk(0), mk(1)];

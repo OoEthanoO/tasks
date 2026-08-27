@@ -16,6 +16,7 @@ import {
   applyRestMode,
   generateSchedule,
   needsRegenerateConfirmation,
+  nextTickDelay,
   scheduleStaleReason,
 } from "@/lib/schedule";
 import { localStore, newId } from "@/lib/storage";
@@ -384,10 +385,20 @@ export default function Page() {
   /* ---------- task state ---------- */
 
   // Keeps the "Now" block, weights, and day rollover honest without a reload.
+  // Each wait runs to the next block edge rather than to a fixed interval, so a
+  // block is highlighted on the stroke of its start time and not a tick later.
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 20_000);
-    return () => clearInterval(id);
-  }, []);
+    let id: ReturnType<typeof setTimeout>;
+    function wait(from: Date) {
+      id = setTimeout(() => {
+        const current = new Date();
+        setNow(current);
+        wait(current);
+      }, nextTickDelay(from, schedule));
+    }
+    wait(new Date());
+    return () => clearTimeout(id);
+  }, [schedule]);
 
   const today = useMemo(() => todayKey(), [now]);
 

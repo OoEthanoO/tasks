@@ -278,3 +278,51 @@ export function resolveBlock(
     isMissing: !live,
   };
 }
+
+/** Longest the on-screen clock may lag real time when nothing is due to change. */
+export const TICK_MAX_MS = 20_000;
+
+/**
+ * A hair past the boundary, so a timer that fires a moment early still lands on
+ * the far side of it instead of needing a second round to notice.
+ */
+const TICK_GUARD_MS = 50;
+
+/**
+ * How long to wait before `now` next has to move.
+ *
+ * A fixed heartbeat is the wrong shape for this. Blocks change over on the half
+ * hour, but a timer started whenever the app happened to open sits at an
+ * arbitrary offset from those marks — so at 10:00 the block that has just begun
+ * is still drawn as upcoming and the finished one still says "Now", for however
+ * much of the interval is left to run. The wait has to be measured to the
+ * boundary, not to the next multiple of some interval.
+ *
+ * So sleep until the first moment something on screen would actually differ:
+ * the next block edge, or midnight, where every weight moves and the schedule
+ * goes stale. The cap keeps a slow heartbeat underneath it — for a clock that
+ * stepped, or a machine that woke up — and bounds the drift on a day with no
+ * edges left in it.
+ */
+export function nextTickDelay(
+  now: Date,
+  schedule: Schedule | null,
+  maxMs: number = TICK_MAX_MS,
+): number {
+  const nowMs = now.getTime();
+  let next = nowMs + maxMs;
+
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  if (midnight < next) next = midnight;
+
+  for (const block of schedule?.blocks ?? []) {
+    // Both edges. A start is what promotes a block to "Now"; an end is what
+    // retires it, and for the last block of the day that is the only edge left.
+    for (const edge of [block.start, block.end]) {
+      const at = new Date(edge).getTime();
+      if (at > nowMs && at < next) next = at;
+    }
+  }
+
+  return next - nowMs + TICK_GUARD_MS;
+}
