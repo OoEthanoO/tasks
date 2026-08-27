@@ -1,0 +1,19 @@
+// The test suite compiles lib/ to plain CommonJS so test/logic.test.mjs can
+// require it. This lives in a project file rather than on the command line
+// because `tsc lib/*.ts` leans on the shell to expand the glob: bash does,
+// cmd.exe does not, and npm runs scripts through cmd.exe on Windows — so the
+// literal `lib/*.ts` reached tsc and `npm test` could not run there at all.
+// An `include` glob is expanded by tsc itself, identically on every platform.
+{
+  "compilerOptions": {
+    "outDir": ".test-build",
+    // Keep the emit flat: every require in the suite is `.test-build/<name>.js`.
+    "rootDir": "lib",
+    "module": "commonjs",
+    "target": "es2022",
+    "skipLibCheck": true
+  },
+  // Direct children only, as the command line meant. lib/server/ is server-only
+  // and nothing under test reaches it.
+  "include": ["lib/*.ts"]
+}
