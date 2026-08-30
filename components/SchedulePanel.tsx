@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 import { formatDateTime, formatTime } from "@/lib/dates";
 import { StaleReason, indexTasks, resolveBlock, staleMessage } from "@/lib/schedule";
 import { RestMode, Schedule, Task } from "@/lib/types";
@@ -29,6 +31,34 @@ export default function SchedulePanel({
   onGenerate,
 }: Props) {
   const byId = indexTasks(tasks);
+
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const nowRef = useRef<HTMLDivElement | null>(null);
+  const hasScrolledRef = useRef(false);
+
+  const nowStart =
+    schedule?.blocks.find(
+      (block) => new Date(block.end) > now && new Date(block.start) <= now,
+    )?.start ?? null;
+
+  // Park the current block at the top of the list, on first paint and again
+  // whenever a different block becomes the current one.
+  useEffect(() => {
+    const list = listRef.current;
+    const current = nowRef.current;
+    if (!list || !current) return;
+
+    const top =
+      current.getBoundingClientRect().top -
+      list.getBoundingClientRect().top +
+      list.scrollTop;
+
+    // Smooth only for a live handover, and only while the tab is visible: a
+    // hidden tab freezes the animation, so the jump would never land.
+    const smooth = hasScrolledRef.current && !document.hidden;
+    list.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+    hasScrolledRef.current = true;
+  }, [nowStart, schedule?.generatedAt]);
 
   return (
     <section className="card">
@@ -77,7 +107,7 @@ export default function SchedulePanel({
         </div>
       ) : (
         <>
-          <div className="blocks">
+          <div className="blocks" ref={listRef}>
             {schedule.blocks.map((block) => {
               const start = new Date(block.start);
               const end = new Date(block.end);
@@ -88,6 +118,7 @@ export default function SchedulePanel({
               return (
                 <div
                   key={block.start}
+                  ref={isNow ? nowRef : null}
                   className={`block${isPast ? " is-past" : ""}${isNow ? " is-now" : ""}`}
                 >
                   <span className="block-time">
