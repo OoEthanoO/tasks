@@ -733,8 +733,8 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               Completed: <code>0</code>.
             </div>
             <div>
-              The hidden <code>Rest</code> task always weighs <code>1</code> — one extra
-              task due tomorrow that never gets crossed off. The more work you pile up,
+              The hidden <code>Rest</code> task always weighs <code>1/7</code> — one extra
+              task due a week out that never gets crossed off. The more work you pile up,
               the smaller its share; completing tasks wins it back.
             </div>
           </div>

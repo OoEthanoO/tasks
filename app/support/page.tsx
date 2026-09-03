@@ -54,7 +54,7 @@ export default function SupportPage() {
           </li>
           <li>
             A hidden <strong>Rest</strong> slice always sits in the pool, weighted the
-            same as one task due tomorrow. When Rest wins, take a break. Its share
+            same as one task due a week out (1/7). When Rest wins, take a break. Its share
             shrinks as your list grows and returns as you finish things.
           </li>
         </ul>

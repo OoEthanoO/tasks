@@ -15,15 +15,15 @@ export function weightForDaysOut(n: number): number {
 }
 
 /**
- * The hidden "Rest" task sits in the pool permanently, weighted the same as one
- * task due tomorrow — in effect an extra tomorrow-task that never gets crossed
- * off. Because it is a constant while the task pile is not, its share shrinks
- * as work accumulates and grows back as you complete things.
+ * The hidden "Rest" task sits in the pool permanently at 1/7, weighted the same
+ * as one task due a week out — in effect an extra week-away task that never
+ * gets crossed off. Because it is a constant while the task pile is not, its
+ * share shrinks as work accumulates and grows back as you complete things.
  *
  * Deriving it from the curve rather than hardcoding a number keeps that meaning
  * intact if the curve is ever retuned.
  */
-export const REST_WEIGHT = weightForDaysOut(1);
+export const REST_WEIGHT = weightForDaysOut(7);
 export const REST_LABEL = "Rest";
 
 /** Advanced rest off, with the example kinds ready for whoever turns it on. */
