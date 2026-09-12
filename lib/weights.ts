@@ -32,24 +32,6 @@ export function activeRestTypes(restMode: RestMode): string[] {
   return restMode.advanced ? restMode.types : [];
 }
 
-/**
- * Which kind of rest this one turned out to be.
- *
- * Rest has already been allocated by the time this runs, and nothing here can
- * widen or narrow its share. This only divides that slice evenly among the
- * kinds on offer, so two of them are 50/50.
- *
- * `roll` is injectable so the split can be walked deterministically in tests.
- */
-export function pickRestLabel(restMode: RestMode, roll: number = Math.random()): string {
-  const types = activeRestTypes(restMode);
-  if (types.length === 0) return REST_LABEL;
-  // Clamped rather than modulo'd: a roll of exactly 1 would otherwise wrap to
-  // the first kind and give it a hair more than its share.
-  const index = Math.min(types.length - 1, Math.floor(roll * types.length));
-  return types[index];
-}
-
 /** A task's pull on the recommender. Completed tasks weigh 0 and never win. */
 export function taskWeight(task: Task, today: DateKey = todayKey()): number {
   if (task.completed) return 0;
@@ -95,7 +77,7 @@ export function buildWeightTable(
  * an older allocation algorithm after an app update.
  */
 export function taskSignature(tasks: Task[]): string {
-  return "balanced-v1|" + tasks
+  return "balanced-v2|" + tasks
     .map((t) => `${t.id}:${t.dueDate}:${t.completed ? 1 : 0}`)
     .sort()
     .join("|");

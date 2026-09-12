@@ -45,7 +45,7 @@ export type Schedule = {
 export type RestMode = {
   /** When false every rest block reads simply "Rest", and `types` is kept. */
   advanced: boolean;
-  /** Drawn evenly: two types are 50/50, three are a third each. */
+  /** Allocated evenly: two types are 50/50, three are a third each. */
   types: string[];
 };
 

@@ -5,7 +5,6 @@ import {
   WeightTable,
   activeRestTypes,
   defaultRestMode,
-  pickRestLabel,
   taskSignature,
 } from "./weights";
 
@@ -85,38 +84,32 @@ export function buildBlockTimes(now: Date, endTime: string): Array<[Date, Date]>
  * finished schedule close to the target shares without clumping one task into
  * a long run. A very small share may round down to zero blocks.
  */
-export function allocateScheduleBlocks(
-  table: WeightTable,
+function spreadByShares<T>(
+  choices: Array<{ value: T; share: number }>,
   blockCount: number,
-): Array<Task | null> {
-  if (blockCount <= 0) return [];
+): T[] {
+  if (blockCount <= 0 || choices.length === 0) return [];
 
-  const choices = [
-    { task: null, share: table.restProbability },
-    ...table.entries
-      .filter((entry) => entry.probability > 0)
-      .map((entry) => ({ task: entry.task, share: entry.probability })),
-  ];
   const shareTotal = choices.reduce((sum, choice) => sum + choice.share, 0);
-  if (shareTotal <= 0) return Array<Task | null>(blockCount).fill(null);
+  if (shareTotal <= 0) return [];
 
   const targets = choices.map((choice) => (choice.share / shareTotal) * blockCount);
   const quotas = targets.map(Math.floor);
-  let left = blockCount - quotas.reduce((sum, quota) => sum + quota, 0);
+  const left = blockCount - quotas.reduce((sum, quota) => sum + quota, 0);
 
   const remainderOrder = targets
     .map((target, index) => ({ index, remainder: target - quotas[index] }))
     .sort((a, b) => {
       const difference = b.remainder - a.remainder;
-      // Mathematically equal shares can differ by a floating-point hair. Rest
-      // is first, so a true tie keeps its one-third target closest.
+      // Mathematically equal shares can differ by a floating-point hair. Keep
+      // the caller's order for a true tie.
       return Math.abs(difference) < 1e-12 ? a.index - b.index : difference;
     });
   for (let i = 0; i < left; i++) quotas[remainderOrder[i].index]++;
 
   const scores = quotas.map(() => 0);
   const used = quotas.map(() => 0);
-  const picks: Array<Task | null> = [];
+  const picks: T[] = [];
 
   for (let block = 0; block < blockCount; block++) {
     let winner = -1;
@@ -129,10 +122,37 @@ export function allocateScheduleBlocks(
     // Quotas always add up to blockCount, so a winner must exist.
     scores[winner] -= blockCount;
     used[winner]++;
-    picks.push(choices[winner].task);
+    picks.push(choices[winner].value);
   }
 
   return picks;
+}
+
+export function allocateScheduleBlocks(
+  table: WeightTable,
+  blockCount: number,
+): Array<Task | null> {
+  return spreadByShares(
+    [
+      // First so a mathematically exact remainder tie favours keeping Rest's
+      // absolute one-third share closest to its target.
+      { value: null, share: table.restProbability },
+      ...table.entries
+        .filter((entry) => entry.probability > 0)
+        .map((entry) => ({ value: entry.task, share: entry.probability })),
+    ],
+    blockCount,
+  );
+}
+
+/** Divide Rest's blocks evenly and interleave the kinds instead of sampling. */
+export function allocateRestLabels(restMode: RestMode, blockCount: number): string[] {
+  const types = activeRestTypes(restMode);
+  if (types.length === 0) return Array<string>(blockCount).fill(REST_LABEL);
+  return spreadByShares(
+    types.map((type) => ({ value: type, share: 1 })),
+    blockCount,
+  );
 }
 
 /**
@@ -140,9 +160,8 @@ export function allocateScheduleBlocks(
  *
  * Which kind of rest a rest block is gets decided here, at the moment it is
  * allocated, and stored on the block — the same way a task pick is. Deciding it at
- * render time instead would either re-roll the label on every repaint or need
- * the block to be hashed into a kind, and neither is what "a schedule" means
- * everywhere else in this file: a snapshot of one set of rolls.
+ * render time would make the label depend on repainting rather than the stored
+ * schedule allocation.
  */
 export function generateSchedule(
   tasks: Task[],
@@ -153,13 +172,18 @@ export function generateSchedule(
 ): Schedule {
   const times = buildBlockTimes(now, endTime);
   const picks = allocateScheduleBlocks(table, times.length);
+  const restLabels = allocateRestLabels(
+    restMode,
+    picks.filter((task) => task === null).length,
+  );
+  let restIndex = 0;
   const blocks: ScheduleBlock[] = times.map(([start, end], index) => {
     const task = picks[index];
     return {
       start: start.toISOString(),
       end: end.toISOString(),
       taskId: task ? task.id : null,
-      title: task ? task.title : pickRestLabel(restMode),
+      title: task ? task.title : restLabels[restIndex++],
     };
   });
 
@@ -173,24 +197,22 @@ export function generateSchedule(
 }
 
 /**
- * Re-draw the rest blocks of a schedule you already have for a new rest mode.
+ * Rebalance the rest blocks of a schedule you already have for a new rest mode.
  *
  * Turning advanced rest on should not cost you the schedule you are working
- * from. Which kind a rest block is was never part of the draw that decided
- * *what* each block is — that is the whole point of it being post-processing —
- * so it can be redrawn on its own. Task blocks, their order, the generated
+ * from. Which kind a rest block is does not change *which* blocks are Rest —
+ * that is the whole point of it being post-processing — so labels can be
+ * rebalanced on their own. Task blocks, their order, the generated
  * time and the signature all come through untouched, which means the schedule
  * does not go stale and nothing asks you to regenerate.
  *
- * Only blocks showing a kind that is not currently on offer are redrawn. That
- * is what makes this safe to call on every edit: switching off and back on, or
- * adding a kind, leaves labels that are still valid exactly where they were,
- * and only a removed kind forces the blocks that used it to pick again.
+ * Every active kind receives the closest possible whole-block count and the
+ * labels are interleaved across the Rest blocks. Adding or removing a kind may
+ * therefore rebalance existing Rest labels, while task blocks never move.
  */
 export function applyRestMode(
   schedule: Schedule | null,
   restMode: RestMode,
-  roll: () => number = Math.random,
 ): Schedule | null {
   if (!schedule) return null;
 
@@ -199,12 +221,18 @@ export function applyRestMode(
   // already stored are worth keeping for whenever it is switched back on.
   if (types.length === 0) return schedule;
 
-  const onOffer = new Set(types);
+  const labels = allocateRestLabels(
+    restMode,
+    schedule.blocks.filter((block) => block.taskId === null).length,
+  );
   let changed = false;
+  let restIndex = 0;
   const blocks = schedule.blocks.map((block) => {
-    if (block.taskId !== null || onOffer.has(block.title)) return block;
+    if (block.taskId !== null) return block;
+    const title = labels[restIndex++];
+    if (block.title === title) return block;
     changed = true;
-    return { ...block, title: pickRestLabel(restMode, roll()) };
+    return { ...block, title };
   });
 
   return changed ? { ...schedule, blocks } : schedule;
@@ -321,7 +349,7 @@ export function resolveBlock(
   restMode: RestMode = defaultRestMode(),
 ): ResolvedBlock {
   if (block.taskId === null) {
-    // Advanced rest stores the kind here when the block is drawn. Only a kind
+    // Advanced rest stores the kind here when the block is allocated. Only a kind
     // that is still on offer is shown, so switching the mode off reads as
     // plain Rest again, and a kind that was deleted cannot linger on screen.
     const kind = block.title.trim();

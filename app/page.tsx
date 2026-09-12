@@ -457,7 +457,7 @@ export default function Page() {
   const restModeRef = useRef(restMode);
   restModeRef.current = restMode;
 
-  // Changing the kinds re-labels the rest blocks already on screen instead of
+  // Changing the kinds rebalances the rest blocks already on screen instead of
   // asking for a regenerate — the task picks are unaffected either way.
   const changeRestMode = useCallback((next: RestMode) => {
     setRestMode(next);

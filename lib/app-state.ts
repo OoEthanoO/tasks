@@ -164,7 +164,7 @@ function sanitizeSchedule(raw: unknown, today: string, now: string): Schedule | 
 }
 
 /**
- * Rest kinds are drawn evenly, so a duplicate is not cosmetic — "Code" twice
+ * Rest kinds are allocated evenly, so a duplicate is not cosmetic — "Code" twice
  * alongside "Game" would quietly make code two-thirds of every rest. They are
  * matched case-insensitively and the first spelling wins, which is also what
  * stops a list from growing by one every time someone retypes a kind.

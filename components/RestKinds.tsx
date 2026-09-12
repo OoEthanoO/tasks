@@ -86,7 +86,7 @@ export default function RestKinds({ restMode, onChange }: Props) {
           <p className="hint">
             {restMode.types.length === 0
               ? "No kinds yet, so rest blocks still read “Rest”."
-              : `Each rest block is drawn evenly from these — ${share}% each. How often rest comes up at all is unchanged.`}
+              : `Rest blocks are divided evenly — about ${share}% each. The total amount of rest is unchanged.`}
           </p>
         </div>
       )}

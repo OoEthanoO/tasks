@@ -9,6 +9,7 @@ const { toKey, addDays, todayKey } = require("../.test-build/dates.js");
 const {
   buildBlockTimes,
   allocateScheduleBlocks,
+  allocateRestLabels,
   generateSchedule,
   scheduleStaleReason,
   staleMessage,
@@ -395,7 +396,7 @@ eq(
 );
 eq(staleFor(s, [baseTasks[1], baseTasks[0]]), null, "reordering -> still fresh");
 eq(
-  staleFor({ ...s, signature: s.signature.replace("balanced-v1|", "") }, baseTasks),
+  staleFor({ ...s, signature: s.signature.replace("balanced-v2|", "balanced-v1|") }, baseTasks),
   "tasks",
   "a schedule from the old random allocator is stale after upgrade",
 );
@@ -819,7 +820,6 @@ eq(
 
 console.log("== advanced rest ==");
 const {
-  pickRestLabel,
   activeRestTypes,
   defaultRestMode,
   REST_LABEL,
@@ -831,65 +831,48 @@ eq(defaultRestMode(), { advanced: false, types: ["Code", "Game"] }, "off by defa
 eq(activeRestTypes(defaultRestMode()), [], "kinds are kept but inert while off");
 eq(activeRestTypes(CODE_GAME), ["Code", "Game"], "kinds are live once switched on");
 
-// Off, or on with nothing configured, both have to read as plain Rest.
-eq(pickRestLabel({ advanced: false, types: ["Code"] }, 0), REST_LABEL, "off -> Rest");
-eq(pickRestLabel({ advanced: true, types: [] }, 0), REST_LABEL, "no kinds -> Rest");
-
-// The roll is injectable, so the split can be walked exactly rather than
-// sampled. Two kinds means the halfway point is the boundary.
-eq(pickRestLabel(CODE_GAME, 0), "Code", "a roll at 0 takes the first kind");
-eq(pickRestLabel(CODE_GAME, 0.4999), "Code", "just under half is still the first");
-eq(pickRestLabel(CODE_GAME, 0.5), "Game", "half exactly crosses to the second");
-eq(pickRestLabel(CODE_GAME, 0.9999), "Game", "just under one is the second");
-// Math.random() never returns 1, but a clamp beats an out-of-range read.
-eq(pickRestLabel(CODE_GAME, 1), "Game", "a roll of one clamps rather than wrapping");
-
 const THREE = { advanced: true, types: ["Code", "Game", "Walk"] };
 eq(
-  [0, 0.34, 0.67, 0.999].map((r) => pickRestLabel(THREE, r)),
-  ["Code", "Game", "Walk", "Walk"],
-  "three kinds split into thirds",
+  allocateRestLabels(defaultRestMode(), 4),
+  [REST_LABEL, REST_LABEL, REST_LABEL, REST_LABEL],
+  "advanced off -> every label is plain Rest",
+);
+eq(
+  allocateRestLabels({ advanced: true, types: [] }, 3),
+  [REST_LABEL, REST_LABEL, REST_LABEL],
+  "advanced on with no kinds -> every label is plain Rest",
+);
+eq(
+  allocateRestLabels(CODE_GAME, 10),
+  ["Code", "Game", "Code", "Game", "Code", "Game", "Code", "Game", "Code", "Game"],
+  "two kinds split ten blocks evenly and alternate",
+);
+const oddPair = allocateRestLabels(CODE_GAME, 11);
+eq(
+  [oddPair.filter((label) => label === "Code").length, oddPair.filter((label) => label === "Game").length],
+  [6, 5],
+  "an odd number differs by only one block",
+);
+const thirds = allocateRestLabels(THREE, 10);
+eq(
+  ["Code", "Game", "Walk"].map((label) => thirds.filter((item) => item === label).length),
+  [4, 3, 3],
+  "three kinds get the closest whole-block split",
 );
 
-// The headline claim: an even split over many draws, and — the part that
-// matters most — rest itself comes up exactly as often as it did before.
+// Rest keeps its absolute share while advanced kinds divide that slice evenly.
 {
   const restTasks = [mk(0), mk(1), mk(5)];
   const restTable = buildWeightTable(restTasks, today);
-  let code = 0,
-    game = 0;
-  for (let i = 0; i < 20000; i++) {
-    const label = pickRestLabel(CODE_GAME);
-    if (label === "Code") code++;
-    else if (label === "Game") game++;
-    else throw new Error(`unexpected rest label ${label}`);
-  }
-  const codeShare = code / (code + game);
-  eq(
-    codeShare > 0.47 && codeShare < 0.53,
-    true,
-    `20k draws split about evenly (code ${(codeShare * 100).toFixed(1)}%)`,
-  );
-
   // Generate with and without advanced rest and count rest blocks both ways.
-  // The kinds rename the slice; they must not resize it.
+  // The kinds divide the slice; they must not resize it.
   const countRest = (restMode) => {
-    let rest = 0,
-      blocks = 0;
-    for (let i = 0; i < 400; i++) {
-      const sched = generateSchedule(restTasks, restTable, "23:00", NOW, restMode);
-      blocks += sched.blocks.length;
-      rest += sched.blocks.filter((b) => b.taskId === null).length;
-    }
-    return rest / blocks;
+    const sched = generateSchedule(restTasks, restTable, "23:00", NOW, restMode);
+    return sched.blocks.filter((b) => b.taskId === null).length;
   };
   const plainShare = countRest(defaultRestMode());
   const advancedShare = countRest(CODE_GAME);
-  eq(
-    Math.abs(plainShare - advancedShare) < 0.03,
-    true,
-    `rest is as frequent either way (${(plainShare * 100).toFixed(1)}% vs ${(advancedShare * 100).toFixed(1)}%)`,
-  );
+  eq(advancedShare, plainShare, "advanced kinds do not change the number of Rest blocks");
 
   // A rest block carries its kind, and a task block is untouched.
   const advSched = generateSchedule(restTasks, restTable, "23:00", NOW, CODE_GAME);
@@ -901,6 +884,10 @@ eq(
     true,
     "every rest block is stored as one of the kinds",
   );
+  const advancedCounts = ["Code", "Game"].map(
+    (title) => advSched.blocks.filter((b) => b.taskId === null && b.title === title).length,
+  );
+  eq(Math.abs(advancedCounts[0] - advancedCounts[1]) <= 1, true, "generated kinds differ by at most one block");
 
   // Resolution reads the live mode, so switching off restores plain Rest with
   // no regenerate — the block still holds "Code" underneath.
@@ -925,26 +912,30 @@ eq(
   );
 }
 
-console.log("== switching rest modes re-labels the schedule in place ==");
+console.log("== switching rest modes rebalances the schedule in place ==");
 {
   const relTasks = [mk(0), mk(1), mk(4)];
   const relTable = buildWeightTable(relTasks, today);
   const plain = generateSchedule(relTasks, relTable, "23:00", NOW);
   const restCount = plain.blocks.filter((b) => b.taskId === null).length;
-  eq(restCount > 0, true, "the fixture has rest blocks to re-label");
+  eq(restCount > 0, true, "the fixture has rest blocks to rebalance");
   eq(
     plain.blocks.filter((b) => b.taskId === null).every((b) => b.title === REST_LABEL),
     true,
     "they all start as plain Rest",
   );
 
-  // Switching on: every rest block picks a kind, nothing else moves.
+  // Switching on: every rest block gets a balanced kind, nothing else moves.
   const switched = applyRestMode(plain, CODE_GAME);
   eq(
     switched.blocks.filter((b) => b.taskId === null).every((b) => b.title === "Code" || b.title === "Game"),
     true,
     "every rest block now carries a kind",
   );
+  const switchedCounts = ["Code", "Game"].map(
+    (title) => switched.blocks.filter((b) => b.taskId === null && b.title === title).length,
+  );
+  eq(Math.abs(switchedCounts[0] - switchedCounts[1]) <= 1, true, "switching on balances the kinds");
   eq(
     switched.blocks.map((b) => b.taskId),
     plain.blocks.map((b) => b.taskId),
@@ -968,7 +959,7 @@ console.log("== switching rest modes re-labels the schedule in place ==");
   eq(
     scheduleStaleReason(switched, relTasks, "23:00", NOW),
     null,
-    "re-labelling does not make the schedule stale",
+    "rebalancing labels does not make the schedule stale",
   );
 
   // Idempotent: labels that are still valid are left exactly where they are.
@@ -985,19 +976,24 @@ console.log("== switching rest modes re-labels the schedule in place ==");
     "off and back on does not reshuffle",
   );
 
-  // Adding a kind leaves existing labels alone; they are still on offer.
+  // Adding a kind rebalances the Rest labels without moving task blocks.
+  const withWalk = applyRestMode(switched, { advanced: true, types: ["Code", "Game", "Walk"] });
+  const withWalkCounts = ["Code", "Game", "Walk"].map(
+    (title) => withWalk.blocks.filter((b) => b.taskId === null && b.title === title).length,
+  );
+  eq(Math.max(...withWalkCounts) - Math.min(...withWalkCounts) <= 1, true, "adding a kind rebalances evenly");
   eq(
-    applyRestMode(switched, { advanced: true, types: ["Code", "Game", "Walk"] }),
-    switched,
-    "adding a kind does not disturb valid labels",
+    withWalk.blocks.map((b) => b.taskId),
+    switched.blocks.map((b) => b.taskId),
+    "adding a kind leaves task allocation untouched",
   );
 
-  // Removing one redraws only the blocks that were using it.
+  // Removing a kind rebalances the Rest labels around what remains.
   const onlyGame = applyRestMode(switched, { advanced: true, types: ["Game"] });
   eq(
     onlyGame.blocks.filter((b) => b.taskId === null).every((b) => b.title === "Game"),
     true,
-    "a removed kind is redrawn to one still on offer",
+    "a removed kind is reallocated to one still on offer",
   );
   eq(
     onlyGame.blocks.map((b) => b.taskId),
@@ -1007,14 +1003,19 @@ console.log("== switching rest modes re-labels the schedule in place ==");
 
   eq(applyRestMode(null, CODE_GAME), null, "no schedule stays no schedule");
 
-  // An injected roll makes the split exact rather than sampled.
-  const rolls = [0, 0.9, 0, 0.9, 0, 0.9];
-  let i = 0;
-  const alternating = applyRestMode(plain, CODE_GAME, () => rolls[i++ % rolls.length]);
+  // Even an older, skewed set of valid labels is corrected rather than kept.
+  const skewed = {
+    ...switched,
+    blocks: switched.blocks.map((block) => block.taskId === null ? { ...block, title: "Code" } : block),
+  };
+  const corrected = applyRestMode(skewed, CODE_GAME);
+  const correctedCounts = ["Code", "Game"].map(
+    (title) => corrected.blocks.filter((b) => b.taskId === null && b.title === title).length,
+  );
   eq(
-    alternating.blocks.filter((b) => b.taskId === null).map((b) => b.title).slice(0, 2),
-    ["Code", "Game"],
-    "the roll drives which kind each block gets",
+    Math.abs(correctedCounts[0] - correctedCounts[1]) <= 1,
+    true,
+    "an existing skewed schedule is rebalanced",
   );
 
   // What the panel actually renders, before and after.
@@ -1026,7 +1027,7 @@ console.log("== switching rest modes re-labels the schedule in place ==");
     REST_LABEL,
     "switched off it renders as Rest again",
   );
-  // A kind deleted without a re-label must not linger on screen.
+  // A kind deleted without rebalancing must not linger on screen.
   eq(
     resolveBlock({ ...aRest, title: "Gone" }, relIndex, CODE_GAME).title,
     REST_LABEL,
