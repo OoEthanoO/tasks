@@ -15,11 +15,11 @@ export function weightForDaysOut(n: number): number {
 }
 
 /**
- * Rest owns one third of every pick or generated schedule. It is an absolute
+ * Rest owns one quarter of every pick or generated schedule. It is an absolute
  * share, not another relative weight in the task pile: open tasks divide the
- * other two thirds in proportion to their due-date weights.
+ * other three quarters in proportion to their due-date weights.
  */
-export const REST_SHARE = 1 / 3;
+export const REST_SHARE = 1 / 4;
 export const REST_LABEL = "Rest";
 
 /** Advanced rest off, with the example kinds ready for whoever turns it on. */
@@ -48,7 +48,7 @@ export type WeightTable = {
   entries: WeightedTask[];
   /** Sum of the relative due-date weights for open tasks. */
   taskTotal: number;
-  /** One third when there is work to schedule; all of it when there is none. */
+  /** One quarter when there is work to schedule; all of it when there is none. */
   restProbability: number;
 };
 
@@ -77,7 +77,7 @@ export function buildWeightTable(
  * an older allocation algorithm after an app update.
  */
 export function taskSignature(tasks: Task[]): string {
-  return "balanced-v2|" + tasks
+  return "balanced-v3|" + tasks
     .map((t) => `${t.id}:${t.dueDate}:${t.completed ? 1 : 0}`)
     .sort()
     .join("|");

@@ -37,7 +37,7 @@ export default function SupportPage() {
           How the weighting works
         </h2>
         <p>
-          Every open task gets a weight from its due date. Tasks divide two thirds of
+          Every open task gets a weight from its due date. Tasks divide three quarters of
           the schedule in proportion to those weights.
         </p>
         <ul className="help-list">
@@ -53,13 +53,13 @@ export default function SupportPage() {
             <strong>Completed</strong> tasks weigh 0 and receive no blocks.
           </li>
           <li>
-            <strong>Rest</strong> always owns the other one third of the schedule,
+            <strong>Rest</strong> always owns the other one quarter of the schedule,
             regardless of how many tasks you have or how urgent they are.
           </li>
         </ul>
         <p>
           The percentage beside each task is its target share of a generated schedule.
-          Together, the task percentages add up to two thirds.
+          Together, the task percentages add up to three quarters.
         </p>
 
         <h2 className="card-title" style={{ marginTop: 26 }}>
@@ -68,7 +68,7 @@ export default function SupportPage() {
         <p>
           Generating a schedule gives every task the closest possible number of
           half-hour blocks for its target share, then spreads those blocks evenly
-          between now and the end of your work day. One third of the blocks are Rest,
+          between now and the end of your work day. One quarter of the blocks are Rest,
           rounded to the nearest whole block. When equal tasks or Rest kinds compete
           for an indivisible extra block, the recipient is chosen fairly at random.
           An end time in the small

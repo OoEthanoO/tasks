@@ -144,25 +144,25 @@ for (let n = -5; n <= 10; n++) {
 eq(monotonic, true, "weight strictly decreases from overdue through future");
 
 console.log("== absolute Rest share ==");
-eq(REST_SHARE, 1 / 3, "rest owns one third of a non-empty task pool");
+eq(REST_SHARE, 1 / 4, "rest owns one quarter of a non-empty task pool");
 
 const one = buildWeightTable([mk(0)], today);
-eq(one.entries[0].probability.toFixed(4), (2 / 3).toFixed(4), "task = 2/3 = 66.7%");
-eq(one.restProbability.toFixed(4), (1 / 3).toFixed(4), "rest = 1/3 = 33.3%");
+eq(one.entries[0].probability.toFixed(4), (3 / 4).toFixed(4), "task = 3/4 = 75%");
+eq(one.restProbability.toFixed(4), (1 / 4).toFixed(4), "rest = 1/4 = 25%");
 
 const mixed = buildWeightTable([mk(0), mk(1), mk(-1)], today);
 eq(mixed.taskTotal, 2 + 1 + 3, "weights sum");
 eq(
   mixed.entries.map((entry) => entry.probability.toFixed(4)),
-  [2 / 9, 1 / 9, 1 / 3].map((p) => p.toFixed(4)),
-  "tasks split the other two thirds by relative weight",
+  [1 / 4, 1 / 8, 3 / 8].map((p) => p.toFixed(4)),
+  "tasks split the other three quarters by relative weight",
 );
 
 // Rest is an absolute share, so the task pile cannot shrink or expand it.
 const shares = [[1], [0], [0, 0], [0, 0, 0]].map(
   (ds) => buildWeightTable(ds.map((d, i) => ({ ...mk(d), id: `s${i}` })), today).restProbability,
 );
-eq(shares, [1 / 3, 1 / 3, 1 / 3, 1 / 3], "rest stays at one third for every task load");
+eq(shares, [1 / 4, 1 / 4, 1 / 4, 1 / 4], "rest stays at one quarter for every task load");
 
 const busy = [mk(0), mk(0), mk(0)].map((t, i) => ({ ...t, id: `b${i}` }));
 const beforeDone = buildWeightTable(busy, today).restProbability;
@@ -257,19 +257,19 @@ eq(
 );
 eq(
   [sched.blocks.filter((b) => b.taskId === mk(0).id).length, sched.blocks.filter((b) => b.taskId === null).length],
-  [19, 10],
-  "generation uses the balanced 2/3 work and 1/3 rest allocation",
+  [22, 7],
+  "generation uses the balanced 3/4 work and 1/4 rest allocation",
 );
 
 console.log("== balanced schedule allocation ==");
 {
   const count = (picks, id) => picks.filter((task) => (task ? task.id : null) === id).length;
 
-  // Rest is fixed at a third regardless of how crowded or urgent the list is.
+  // Rest is fixed at a quarter regardless of how crowded or urgent the list is.
   for (const offsets of [[0], [0, 0], [-5, -1, 0, 1, 20]]) {
     const tasks = offsets.map((offset, i) => ({ ...mk(offset), id: `fixed-${i}` }));
     const picks = allocateScheduleBlocks(buildWeightTable(tasks, today), 30);
-    eq(count(picks, null), 10, `${offsets.length} task(s) -> exactly 10 of 30 rests`);
+    eq(count(picks, null), 8, `${offsets.length} task(s) -> exactly 8 of 30 rests`);
   }
 
   // Equal weights get equal runtime to within the one indivisible block.
@@ -280,18 +280,18 @@ console.log("== balanced schedule allocation ==");
 const equalPicks = allocateScheduleBlocks(buildWeightTable(equals, today), 29);
   const equalCounts = [count(equalPicks, "equal-a"), count(equalPicks, "equal-b")];
   eq(Math.abs(equalCounts[0] - equalCounts[1]) <= 1, true, "equal tasks differ by at most one block");
-  eq(count(equalPicks, null), 10, "29 blocks rounds one-third rest to 10 blocks");
+  eq(count(equalPicks, null), 7, "29 blocks rounds one-quarter rest to 7 blocks");
 
-  const firstGetsExtra = allocateScheduleBlocks(buildWeightTable(equals, today), 8, () => 0.5);
-  const secondGetsExtra = allocateScheduleBlocks(buildWeightTable(equals, today), 8, () => 0.4999);
+  const firstGetsExtra = allocateScheduleBlocks(buildWeightTable(equals, today), 7, () => 0.5);
+  const secondGetsExtra = allocateScheduleBlocks(buildWeightTable(equals, today), 7, () => 0.4999);
   eq(
     [count(firstGetsExtra, "equal-a"), count(firstGetsExtra, "equal-b"), count(firstGetsExtra, null)],
-    [3, 2, 3],
+    [3, 2, 2],
     "the upper half of the tie roll gives the first equal task the extra work block",
   );
   eq(
     [count(secondGetsExtra, "equal-a"), count(secondGetsExtra, "equal-b"), count(secondGetsExtra, null)],
-    [2, 3, 3],
+    [2, 3, 2],
     "the lower half gives the second equal task the extra work block",
   );
 
@@ -333,8 +333,8 @@ const equalPicks = allocateScheduleBlocks(buildWeightTable(equals, today), 29);
   const doubledPicks = allocateScheduleBlocks(buildWeightTable(doubled, today), 27);
   eq(
     [count(doubledPicks, "double"), count(doubledPicks, "single"), count(doubledPicks, null)],
-    [12, 6, 9],
-    "2:1 task weights become 12:6 blocks while rest keeps its third",
+    [13, 7, 7],
+    "2:1 task weights become 13:7 blocks while rest keeps its quarter",
   );
 
   // Smooth round-robin keeps every prefix close to its final target instead of
@@ -350,9 +350,9 @@ const equalPicks = allocateScheduleBlocks(buildWeightTable(equals, today), 29);
     else seenRest++;
     const elapsed = i + 1;
     if (
-      Math.abs(seenDouble - elapsed * 4 / 9) > 1 ||
-      Math.abs(seenSingle - elapsed * 2 / 9) > 1 ||
-      Math.abs(seenRest - elapsed / 3) > 1
+      Math.abs(seenDouble - elapsed / 2) > 1 ||
+      Math.abs(seenSingle - elapsed / 4) > 1 ||
+      Math.abs(seenRest - elapsed / 4) > 1
     ) homogeneous = false;
   }
   eq(homogeneous, true, "every prefix stays within one block of each target share");
@@ -439,9 +439,9 @@ eq(
 );
 eq(staleFor(s, [baseTasks[1], baseTasks[0]]), null, "reordering -> still fresh");
 eq(
-  staleFor({ ...s, signature: s.signature.replace("balanced-v2|", "balanced-v1|") }, baseTasks),
+  staleFor({ ...s, signature: s.signature.replace("balanced-v3|", "balanced-v2|") }, baseTasks),
   "tasks",
-  "a schedule from the old random allocator is stale after upgrade",
+  "a schedule from the old one-third allocator is stale after upgrade",
 );
 
 // Validity follows the span the schedule covers, not the date it was built on.
@@ -975,7 +975,10 @@ console.log("== switching rest modes rebalances the schedule in place ==");
   );
 
   // Switching on: every rest block gets a balanced kind, nothing else moves.
-  const switched = applyRestMode(plain, CODE_GAME);
+  // Fixed roll: with 7 rest blocks the extra kind is a tie-break, and the
+  // default Math.random would let off-and-back-on reshuffle by chance.
+  const ROLL = () => 0.5;
+  const switched = applyRestMode(plain, CODE_GAME, ROLL);
   eq(
     switched.blocks.filter((b) => b.taskId === null).every((b) => b.title === "Code" || b.title === "Game"),
     true,
@@ -1012,7 +1015,7 @@ console.log("== switching rest modes rebalances the schedule in place ==");
   );
 
   // Idempotent: labels that are still valid are left exactly where they are.
-  const again = applyRestMode(switched, CODE_GAME);
+  const again = applyRestMode(switched, CODE_GAME, ROLL);
   eq(again, switched, "a second pass changes nothing at all");
   eq(
     applyRestMode(switched, { advanced: false, types: ["Code", "Game"] }),
@@ -1020,7 +1023,7 @@ console.log("== switching rest modes rebalances the schedule in place ==");
     "switching off keeps the stored kinds for next time",
   );
   eq(
-    applyRestMode(applyRestMode(switched, { advanced: false, types: ["Code", "Game"] }), CODE_GAME),
+    applyRestMode(applyRestMode(switched, { advanced: false, types: ["Code", "Game"] }), CODE_GAME, ROLL),
     switched,
     "off and back on does not reshuffle",
   );

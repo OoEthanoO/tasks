@@ -728,8 +728,8 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               Completed: <code>0</code>.
             </div>
             <div>
-              <code>Rest</code> always owns an absolute <code>1/3</code> of the schedule.
-              Open tasks divide the other <code>2/3</code> in proportion to their weights.
+              <code>Rest</code> always owns an absolute <code>1/4</code> of the schedule.
+              Open tasks divide the other <code>3/4</code> in proportion to their weights.
             </div>
           </div>
         </div>

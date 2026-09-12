@@ -142,12 +142,12 @@ With `n` = days until due (negative once overdue):
 
 In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
 
-**Rest has an absolute 1/3 share.** It is not another relative weight in the
-task pile. Open tasks divide the remaining 2/3 in proportion to their due-date
+**Rest has an absolute 1/4 share.** It is not another relative weight in the
+task pile. Open tasks divide the remaining 3/4 in proportion to their due-date
 weights, regardless of how many tasks there are or how urgent they are. With
-one open task, that task gets 2/3 of the schedule; with two equal tasks, each
-gets 1/3. If one task has twice another task's weight, it gets twice that
-task's share of the working 2/3.
+one open task, that task gets 3/4 of the schedule; with two equal tasks, each
+gets 3/8. If one task has twice another task's weight, it gets twice that
+task's share of the working 3/4.
 
 Each task row shows its target share of a generated schedule. Completing a
 task zeroes its weight, so it receives no blocks, and the other open tasks
@@ -160,7 +160,7 @@ is Rest.
 each task and Rest the closest possible whole-block count for their target
 shares, then uses smooth weighted round-robin to spread those blocks through
 the day. Equal-weight tasks differ by at most one block, a task with twice the
-weight gets approximately twice the runtime, and about one third of the blocks
+weight gets approximately twice the runtime, and about one quarter of the blocks
 are Rest. If equal tasks compete for an indivisible extra block, its owner is
 chosen fairly at random instead of always favouring the first task. Very small
 task shares can round down to zero blocks in a short day.
@@ -241,7 +241,7 @@ than sampled independently, so equal kinds cannot drift far apart by chance.
 When the Rest-block count does not divide evenly, each kind has an equal chance
 of receiving the extra block.
 
-This is post-processing and nothing more. Rest is allocated its absolute 1/3
+This is post-processing and nothing more. Rest is allocated its absolute 1/4
 share before any kind is chosen, so a day with advanced rest on has exactly as
 much rest in it as the same day with it off. The kinds rename the slice; they
 cannot resize it.
