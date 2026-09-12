@@ -15,15 +15,11 @@ export function weightForDaysOut(n: number): number {
 }
 
 /**
- * The hidden "Rest" task sits in the pool permanently at 1, weighted the same
- * as one task due tomorrow — in effect an extra task due tomorrow that never
- * gets crossed off. Because it is a constant while the task pile is not, its
- * share shrinks as work accumulates and grows back as you complete things.
- *
- * Deriving it from the curve rather than hardcoding a number keeps that meaning
- * intact if the curve is ever retuned.
+ * Rest owns one third of every pick or generated schedule. It is an absolute
+ * share, not another relative weight in the task pile: open tasks divide the
+ * other two thirds in proportion to their due-date weights.
  */
-export const REST_WEIGHT = weightForDaysOut(1);
+export const REST_SHARE = 1 / 3;
 export const REST_LABEL = "Rest";
 
 /** Advanced rest off, with the example kinds ready for whoever turns it on. */
@@ -39,11 +35,9 @@ export function activeRestTypes(restMode: RestMode): string[] {
 /**
  * Which kind of rest this one turned out to be.
  *
- * Rest has already won by the time this runs: its share of the wheel is fixed
- * by REST_WEIGHT and decided in `pickWeighted`, and nothing here can widen or
- * narrow it. This only divides that slice evenly among the kinds on offer, so
- * two of them are 50/50 and the amount of rest in a day is exactly what it
- * was before the feature existed.
+ * Rest has already been allocated by the time this runs, and nothing here can
+ * widen or narrow its share. This only divides that slice evenly among the
+ * kinds on offer, so two of them are 50/50.
  *
  * `roll` is injectable so the split can be walked deterministically in tests.
  */
@@ -70,9 +64,9 @@ export type WeightedTask = {
 
 export type WeightTable = {
   entries: WeightedTask[];
-  /** Sum of every task weight plus Rest. */
-  total: number;
+  /** Sum of the relative due-date weights for open tasks. */
   taskTotal: number;
+  /** One third when there is work to schedule; all of it when there is none. */
   restProbability: number;
 };
 
@@ -82,36 +76,26 @@ export function buildWeightTable(
 ): WeightTable {
   const weighted = tasks.map((task) => ({ task, weight: taskWeight(task, today) }));
   const taskTotal = weighted.reduce((sum, w) => sum + w.weight, 0);
-  const total = taskTotal + REST_WEIGHT;
+  const restProbability = taskTotal > 0 ? REST_SHARE : 1;
+  const taskShare = 1 - restProbability;
 
   return {
-    entries: weighted.map((w) => ({ ...w, probability: w.weight / total })),
-    total,
+    entries: weighted.map((w) => ({
+      ...w,
+      probability: taskTotal > 0 ? (w.weight / taskTotal) * taskShare : 0,
+    })),
     taskTotal,
-    restProbability: REST_WEIGHT / total,
+    restProbability,
   };
 }
 
 /**
- * Draw one task proportional to its weight. Returns null when Rest wins.
- * Rest occupies its slice of the wheel whether or not anything else does.
- */
-export function pickWeighted(table: WeightTable): Task | null {
-  let roll = Math.random() * table.total;
-  for (const entry of table.entries) {
-    if (entry.weight <= 0) continue;
-    roll -= entry.weight;
-    if (roll < 0) return entry.task;
-  }
-  return null;
-}
-
-/**
- * Fingerprint of everything the recommender reads. Any change here — a new
- * task, a deletion, a moved due date, a completion — invalidates a schedule.
+ * Fingerprint of everything the scheduler reads. Any task change here
+ * invalidates a schedule. The model prefix also invalidates schedules saved by
+ * an older allocation algorithm after an app update.
  */
 export function taskSignature(tasks: Task[]): string {
-  return tasks
+  return "balanced-v1|" + tasks
     .map((t) => `${t.id}:${t.dueDate}:${t.completed ? 1 : 0}`)
     .sort()
     .join("|");

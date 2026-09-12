@@ -131,7 +131,7 @@ function TaskRow({
       <div className="prob" title={
         task.completed
           ? "Completed tasks have weight 0 and are never picked"
-          : `${formatProbability(probability)} chance of being picked on any given draw`
+          : `${formatProbability(probability)} target share of the generated schedule`
       }>
         <span className={`prob-value${probability <= 0 ? " is-zero" : ""}`}>
           {task.completed ? "—" : formatProbability(probability)}

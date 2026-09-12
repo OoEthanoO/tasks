@@ -1,8 +1,8 @@
 # YanTasks
 
 A task manager that decides what you should work on next. Tasks are weighted by
-how urgent they are, and the scheduler draws from them at random in proportion
-to those weights — once per 30-minute block, to lay out the rest of your day.
+how urgent they are, and the scheduler turns those weights into a balanced set
+of 30-minute blocks for the rest of your day.
 
 ```bash
 npm install
@@ -142,34 +142,31 @@ With `n` = days until due (negative once overdue):
 
 In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
 
-There is a hidden task called **Rest** permanently in the pool at a weight of
-`1` — the same pull as one task due tomorrow, in effect an extra task due
-tomorrow that never gets crossed off. It is never listed and cannot be completed, but
-it competes for every draw: one task due today gives a total weight of
-`2 + 1 = 3`, so that task has a `2/3` = 66.7% chance and Rest takes the
-remaining 33.3%.
+**Rest has an absolute 1/3 share.** It is not another relative weight in the
+task pile. Open tasks divide the remaining 2/3 in proportion to their due-date
+weights, regardless of how many tasks there are or how urgent they are. With
+one open task, that task gets 2/3 of the schedule; with two equal tasks, each
+gets 1/3. If one task has twice another task's weight, it gets twice that
+task's share of the working 2/3.
 
-Because Rest is a constant while the task pile is not, its share shrinks as work
-accumulates and grows back as you finish things:
-
-| Your plate | Rest's share |
-| --- | --- |
-| 1 task due tomorrow | 50% |
-| 1 task due today | 33.3% |
-| 2 due today | 20% |
-| 3 due today | 14.3% |
-
-Each task row shows its own percentage, which is its weight over the total
-including Rest. Completing a task zeroes its weight, so it can never be drawn
-again, and every other percentage rises to fill the gap.
+Each task row shows its target share of a generated schedule. Completing a
+task zeroes its weight, so it receives no blocks, and the other open tasks
+divide the working share between them. If there are no open tasks, every block
+is Rest.
 
 ## Schedule
 
-`G` blocks out the rest of the working day in 30-minute slots, running the
-recommender independently for each one. The first block is a stub from right now
-to the next :00 or :30, so at 8:32 AM you get 8:32–9:00, then 9:00–9:30, and so
-on until the end of the work day (configurable, default 11:00 PM). The block
-covering the current time is highlighted.
+`G` blocks out the rest of the working day in 30-minute slots. It first assigns
+each task and Rest the closest possible whole-block count for their target
+shares, then uses smooth weighted round-robin to spread those blocks through
+the day. Equal-weight tasks differ by at most one block, a task with twice the
+weight gets approximately twice the runtime, and about one third of the blocks
+are Rest. Very small task shares can round down to zero blocks in a short day.
+
+The first block is a stub from right now to the next :00 or :30, so at 8:32 AM
+you get 8:32–9:00, then 9:00–9:30, and so on until the end of the work day
+(configurable, default 11:00 PM). The block covering the current time is
+highlighted.
 
 An end time in the small hours means the night that is starting, not one that
 has already gone: set the day to end at 12:00 AM at nine in the morning and you
@@ -179,22 +176,22 @@ really is over.
 
 A schedule has to reflect the weights of the current task list at all times.
 Anything that moves a weight invalidates it, because the alternative is worse:
-if adding a task did not force a regenerate, that task would sit at a zero
-chance of ever being scheduled.
+if adding a task did not force a regenerate, that task would receive no share
+of the schedule.
 
 So it is flagged as outdated when it has run past its last block, when the date
 changes, when the work day is set to end at a different time, or when any task
 is added, deleted, completed, or has its due date moved. The date counts even
 though nothing was edited — weights are measured against today, so at midnight
-every one of them moves and a schedule that ran past midnight is drawing on
-yesterday's shares. Renaming a task does not invalidate it, since the weights
+every one of them moves and a schedule that ran past midnight uses yesterday's
+shares. Renaming a task does not invalidate it, since the weights
 are unchanged — the block simply picks up the new name.
 
 Regenerating when the schedule is *not* outdated asks first. `G` is a single
 unmodified keystroke sitting next to nothing in particular, and a regenerate
-redraws every block, so hitting it by accident would quietly replace a
-schedule that was still describing your day correctly. A schedule that is
-outdated regenerates straight away — it needs to, and a question there would
+rebuilds every block from the current time, so hitting it by accident would
+quietly replace a schedule that was still describing your day correctly. A
+schedule that is outdated regenerates straight away — it needs to, and a question there would
 only be in the way — and so does one that does not exist yet, or one with no
 blocks in it, since neither holds any picks worth keeping. The rule and the
 wording both live in `lib/schedule.ts` so the two apps cannot drift.
@@ -238,11 +235,10 @@ Rest can be split into kinds — Code, Game, Walk, whatever you like. Turn on
 **Advanced rest** under the schedule and each rest block becomes one of them,
 drawn evenly: two kinds are 50/50, three are a third each.
 
-This is post-processing and nothing more. How often Rest comes up at all is
-still `REST_WEIGHT` against the task pile, decided in `pickWeighted` before any
-of this runs, so a day with advanced rest on has exactly as much rest in it as
-the same day with it off — there is a test that generates both ways and
-compares the counts. The kinds rename the slice; they cannot resize it.
+This is post-processing and nothing more. Rest is allocated its absolute 1/3
+share before any kind is chosen, so a day with advanced rest on has exactly as
+much rest in it as the same day with it off. The kinds rename the slice; they
+cannot resize it.
 
 Switching the mode on does not cost you the schedule you are already working
 from. `applyRestMode` re-labels the rest blocks in place, leaving the task
@@ -268,8 +264,8 @@ code two-thirds of every rest.
 npm test
 ```
 
-398 assertions covering date parsing, the weight formulas, probability with the
-hidden Rest task and how its share moves as work piles up, block boundaries,
+413 assertions covering date parsing, the weight formulas, the absolute Rest
+share, proportional and evenly spread block allocation, block boundaries,
 when a schedule goes stale, when regenerating is worth asking about,
 splitting rest into kinds without changing how much rest there is,
 work days that end after midnight, how blocks

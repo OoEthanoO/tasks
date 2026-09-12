@@ -2,7 +2,7 @@
 
 The phone client for [tasks.ethanyanxu.com](https://tasks.ethanyanxu.com). Same
 account, same database, same weights: this app imports `../lib` directly rather
-than reimplementing any of it, so the roulette math and the schedule builder
+than reimplementing any of it, so the weighting and balanced schedule builder
 exist in exactly one place.
 
 ## Run it on your iPhone

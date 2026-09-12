@@ -1,4 +1,4 @@
-// The app lives in mobile/ but the roulette logic lives in ../lib, which it
+// The app lives in mobile/ but the scheduling logic lives in ../lib, which it
 // imports directly rather than through a copy. Metro refuses to read anything
 // outside the project root unless that root is named here.
 const { getDefaultConfig } = require("expo/metro-config");

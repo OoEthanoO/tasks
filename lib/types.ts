@@ -38,8 +38,8 @@ export type Schedule = {
 /**
  * Advanced rest: the kinds a rest block can turn out to be.
  *
- * This never touches how often Rest is drawn — see REST_WEIGHT. It only splits
- * a slice that has already been won, so turning it on changes what rest looks
+ * This never touches how often Rest is allocated — see REST_SHARE. It only splits
+ * a slice that has already been assigned, so turning it on changes what rest looks
  * like, not how much of it you get.
  */
 export type RestMode = {

@@ -37,8 +37,8 @@ export default function SupportPage() {
           How the weighting works
         </h2>
         <p>
-          Every open task gets a weight from its due date, and each pick is drawn at
-          random in proportion to those weights.
+          Every open task gets a weight from its due date. Tasks divide two thirds of
+          the schedule in proportion to those weights.
         </p>
         <ul className="help-list">
           <li>
@@ -50,32 +50,32 @@ export default function SupportPage() {
             yesterday 3, the day before 4.
           </li>
           <li>
-            <strong>Completed</strong> tasks weigh 0 and can never be drawn.
+            <strong>Completed</strong> tasks weigh 0 and receive no blocks.
           </li>
           <li>
-            A hidden <strong>Rest</strong> slice always sits in the pool, weighted the
-            same as one task due tomorrow (1). When Rest wins, take a break. Its share
-            shrinks as your list grows and returns as you finish things.
+            <strong>Rest</strong> always owns the other one third of the schedule,
+            regardless of how many tasks you have or how urgent they are.
           </li>
         </ul>
         <p>
-          The percentage beside each task is its exact chance of being drawn on the
-          next spin, so the numbers always add up to what you see.
+          The percentage beside each task is its target share of a generated schedule.
+          Together, the task percentages add up to two thirds.
         </p>
 
         <h2 className="card-title" style={{ marginTop: 26 }}>
           Today&apos;s schedule
         </h2>
         <p>
-          Generating a schedule spins the wheel once for every half hour between now
-          and the end of your work day, which you set with &ldquo;Work day ends
-          at&rdquo;. Blocks that land on Rest are breaks. An end time in the small
+          Generating a schedule gives every task the closest possible number of
+          half-hour blocks for its target share, then spreads those blocks evenly
+          between now and the end of your work day. One third of the blocks are Rest,
+          rounded to the nearest whole block. An end time in the small
           hours means the night ahead, so setting 12:00 AM in the morning plans your
           day through to midnight.
         </p>
         <p>
-          A schedule only means anything while it matches the weights it was drawn
-          from, so it tells you when it is out of date: once it has run to its last
+          A schedule only means anything while it matches the weights used to build
+          it, so it tells you when it is out of date: once it has run to its last
           block, when the date changes, when you move the end of your work day, or
           when you add, finish, delete or re-date a task. The date counts on its own —
           every weight is measured against today, so at midnight they all move.

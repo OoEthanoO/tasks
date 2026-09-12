@@ -4,10 +4,11 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { parseTrailingDate } = require("../.test-build/parse-date.js");
-const { taskWeight, buildWeightTable, REST_WEIGHT } = require("../.test-build/weights.js");
+const { taskWeight, buildWeightTable, REST_SHARE } = require("../.test-build/weights.js");
 const { toKey, addDays, todayKey } = require("../.test-build/dates.js");
 const {
   buildBlockTimes,
+  allocateScheduleBlocks,
   generateSchedule,
   scheduleStaleReason,
   staleMessage,
@@ -141,30 +142,26 @@ for (let n = -5; n <= 10; n++) {
 }
 eq(monotonic, true, "weight strictly decreases from overdue through future");
 
-console.log("== probability with hidden Rest ==");
-eq(REST_WEIGHT, 1, "rest has weight 1");
-eq(REST_WEIGHT, taskWeight(mk(1), today), "rest weighs the same as a task due tomorrow");
+console.log("== absolute Rest share ==");
+eq(REST_SHARE, 1 / 3, "rest owns one third of a non-empty task pool");
 
 const one = buildWeightTable([mk(0)], today);
-eq(one.total, 3, "one task due today: total = 2 + 1 = 3");
 eq(one.entries[0].probability.toFixed(4), (2 / 3).toFixed(4), "task = 2/3 = 66.7%");
 eq(one.restProbability.toFixed(4), (1 / 3).toFixed(4), "rest = 1/3 = 33.3%");
 
 const mixed = buildWeightTable([mk(0), mk(1), mk(-1)], today);
 eq(mixed.taskTotal, 2 + 1 + 3, "weights sum");
-eq(mixed.total, 7, "total includes rest");
+eq(
+  mixed.entries.map((entry) => entry.probability.toFixed(4)),
+  [2 / 9, 1 / 9, 1 / 3].map((p) => p.toFixed(4)),
+  "tasks split the other two thirds by relative weight",
+);
 
-// Rest is constant, so its share must fall as work piles up and recover as
-// tasks get completed. That trade-off is the whole point of a fixed weight.
+// Rest is an absolute share, so the task pile cannot shrink or expand it.
 const shares = [[1], [0], [0, 0], [0, 0, 0]].map(
   (ds) => buildWeightTable(ds.map((d, i) => ({ ...mk(d), id: `s${i}` })), today).restProbability,
 );
-eq(shares.map((s) => (s * 100).toFixed(1)), ["50.0", "33.3", "20.0", "14.3"], "rest share shrinks as the plate fills");
-eq(
-  shares.every((s, i) => i === 0 || s < shares[i - 1]),
-  true,
-  "strictly monotonic decline",
-);
+eq(shares, [1 / 3, 1 / 3, 1 / 3, 1 / 3], "rest stays at one third for every task load");
 
 const busy = [mk(0), mk(0), mk(0)].map((t, i) => ({ ...t, id: `b${i}` }));
 const beforeDone = buildWeightTable(busy, today).restProbability;
@@ -172,29 +169,10 @@ const afterDone = buildWeightTable(
   busy.map((t, i) => (i === 0 ? { ...t, completed: true } : t)),
   today,
 ).restProbability;
-eq(afterDone > beforeDone, true, "completing a task wins rest share back");
+eq(afterDone, beforeDone, "completing one task does not change the rest share");
 
 const empty = buildWeightTable([], today);
-eq(empty.total, REST_WEIGHT, "no tasks -> only rest");
-
-console.log("== draw distribution (10k rolls, 1 task due today) ==");
-let rest = 0;
-for (let i = 0; i < 10000; i++) if (buildWeightTable([mk(0)], today) && !pickWeightedOnce(one)) rest++;
-function pickWeightedOnce(table) {
-  let roll = Math.random() * table.total;
-  for (const e of table.entries) {
-    if (e.weight <= 0) continue;
-    roll -= e.weight;
-    if (roll < 0) return e.task;
-  }
-  return null;
-}
-const restPct = rest / 10000;
-eq(
-  Math.abs(restPct - 1 / 3) < 0.02,
-  true,
-  `rest drawn ${(restPct * 100).toFixed(1)}% (expect ~33.3%)`,
-);
+eq(empty.restProbability, 1, "no tasks -> only rest");
 
 console.log("== schedule blocks ==");
 const blocks = buildBlockTimes(NOW, "23:00");
@@ -276,6 +254,76 @@ eq(
   true,
   "every block is a real task or rest",
 );
+eq(
+  [sched.blocks.filter((b) => b.taskId === mk(0).id).length, sched.blocks.filter((b) => b.taskId === null).length],
+  [19, 10],
+  "generation uses the balanced 2/3 work and 1/3 rest allocation",
+);
+
+console.log("== balanced schedule allocation ==");
+{
+  const count = (picks, id) => picks.filter((task) => (task ? task.id : null) === id).length;
+
+  // Rest is fixed at a third regardless of how crowded or urgent the list is.
+  for (const offsets of [[0], [0, 0], [-5, -1, 0, 1, 20]]) {
+    const tasks = offsets.map((offset, i) => ({ ...mk(offset), id: `fixed-${i}` }));
+    const picks = allocateScheduleBlocks(buildWeightTable(tasks, today), 30);
+    eq(count(picks, null), 10, `${offsets.length} task(s) -> exactly 10 of 30 rests`);
+  }
+
+  // Equal weights get equal runtime to within the one indivisible block.
+  const equals = [
+    { ...mk(0), id: "equal-a" },
+    { ...mk(0), id: "equal-b" },
+  ];
+  const equalPicks = allocateScheduleBlocks(buildWeightTable(equals, today), 29);
+  const equalCounts = [count(equalPicks, "equal-a"), count(equalPicks, "equal-b")];
+  eq(Math.abs(equalCounts[0] - equalCounts[1]) <= 1, true, "equal tasks differ by at most one block");
+  eq(count(equalPicks, null), 10, "29 blocks rounds one-third rest to 10 blocks");
+
+  // A 2:1 task-weight ratio is exact when the block count can represent it.
+  const doubled = [
+    { ...mk(0), id: "double" },
+    { ...mk(1), id: "single" },
+  ];
+  const doubledPicks = allocateScheduleBlocks(buildWeightTable(doubled, today), 27);
+  eq(
+    [count(doubledPicks, "double"), count(doubledPicks, "single"), count(doubledPicks, null)],
+    [12, 6, 9],
+    "2:1 task weights become 12:6 blocks while rest keeps its third",
+  );
+
+  // Smooth round-robin keeps every prefix close to its final target instead of
+  // collecting a task's whole quota into one part of the day.
+  let seenDouble = 0;
+  let seenSingle = 0;
+  let seenRest = 0;
+  let homogeneous = true;
+  for (let i = 0; i < doubledPicks.length; i++) {
+    const id = doubledPicks[i]?.id ?? null;
+    if (id === "double") seenDouble++;
+    else if (id === "single") seenSingle++;
+    else seenRest++;
+    const elapsed = i + 1;
+    if (
+      Math.abs(seenDouble - elapsed * 4 / 9) > 1 ||
+      Math.abs(seenSingle - elapsed * 2 / 9) > 1 ||
+      Math.abs(seenRest - elapsed / 3) > 1
+    ) homogeneous = false;
+  }
+  eq(homogeneous, true, "every prefix stays within one block of each target share");
+
+  // Rounding is allowed to leave a tiny weight out of a short schedule.
+  const tiny = [
+    { ...mk(0), id: "large" },
+    { ...mk(100), id: "tiny" },
+  ];
+  const shortPicks = allocateScheduleBlocks(buildWeightTable(tiny, today), 6);
+  eq(count(shortPicks, "tiny"), 0, "a tiny share can round down to no blocks");
+
+  const noTasks = allocateScheduleBlocks(buildWeightTable([], today), 8);
+  eq(noTasks.every((task) => task === null), true, "without open tasks every block is Rest");
+}
 
 console.log("== the clock lands on block boundaries ==");
 // The "Now" highlight is only as punctual as the timer behind it. A fixed
@@ -346,6 +394,11 @@ eq(
   "rename only -> still fresh (weights unchanged)",
 );
 eq(staleFor(s, [baseTasks[1], baseTasks[0]]), null, "reordering -> still fresh");
+eq(
+  staleFor({ ...s, signature: s.signature.replace("balanced-v1|", "") }, baseTasks),
+  "tasks",
+  "a schedule from the old random allocator is stale after upgrade",
+);
 
 // Validity follows the span the schedule covers, not the date it was built on.
 eq(staleFor(s, baseTasks, "23:00", new Date(2026, 7, 12, 22, 59)), null, "before the end -> fresh");
@@ -711,12 +764,14 @@ console.log("== blocks resolve against the live task list ==");
   );
 }
 
-console.log("== completed tasks are never drawn ==");
+console.log("== completed tasks are never scheduled ==");
 const doneOnly = buildWeightTable([mk(0, true), mk(-3, true)], today);
 eq(doneOnly.taskTotal, 0, "all completed -> zero task weight");
-let alwaysRest = true;
-for (let i = 0; i < 500; i++) if (pickWeightedOnce(doneOnly) !== null) alwaysRest = false;
-eq(alwaysRest, true, "500 draws all return Rest");
+eq(
+  allocateScheduleBlocks(doneOnly, 500).every((task) => task === null),
+  true,
+  "500 scheduled blocks all become Rest",
+);
 
 console.log("== theme preference, shared by both apps ==");
 const {

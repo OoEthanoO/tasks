@@ -6,7 +6,6 @@ import {
   activeRestTypes,
   defaultRestMode,
   pickRestLabel,
-  pickWeighted,
   taskSignature,
 } from "./weights";
 
@@ -81,10 +80,66 @@ export function buildBlockTimes(now: Date, endTime: string): Array<[Date, Date]>
 }
 
 /**
- * Roll the recommender once per block for the remainder of the day.
+ * Give each choice the closest possible whole-block count, then spread those
+ * counts through the day with smooth weighted round-robin. This keeps the
+ * finished schedule close to the target shares without clumping one task into
+ * a long run. A very small share may round down to zero blocks.
+ */
+export function allocateScheduleBlocks(
+  table: WeightTable,
+  blockCount: number,
+): Array<Task | null> {
+  if (blockCount <= 0) return [];
+
+  const choices = [
+    { task: null, share: table.restProbability },
+    ...table.entries
+      .filter((entry) => entry.probability > 0)
+      .map((entry) => ({ task: entry.task, share: entry.probability })),
+  ];
+  const shareTotal = choices.reduce((sum, choice) => sum + choice.share, 0);
+  if (shareTotal <= 0) return Array<Task | null>(blockCount).fill(null);
+
+  const targets = choices.map((choice) => (choice.share / shareTotal) * blockCount);
+  const quotas = targets.map(Math.floor);
+  let left = blockCount - quotas.reduce((sum, quota) => sum + quota, 0);
+
+  const remainderOrder = targets
+    .map((target, index) => ({ index, remainder: target - quotas[index] }))
+    .sort((a, b) => {
+      const difference = b.remainder - a.remainder;
+      // Mathematically equal shares can differ by a floating-point hair. Rest
+      // is first, so a true tie keeps its one-third target closest.
+      return Math.abs(difference) < 1e-12 ? a.index - b.index : difference;
+    });
+  for (let i = 0; i < left; i++) quotas[remainderOrder[i].index]++;
+
+  const scores = quotas.map(() => 0);
+  const used = quotas.map(() => 0);
+  const picks: Array<Task | null> = [];
+
+  for (let block = 0; block < blockCount; block++) {
+    let winner = -1;
+    for (let i = 0; i < choices.length; i++) {
+      if (used[i] >= quotas[i]) continue;
+      scores[i] += quotas[i];
+      if (winner < 0 || scores[i] > scores[winner]) winner = i;
+    }
+
+    // Quotas always add up to blockCount, so a winner must exist.
+    scores[winner] -= blockCount;
+    used[winner]++;
+    picks.push(choices[winner].task);
+  }
+
+  return picks;
+}
+
+/**
+ * Allocate the remainder of the day in proportion to the current weights.
  *
  * Which kind of rest a rest block is gets decided here, at the moment it is
- * drawn, and stored on the block — the same way a task pick is. Deciding it at
+ * allocated, and stored on the block — the same way a task pick is. Deciding it at
  * render time instead would either re-roll the label on every repaint or need
  * the block to be hashed into a kind, and neither is what "a schedule" means
  * everywhere else in this file: a snapshot of one set of rolls.
@@ -96,8 +151,10 @@ export function generateSchedule(
   now: Date = new Date(),
   restMode: RestMode = defaultRestMode(),
 ): Schedule {
-  const blocks: ScheduleBlock[] = buildBlockTimes(now, endTime).map(([start, end]) => {
-    const task = pickWeighted(table);
+  const times = buildBlockTimes(now, endTime);
+  const picks = allocateScheduleBlocks(table, times.length);
+  const blocks: ScheduleBlock[] = times.map(([start, end], index) => {
+    const task = picks[index];
     return {
       start: start.toISOString(),
       end: end.toISOString(),
@@ -161,12 +218,12 @@ export type StaleReason = "elapsed" | "day" | "hours" | "tasks" | null;
  * The rule it has to keep is that a schedule always reflects the weights of the
  * current task list. Anything that moves a weight has to invalidate it —
  * otherwise a task added after generation would sit at a zero chance of ever
- * being scheduled, which is the opposite of what the list is for.
+ * being considered for its share, which is the opposite of what the list is for.
  *
  * That is why the date rolling over counts, even though nothing was edited.
  * Weights are measured against today, so at midnight every one of them moves:
  * a task due tomorrow becomes a task due today, 1 becomes 2, and the shares
- * every block was drawn from are no longer the shares on screen.
+ * used to allocate the blocks are no longer the shares on screen.
  */
 export function scheduleStaleReason(
   schedule: Schedule | null,
@@ -180,7 +237,7 @@ export function scheduleStaleReason(
   if (last && now.getTime() >= new Date(last.end).getTime()) return "elapsed";
 
   // A schedule may legitimately run past midnight, but it cannot stay valid
-  // there: every weight it was drawn from belongs to the day before.
+  // there: every weight used to allocate it belongs to the day before.
   if (schedule.dayKey !== toKey(now)) return "day";
 
   // The stored end time was written on every schedule but never read, so moving
@@ -200,7 +257,7 @@ export function scheduleStaleReason(
  * no blocks in it — that is the work-day-already-over case, where the empty
  * panel is itself telling you to push the end time out and generate again.
  * What is left is a live schedule that still describes the day accurately,
- * where regenerating silently replaces every pick with a fresh draw.
+ * where regenerating silently rebuilds every allocation from the current time.
  */
 export function needsRegenerateConfirmation(
   schedule: Schedule | null,
@@ -214,8 +271,8 @@ export const REGENERATE_CONFIRM = {
   title: "Regenerate this schedule?",
   body:
     "Nothing has changed since it was generated, so it still describes the rest " +
-    "of your day. Regenerating draws every block again, so the picks on screen " +
-    "now will be replaced.",
+    "of your day. Regenerating rebuilds the schedule from the current time, so the " +
+    "blocks on screen now will be replaced.",
   confirm: "Regenerate",
   cancel: "Keep it",
 } as const;
@@ -230,7 +287,7 @@ export function staleMessage(reason: Exclude<StaleReason, null>): string {
     case "hours":
       return "Your work day now ends at a different time.";
     case "tasks":
-      return "Your task list has changed since it was generated.";
+      return "Your task weights or scheduling rules have changed since it was generated.";
   }
 }
 

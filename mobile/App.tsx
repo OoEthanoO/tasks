@@ -23,12 +23,7 @@ import {
 } from "../lib/schedule";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, RestMode, Schedule, Task, User } from "../lib/types";
-import {
-  REST_WEIGHT,
-  buildWeightTable,
-  defaultRestMode,
-  formatProbability,
-} from "../lib/weights";
+import { buildWeightTable, defaultRestMode, formatProbability } from "../lib/weights";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
 import ConfirmSheet from "./src/components/ConfirmSheet";
@@ -564,7 +559,7 @@ function YanTasks() {
             title={ready && openCount > 0 ? `Tasks · ${openCount} open` : "Tasks"}
             right={
               <Text style={s.restHint}>
-                Rest holds {formatProbability(table.restProbability)}
+                Rest gets {formatProbability(table.restProbability)}
               </Text>
             }
           />
@@ -583,9 +578,9 @@ function YanTasks() {
 
           {ready && tasks.length > 0 && (
             <View style={s.stats}>
-              <Text style={s.stat}>Total weight {table.total.toFixed(3)}</Text>
-              <Text style={s.stat}>Tasks {table.taskTotal.toFixed(3)}</Text>
-              <Text style={s.stat}>Rest {REST_WEIGHT.toFixed(3)}</Text>
+              <Text style={s.stat}>Task weight {table.taskTotal.toFixed(3)}</Text>
+              <Text style={s.stat}>Tasks {formatProbability(1 - table.restProbability)}</Text>
+              <Text style={s.stat}>Rest {formatProbability(table.restProbability)}</Text>
             </View>
           )}
         </Card>

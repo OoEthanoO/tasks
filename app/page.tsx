@@ -22,12 +22,7 @@ import {
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, RestMode, Schedule, Task, User } from "@/lib/types";
-import {
-  REST_WEIGHT,
-  buildWeightTable,
-  defaultRestMode,
-  formatProbability,
-} from "@/lib/weights";
+import { buildWeightTable, defaultRestMode, formatProbability } from "@/lib/weights";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -552,7 +547,7 @@ export default function Page() {
           <h1>
             YanTasks<span className="dot">.</span>
           </h1>
-          <span className="tagline">weighted task roulette</span>
+          <span className="tagline">balanced weighted planner</span>
         </div>
         <div className="topbar-actions">
           <span className="today-chip">
@@ -611,7 +606,7 @@ export default function Page() {
               Tasks {ready && openCount > 0 && <span>· {openCount} open</span>}
             </h2>
             <span className="hint">
-              Rest holds {formatProbability(table.restProbability)}
+              Rest gets {formatProbability(table.restProbability)}
             </span>
           </div>
 
@@ -631,13 +626,13 @@ export default function Page() {
           {ready && tasks.length > 0 && (
             <div className="stats">
               <span>
-                Total weight <b>{table.total.toFixed(3)}</b>
+                Task weight <b>{table.taskTotal.toFixed(3)}</b>
               </span>
               <span>
-                Tasks <b>{table.taskTotal.toFixed(3)}</b>
+                Tasks <b>{formatProbability(1 - table.restProbability)}</b>
               </span>
               <span>
-                Rest <b>{REST_WEIGHT.toFixed(3)}</b>
+                Rest <b>{formatProbability(table.restProbability)}</b>
               </span>
             </div>
           )}
@@ -733,9 +728,8 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               Completed: <code>0</code>.
             </div>
             <div>
-              The hidden <code>Rest</code> task always weighs <code>1</code> — one extra
-              task due tomorrow that never gets crossed off. The more work you pile up,
-              the smaller its share; completing tasks wins it back.
+              <code>Rest</code> always owns an absolute <code>1/3</code> of the schedule.
+              Open tasks divide the other <code>2/3</code> in proportion to their weights.
             </div>
           </div>
         </div>

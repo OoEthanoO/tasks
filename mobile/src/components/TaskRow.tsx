@@ -83,7 +83,7 @@ export default function TaskRow({
           accessibilityLabel={
             task.completed
               ? "Completed tasks are never picked"
-              : `${formatProbability(probability)} chance of being drawn`
+              : `${formatProbability(probability)} target share of the generated schedule`
           }
         >
           {task.completed ? "—" : formatProbability(probability)}
