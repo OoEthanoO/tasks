@@ -87,6 +87,7 @@ export function buildBlockTimes(now: Date, endTime: string): Array<[Date, Date]>
 function spreadByShares<T>(
   choices: Array<{ value: T; share: number }>,
   blockCount: number,
+  remainderRoll?: () => number,
 ): T[] {
   if (blockCount <= 0 || choices.length === 0) return [];
 
@@ -105,6 +106,33 @@ function spreadByShares<T>(
       // the caller's order for a true tie.
       return Math.abs(difference) < 1e-12 ? a.index - b.index : difference;
     });
+
+  // Only randomize mathematically tied remainders. The quotas and their smooth
+  // interleaving stay deterministic; this just prevents the first label from
+  // always owning an indivisible extra block.
+  if (remainderRoll && left > 0) {
+    for (let start = 0; start < remainderOrder.length;) {
+      let end = start + 1;
+      while (
+        end < remainderOrder.length &&
+        Math.abs(remainderOrder[end].remainder - remainderOrder[start].remainder) < 1e-12
+      ) end++;
+      // Randomness is needed only when the quota cutoff lands inside this tie:
+      // some equal remainders get an extra block and some do not.
+      if (start < left && left < end) {
+        for (let i = end - 1; i > start; i--) {
+          const width = i - start + 1;
+          const offset = Math.max(
+            0,
+            Math.min(width - 1, Math.floor(remainderRoll() * width)),
+          );
+          const j = start + offset;
+          [remainderOrder[i], remainderOrder[j]] = [remainderOrder[j], remainderOrder[i]];
+        }
+      }
+      start = end;
+    }
+  }
   for (let i = 0; i < left; i++) quotas[remainderOrder[i].index]++;
 
   const scores = quotas.map(() => 0);
@@ -131,27 +159,43 @@ function spreadByShares<T>(
 export function allocateScheduleBlocks(
   table: WeightTable,
   blockCount: number,
+  remainderRoll: () => number = Math.random,
 ): Array<Task | null> {
-  return spreadByShares(
+  if (blockCount <= 0) return [];
+  const taskChoices = table.entries
+    .filter((entry) => entry.probability > 0)
+    .map((entry) => ({ value: entry.task, share: entry.probability }));
+  if (taskChoices.length === 0) return Array<Task | null>(blockCount).fill(null);
+
+  // Rest's absolute share is rounded on its own. The remaining work blocks are
+  // then apportioned among tasks, with a fair random choice whenever equal
+  // remainders compete for an indivisible extra block.
+  const restCount = Math.round(table.restProbability * blockCount);
+  const workCount = blockCount - restCount;
+  const taskPicks = spreadByShares(taskChoices, workCount, remainderRoll);
+  const slotKinds = spreadByShares(
     [
-      // First so a mathematically exact remainder tie favours keeping Rest's
-      // absolute one-third share closest to its target.
-      { value: null, share: table.restProbability },
-      ...table.entries
-        .filter((entry) => entry.probability > 0)
-        .map((entry) => ({ value: entry.task, share: entry.probability })),
+      { value: "rest" as const, share: restCount },
+      { value: "work" as const, share: workCount },
     ],
     blockCount,
   );
+  let taskIndex = 0;
+  return slotKinds.map((kind) => kind === "rest" ? null : taskPicks[taskIndex++]);
 }
 
-/** Divide Rest's blocks evenly and interleave the kinds instead of sampling. */
-export function allocateRestLabels(restMode: RestMode, blockCount: number): string[] {
+/** Divide Rest's blocks evenly, with fair random ownership of any remainder. */
+export function allocateRestLabels(
+  restMode: RestMode,
+  blockCount: number,
+  remainderRoll: () => number = Math.random,
+): string[] {
   const types = activeRestTypes(restMode);
   if (types.length === 0) return Array<string>(blockCount).fill(REST_LABEL);
   return spreadByShares(
     types.map((type) => ({ value: type, share: 1 })),
     blockCount,
+    remainderRoll,
   );
 }
 
@@ -213,6 +257,7 @@ export function generateSchedule(
 export function applyRestMode(
   schedule: Schedule | null,
   restMode: RestMode,
+  remainderRoll: () => number = Math.random,
 ): Schedule | null {
   if (!schedule) return null;
 
@@ -221,10 +266,8 @@ export function applyRestMode(
   // already stored are worth keeping for whenever it is switched back on.
   if (types.length === 0) return schedule;
 
-  const labels = allocateRestLabels(
-    restMode,
-    schedule.blocks.filter((block) => block.taskId === null).length,
-  );
+  const restBlocks = schedule.blocks.filter((block) => block.taskId === null);
+  const labels = allocateRestLabels(restMode, restBlocks.length, remainderRoll);
   let changed = false;
   let restIndex = 0;
   const blocks = schedule.blocks.map((block) => {

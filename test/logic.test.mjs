@@ -277,10 +277,53 @@ console.log("== balanced schedule allocation ==");
     { ...mk(0), id: "equal-a" },
     { ...mk(0), id: "equal-b" },
   ];
-  const equalPicks = allocateScheduleBlocks(buildWeightTable(equals, today), 29);
+const equalPicks = allocateScheduleBlocks(buildWeightTable(equals, today), 29);
   const equalCounts = [count(equalPicks, "equal-a"), count(equalPicks, "equal-b")];
   eq(Math.abs(equalCounts[0] - equalCounts[1]) <= 1, true, "equal tasks differ by at most one block");
   eq(count(equalPicks, null), 10, "29 blocks rounds one-third rest to 10 blocks");
+
+  const firstGetsExtra = allocateScheduleBlocks(buildWeightTable(equals, today), 8, () => 0.5);
+  const secondGetsExtra = allocateScheduleBlocks(buildWeightTable(equals, today), 8, () => 0.4999);
+  eq(
+    [count(firstGetsExtra, "equal-a"), count(firstGetsExtra, "equal-b"), count(firstGetsExtra, null)],
+    [3, 2, 3],
+    "the upper half of the tie roll gives the first equal task the extra work block",
+  );
+  eq(
+    [count(secondGetsExtra, "equal-a"), count(secondGetsExtra, "equal-b"), count(secondGetsExtra, null)],
+    [2, 3, 3],
+    "the lower half gives the second equal task the extra work block",
+  );
+
+  // Fisher-Yates has six equally likely branches for three tied tasks. Across
+  // those branches every task owns the one-extra outcome twice, and every task
+  // is omitted from the two-extra outcome twice.
+  const equalThree = [
+    { ...mk(0), id: "three-a" },
+    { ...mk(0), id: "three-b" },
+    { ...mk(0), id: "three-c" },
+  ];
+  const equalThreeTable = buildWeightTable(equalThree, today);
+  const shuffleBranches = [
+    [0.9, 0.9], [0.9, 0.1],
+    [0.5, 0.9], [0.5, 0.1],
+    [0.1, 0.9], [0.1, 0.1],
+  ];
+  const singleWinners = { "three-a": 0, "three-b": 0, "three-c": 0 };
+  const pairOmissions = { "three-a": 0, "three-b": 0, "three-c": 0 };
+  for (const branch of shuffleBranches) {
+    let rollIndex = 0;
+    const oneExtra = allocateScheduleBlocks(equalThreeTable, 6, () => branch[rollIndex++]);
+    const winner = equalThree.find((task) => count(oneExtra, task.id) === 2);
+    singleWinners[winner.id]++;
+
+    rollIndex = 0;
+    const twoExtras = allocateScheduleBlocks(equalThreeTable, 7, () => branch[rollIndex++]);
+    const omitted = equalThree.find((task) => count(twoExtras, task.id) === 1);
+    pairOmissions[omitted.id]++;
+  }
+  eq(Object.values(singleWinners), [2, 2, 2], "3n + 1 gives every tied task the same chance at the extra");
+  eq(Object.values(pairOmissions), [2, 2, 2], "3n + 2 chooses every pair with the same probability");
 
   // A 2:1 task-weight ratio is exact when the block count can represent it.
   const doubled = [
@@ -847,13 +890,19 @@ eq(
   ["Code", "Game", "Code", "Game", "Code", "Game", "Code", "Game", "Code", "Game"],
   "two kinds split ten blocks evenly and alternate",
 );
-const oddPair = allocateRestLabels(CODE_GAME, 11);
+const oddPair = allocateRestLabels(CODE_GAME, 11, () => 0.5);
 eq(
   [oddPair.filter((label) => label === "Code").length, oddPair.filter((label) => label === "Game").length],
   [6, 5],
-  "an odd number differs by only one block",
+  "the upper half of the tie roll gives Code the odd extra block",
 );
-const thirds = allocateRestLabels(THREE, 10);
+const oddPairOther = allocateRestLabels(CODE_GAME, 11, () => 0.4999);
+eq(
+  [oddPairOther.filter((label) => label === "Code").length, oddPairOther.filter((label) => label === "Game").length],
+  [5, 6],
+  "the lower half gives Game the odd extra block",
+);
+const thirds = allocateRestLabels(THREE, 10, () => 0.999);
 eq(
   ["Code", "Game", "Walk"].map((label) => thirds.filter((item) => item === label).length),
   [4, 3, 3],

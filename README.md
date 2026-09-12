@@ -161,7 +161,9 @@ each task and Rest the closest possible whole-block count for their target
 shares, then uses smooth weighted round-robin to spread those blocks through
 the day. Equal-weight tasks differ by at most one block, a task with twice the
 weight gets approximately twice the runtime, and about one third of the blocks
-are Rest. Very small task shares can round down to zero blocks in a short day.
+are Rest. If equal tasks compete for an indivisible extra block, its owner is
+chosen fairly at random instead of always favouring the first task. Very small
+task shares can round down to zero blocks in a short day.
 
 The first block is a stub from right now to the next :00 or :30, so at 8:32 AM
 you get 8:32–9:00, then 9:00–9:30, and so on until the end of the work day
@@ -236,6 +238,8 @@ Rest can be split into kinds — Code, Game, Walk, whatever you like. Turn on
 allocated as evenly as whole blocks allow: two kinds are about 50/50, three are
 about a third each. The kinds are interleaved across the Rest blocks rather
 than sampled independently, so equal kinds cannot drift far apart by chance.
+When the Rest-block count does not divide evenly, each kind has an equal chance
+of receiving the extra block.
 
 This is post-processing and nothing more. Rest is allocated its absolute 1/3
 share before any kind is chosen, so a day with advanced rest on has exactly as
@@ -264,7 +268,7 @@ code two-thirds of every rest.
 npm test
 ```
 
-412 assertions covering date parsing, the weight formulas, the absolute Rest
+417 assertions covering date parsing, the weight formulas, the absolute Rest
 share, proportional and evenly spread block allocation, block boundaries,
 when a schedule goes stale, when regenerating is worth asking about,
 splitting rest into kinds without changing how much rest there is,

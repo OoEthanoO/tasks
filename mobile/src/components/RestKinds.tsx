@@ -97,7 +97,7 @@ export default function RestKinds({
           <Text style={s.hint}>
             {restMode.types.length === 0
               ? "No kinds yet, so rest blocks still read “Rest”."
-              : `Divided evenly — about ${share}% each. The total amount of rest is unchanged.`}
+              : `Divided evenly — about ${share}% each, with any extra chosen at random. The total amount of rest is unchanged.`}
           </Text>
         </View>
       )}
