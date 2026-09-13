@@ -1,10 +1,8 @@
 import { toKey } from "./dates";
-import { RestMode, Schedule, ScheduleBlock, Task } from "./types";
+import { Schedule, ScheduleBlock, Task } from "./types";
 import {
   REST_LABEL,
   WeightTable,
-  activeRestTypes,
-  defaultRestMode,
   taskSignature,
 } from "./weights";
 
@@ -184,50 +182,22 @@ export function allocateScheduleBlocks(
   return slotKinds.map((kind) => kind === "rest" ? null : taskPicks[taskIndex++]);
 }
 
-/** Divide Rest's blocks evenly, with fair random ownership of any remainder. */
-export function allocateRestLabels(
-  restMode: RestMode,
-  blockCount: number,
-  remainderRoll: () => number = Math.random,
-): string[] {
-  const types = activeRestTypes(restMode);
-  if (types.length === 0) return Array<string>(blockCount).fill(REST_LABEL);
-  return spreadByShares(
-    types.map((type) => ({ value: type, share: 1 })),
-    blockCount,
-    remainderRoll,
-  );
-}
-
-/**
- * Allocate the remainder of the day in proportion to the current weights.
- *
- * Which kind of rest a rest block is gets decided here, at the moment it is
- * allocated, and stored on the block — the same way a task pick is. Deciding it at
- * render time would make the label depend on repainting rather than the stored
- * schedule allocation.
- */
+/** Allocate the remainder of the day, with every break labelled Rest. */
 export function generateSchedule(
   tasks: Task[],
   table: WeightTable,
   endTime: string,
   now: Date = new Date(),
-  restMode: RestMode = defaultRestMode(),
 ): Schedule {
   const times = buildBlockTimes(now, endTime);
   const picks = allocateScheduleBlocks(table, times.length);
-  const restLabels = allocateRestLabels(
-    restMode,
-    picks.filter((task) => task === null).length,
-  );
-  let restIndex = 0;
   const blocks: ScheduleBlock[] = times.map(([start, end], index) => {
     const task = picks[index];
     return {
       start: start.toISOString(),
       end: end.toISOString(),
       taskId: task ? task.id : null,
-      title: task ? task.title : restLabels[restIndex++],
+      title: task ? task.title : REST_LABEL,
     };
   });
 
@@ -238,47 +208,6 @@ export function generateSchedule(
     signature: taskSignature(tasks),
     endTime,
   };
-}
-
-/**
- * Rebalance the rest blocks of a schedule you already have for a new rest mode.
- *
- * Turning advanced rest on should not cost you the schedule you are working
- * from. Which kind a rest block is does not change *which* blocks are Rest —
- * that is the whole point of it being post-processing — so labels can be
- * rebalanced on their own. Task blocks, their order, the generated
- * time and the signature all come through untouched, which means the schedule
- * does not go stale and nothing asks you to regenerate.
- *
- * Every active kind receives the closest possible whole-block count and the
- * labels are interleaved across the Rest blocks. Adding or removing a kind may
- * therefore rebalance existing Rest labels, while task blocks never move.
- */
-export function applyRestMode(
-  schedule: Schedule | null,
-  restMode: RestMode,
-  remainderRoll: () => number = Math.random,
-): Schedule | null {
-  if (!schedule) return null;
-
-  const types = activeRestTypes(restMode);
-  // Nothing on offer means every rest block reads "Rest" anyway, and the kinds
-  // already stored are worth keeping for whenever it is switched back on.
-  if (types.length === 0) return schedule;
-
-  const restBlocks = schedule.blocks.filter((block) => block.taskId === null);
-  const labels = allocateRestLabels(restMode, restBlocks.length, remainderRoll);
-  let changed = false;
-  let restIndex = 0;
-  const blocks = schedule.blocks.map((block) => {
-    if (block.taskId !== null) return block;
-    const title = labels[restIndex++];
-    if (block.title === title) return block;
-    changed = true;
-    return { ...block, title };
-  });
-
-  return changed ? { ...schedule, blocks } : schedule;
 }
 
 export type StaleReason = "elapsed" | "day" | "hours" | "tasks" | null;
@@ -389,15 +318,10 @@ export function indexTasks(tasks: Task[]): Map<string, Task> {
 export function resolveBlock(
   block: ScheduleBlock,
   byId: Map<string, Task>,
-  restMode: RestMode = defaultRestMode(),
 ): ResolvedBlock {
   if (block.taskId === null) {
-    // Advanced rest stores the kind here when the block is allocated. Only a kind
-    // that is still on offer is shown, so switching the mode off reads as
-    // plain Rest again, and a kind that was deleted cannot linger on screen.
-    const kind = block.title.trim();
-    const onOffer = activeRestTypes(restMode).includes(kind);
-    return { title: onOffer ? kind : REST_LABEL, isRest: true, isMissing: false };
+    // This also covers named breaks saved by older clients.
+    return { title: REST_LABEL, isRest: true, isMissing: false };
   }
   const live = byId.get(block.taskId);
   return {

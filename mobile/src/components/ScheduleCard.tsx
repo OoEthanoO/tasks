@@ -8,9 +8,8 @@ import {
   resolveBlock,
   staleMessage,
 } from "../../../lib/schedule";
-import { RestMode, Schedule, Task } from "../../../lib/types";
+import { Schedule, Task } from "../../../lib/types";
 import { radius, themed, useStyles, useTheme } from "../theme";
-import RestKinds from "./RestKinds";
 import { Banner, Btn, Card, CardHead, Empty } from "./ui";
 
 const PRESETS = ["21:00", "22:00", "23:00", "23:59"];
@@ -21,8 +20,6 @@ export default function ScheduleCard({
   endTime,
   now,
   staleReason,
-  restMode,
-  onRestModeChange,
   onEndTimeChange,
   onGenerate,
 }: {
@@ -31,8 +28,6 @@ export default function ScheduleCard({
   endTime: string;
   now: Date;
   staleReason: StaleReason;
-  restMode: RestMode;
-  onRestModeChange: (next: RestMode) => void;
   onEndTimeChange: (value: string) => void;
   onGenerate: () => void;
 }) {
@@ -92,8 +87,6 @@ export default function ScheduleCard({
         </View>
       </View>
 
-      <RestKinds restMode={restMode} onChange={onRestModeChange} />
-
       {staleReason && (
         <Banner tone="warn">
           {`${staleMessage(staleReason)} Regenerate it for fresh picks.`}
@@ -125,7 +118,7 @@ export default function ScheduleCard({
               const end = new Date(block.end);
               const isPast = end <= now;
               const isNow = !isPast && start <= now;
-              const { title, isRest, isMissing } = resolveBlock(block, byId, restMode);
+              const { title, isRest, isMissing } = resolveBlock(block, byId);
 
               return (
                 <View

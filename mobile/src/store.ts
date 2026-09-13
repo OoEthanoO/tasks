@@ -9,8 +9,10 @@ const KEYS = {
   recommendation: "yantasks.recommendation.v1",
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
-  restMode: "yantasks.restMode.v1",
 } as const;
+
+// Retain the retired key only for clearing guest data after migration.
+const LEGACY_REST_MODE_KEY = "yantasks.restMode.v1";
 
 async function read(key: string): Promise<unknown> {
   try {
@@ -23,16 +25,15 @@ async function read(key: string): Promise<unknown> {
 
 export const guestStore = {
   async load(): Promise<AppState> {
-    const [tasks, recommendation, schedule, endTime, restMode] = await Promise.all([
+    const [tasks, recommendation, schedule, endTime] = await Promise.all([
       read(KEYS.tasks),
       read(KEYS.recommendation),
       read(KEYS.schedule),
       read(KEYS.endTime),
-      read(KEYS.restMode),
     ]);
     // Everything read back off the device goes through the same coercion the
     // server applies, so a half-written key cannot take the app down.
-    return sanitizeState({ tasks, recommendation, schedule, endTime, restMode });
+    return sanitizeState({ tasks, recommendation, schedule, endTime });
   },
 
   async save(state: AppState): Promise<void> {
@@ -42,7 +43,6 @@ export const guestStore = {
         [KEYS.recommendation, JSON.stringify(state.recommendation)],
         [KEYS.schedule, JSON.stringify(state.schedule)],
         [KEYS.endTime, JSON.stringify(state.endTime)],
-        [KEYS.restMode, JSON.stringify(state.restMode)],
       ]);
     } catch {
       // Out of space or storage unavailable — the session still works.
@@ -52,7 +52,7 @@ export const guestStore = {
   /** Called after a successful migration: the account copy is authoritative. */
   async clear(): Promise<void> {
     try {
-      await AsyncStorage.multiRemove(Object.values(KEYS));
+      await AsyncStorage.multiRemove([...Object.values(KEYS), LEGACY_REST_MODE_KEY]);
     } catch {
       // Nothing to do.
     }

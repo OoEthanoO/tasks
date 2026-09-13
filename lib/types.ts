@@ -35,20 +35,6 @@ export type Schedule = {
   endTime: string;
 };
 
-/**
- * Advanced rest: the kinds a rest block can turn out to be.
- *
- * This never touches how often Rest is allocated — see REST_SHARE. It only splits
- * a slice that has already been assigned, so turning it on changes what rest looks
- * like, not how much of it you get.
- */
-export type RestMode = {
-  /** When false every rest block reads simply "Rest", and `types` is kept. */
-  advanced: boolean;
-  /** Allocated evenly: two types are 50/50, three are a third each. */
-  types: string[];
-};
-
 export type User = {
   id: string;
   username: string;
@@ -64,5 +50,4 @@ export type AppState = {
   recommendation: Recommendation | null;
   schedule: Schedule | null;
   endTime: string;
-  restMode: RestMode;
 };

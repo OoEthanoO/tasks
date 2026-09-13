@@ -1,5 +1,5 @@
-import { sanitizeEndTime, sanitizeRestMode } from "./app-state";
-import { AppState, Recommendation, Schedule, Task } from "./types";
+import { sanitizeEndTime, sanitizeSchedule } from "./app-state";
+import { AppState, Recommendation, Task } from "./types";
 
 // Unchanged key names: data written before accounts existed still loads, which
 // is exactly the data a migration offers to move.
@@ -8,8 +8,10 @@ const KEYS = {
   recommendation: "yantasks.recommendation.v1",
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
-  restMode: "yantasks.restMode.v1",
 } as const;
+
+// Retain the retired key only for clearing guest data after migration.
+const LEGACY_REST_MODE_KEY = "yantasks.restMode.v1";
 
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -38,9 +40,8 @@ export const localStore = {
     return {
       tasks: read<Task[]>(KEYS.tasks, []),
       recommendation: read<Recommendation | null>(KEYS.recommendation, null),
-      schedule: read<Schedule | null>(KEYS.schedule, null),
+      schedule: sanitizeSchedule(read<unknown>(KEYS.schedule, null)),
       endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),
-      restMode: sanitizeRestMode(read<unknown>(KEYS.restMode, null)),
     };
   },
 
@@ -49,13 +50,12 @@ export const localStore = {
     write(KEYS.recommendation, state.recommendation);
     write(KEYS.schedule, state.schedule);
     write(KEYS.endTime, state.endTime);
-    write(KEYS.restMode, state.restMode);
   },
 
   /** Called after a successful migration — the data now lives in the account. */
   clear(): void {
     if (typeof window === "undefined") return;
-    for (const key of Object.values(KEYS)) {
+    for (const key of [...Object.values(KEYS), LEGACY_REST_MODE_KEY]) {
       try {
         window.localStorage.removeItem(key);
       } catch {

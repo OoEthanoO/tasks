@@ -1,5 +1,5 @@
 import { DateKey, diffDays, todayKey } from "./dates";
-import { RestMode, Task } from "./types";
+import { Task } from "./types";
 
 /**
  * The weight curve, where `n` is the number of days until a task is due
@@ -21,16 +21,6 @@ export function weightForDaysOut(n: number): number {
  */
 export const REST_SHARE = 1 / 4;
 export const REST_LABEL = "Rest";
-
-/** Advanced rest off, with the example kinds ready for whoever turns it on. */
-export function defaultRestMode(): RestMode {
-  return { advanced: false, types: ["Code", "Game"] };
-}
-
-/** The kinds in play right now — empty whenever plain "Rest" is what shows. */
-export function activeRestTypes(restMode: RestMode): string[] {
-  return restMode.advanced ? restMode.types : [];
-}
 
 /** A task's pull on the recommender. Completed tasks weigh 0 and never win. */
 export function taskWeight(task: Task, today: DateKey = todayKey()): number {

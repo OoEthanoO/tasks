@@ -9,7 +9,6 @@ const { toKey, addDays, todayKey } = require("../.test-build/dates.js");
 const {
   buildBlockTimes,
   allocateScheduleBlocks,
-  allocateRestLabels,
   generateSchedule,
   scheduleStaleReason,
   staleMessage,
@@ -18,7 +17,6 @@ const {
   resolveBlock,
   needsRegenerateConfirmation,
   nextTickDelay,
-  applyRestMode,
   REGENERATE_CONFIRM,
 } = require("../.test-build/schedule.js");
 
@@ -861,297 +859,71 @@ eq(
   "every state has a label",
 );
 
-console.log("== advanced rest ==");
-const {
-  activeRestTypes,
-  defaultRestMode,
-  REST_LABEL,
-} = require("../.test-build/weights.js");
-
-const CODE_GAME = { advanced: true, types: ["Code", "Game"] };
-
-eq(defaultRestMode(), { advanced: false, types: ["Code", "Game"] }, "off by default");
-eq(activeRestTypes(defaultRestMode()), [], "kinds are kept but inert while off");
-eq(activeRestTypes(CODE_GAME), ["Code", "Game"], "kinds are live once switched on");
-
-const THREE = { advanced: true, types: ["Code", "Game", "Walk"] };
-eq(
-  allocateRestLabels(defaultRestMode(), 4),
-  [REST_LABEL, REST_LABEL, REST_LABEL, REST_LABEL],
-  "advanced off -> every label is plain Rest",
-);
-eq(
-  allocateRestLabels({ advanced: true, types: [] }, 3),
-  [REST_LABEL, REST_LABEL, REST_LABEL],
-  "advanced on with no kinds -> every label is plain Rest",
-);
-eq(
-  allocateRestLabels(CODE_GAME, 10),
-  ["Code", "Game", "Code", "Game", "Code", "Game", "Code", "Game", "Code", "Game"],
-  "two kinds split ten blocks evenly and alternate",
-);
-const oddPair = allocateRestLabels(CODE_GAME, 11, () => 0.5);
-eq(
-  [oddPair.filter((label) => label === "Code").length, oddPair.filter((label) => label === "Game").length],
-  [6, 5],
-  "the upper half of the tie roll gives Code the odd extra block",
-);
-const oddPairOther = allocateRestLabels(CODE_GAME, 11, () => 0.4999);
-eq(
-  [oddPairOther.filter((label) => label === "Code").length, oddPairOther.filter((label) => label === "Game").length],
-  [5, 6],
-  "the lower half gives Game the odd extra block",
-);
-const thirds = allocateRestLabels(THREE, 10, () => 0.999);
-eq(
-  ["Code", "Game", "Walk"].map((label) => thirds.filter((item) => item === label).length),
-  [4, 3, 3],
-  "three kinds get the closest whole-block split",
-);
-
-// Rest keeps its absolute share while advanced kinds divide that slice evenly.
+console.log("== plain Rest and legacy schedules ==");
 {
-  const restTasks = [mk(0), mk(1), mk(5)];
-  const restTable = buildWeightTable(restTasks, today);
-  // Generate with and without advanced rest and count rest blocks both ways.
-  // The kinds divide the slice; they must not resize it.
-  const countRest = (restMode) => {
-    const sched = generateSchedule(restTasks, restTable, "23:00", NOW, restMode);
-    return sched.blocks.filter((b) => b.taskId === null).length;
+  const { REST_LABEL } = require("../.test-build/weights.js");
+  const { sanitizeState, sanitizeSchedule } = require("../.test-build/app-state.js");
+  const tasks = [{ ...mk(0), title: "Code" }];
+  const generated = generateSchedule(tasks, buildWeightTable(tasks, today), "23:00", NOW);
+  const rests = generated.blocks.filter((block) => block.taskId === null);
+  eq(rests.length, 7, "plain Rest keeps the current one-quarter allocation");
+  eq(rests.every((block) => block.title === REST_LABEL), true, "all generated breaks are plain Rest");
+
+  const legacySchedule = {
+    ...generated,
+    blocks: generated.blocks.map((block, i) =>
+      block.taskId === null ? { ...block, title: i % 2 ? "Code" : "Game" } : block),
   };
-  const plainShare = countRest(defaultRestMode());
-  const advancedShare = countRest(CODE_GAME);
-  eq(advancedShare, plainShare, "advanced kinds do not change the number of Rest blocks");
-
-  // A rest block carries its kind, and a task block is untouched.
-  const advSched = generateSchedule(restTasks, restTable, "23:00", NOW, CODE_GAME);
-  const restTitles = new Set(
-    advSched.blocks.filter((b) => b.taskId === null).map((b) => b.title),
-  );
-  eq(
-    [...restTitles].every((title) => title === "Code" || title === "Game"),
-    true,
-    "every rest block is stored as one of the kinds",
-  );
-  const advancedCounts = ["Code", "Game"].map(
-    (title) => advSched.blocks.filter((b) => b.taskId === null && b.title === title).length,
-  );
-  eq(Math.abs(advancedCounts[0] - advancedCounts[1]) <= 1, true, "generated kinds differ by at most one block");
-
-  // Resolution reads the live mode, so switching off restores plain Rest with
-  // no regenerate — the block still holds "Code" underneath.
-  const restBlock = advSched.blocks.find((b) => b.taskId === null);
-  const emptyIndex = indexTasks(restTasks);
-  eq(
-    resolveBlock(restBlock, emptyIndex, CODE_GAME).title,
-    restBlock.title,
-    "advanced on -> the stored kind shows",
-  );
-  eq(
-    resolveBlock(restBlock, emptyIndex, { advanced: false, types: ["Code"] }).title,
-    REST_LABEL,
-    "advanced off -> plain Rest again, without regenerating",
-  );
-  eq(resolveBlock(restBlock, emptyIndex, CODE_GAME).isRest, true, "still styled as rest");
-  // A schedule written before the feature existed has "Rest" in the title.
-  eq(
-    resolveBlock({ ...restBlock, title: "Rest" }, emptyIndex, CODE_GAME).title,
-    REST_LABEL,
-    "an older schedule keeps reading Rest",
-  );
-}
-
-console.log("== switching rest modes rebalances the schedule in place ==");
-{
-  const relTasks = [mk(0), mk(1), mk(4)];
-  const relTable = buildWeightTable(relTasks, today);
-  const plain = generateSchedule(relTasks, relTable, "23:00", NOW);
-  const restCount = plain.blocks.filter((b) => b.taskId === null).length;
-  eq(restCount > 0, true, "the fixture has rest blocks to rebalance");
-  eq(
-    plain.blocks.filter((b) => b.taskId === null).every((b) => b.title === REST_LABEL),
-    true,
-    "they all start as plain Rest",
-  );
-
-  // Switching on: every rest block gets a balanced kind, nothing else moves.
-  // Fixed roll: with 7 rest blocks the extra kind is a tie-break, and the
-  // default Math.random would let off-and-back-on reshuffle by chance.
-  const ROLL = () => 0.5;
-  const switched = applyRestMode(plain, CODE_GAME, ROLL);
-  eq(
-    switched.blocks.filter((b) => b.taskId === null).every((b) => b.title === "Code" || b.title === "Game"),
-    true,
-    "every rest block now carries a kind",
-  );
-  const switchedCounts = ["Code", "Game"].map(
-    (title) => switched.blocks.filter((b) => b.taskId === null && b.title === title).length,
-  );
-  eq(Math.abs(switchedCounts[0] - switchedCounts[1]) <= 1, true, "switching on balances the kinds");
-  eq(
-    switched.blocks.map((b) => b.taskId),
-    plain.blocks.map((b) => b.taskId),
-    "the task picks are identical — nothing was re-drawn",
-  );
-  eq(
-    switched.blocks.map((b) => [b.start, b.end]),
-    plain.blocks.map((b) => [b.start, b.end]),
-    "the block times are identical",
-  );
-  eq(
-    switched.blocks.filter((b) => b.taskId !== null).map((b) => b.title),
-    plain.blocks.filter((b) => b.taskId !== null).map((b) => b.title),
-    "task block titles are untouched",
-  );
-  // The schedule must not become stale, or the user is asked to regenerate
-  // anyway and the whole point is lost.
-  eq(switched.generatedAt, plain.generatedAt, "the generated time is preserved");
-  eq(switched.signature, plain.signature, "the signature is preserved");
-  eq(switched.endTime, plain.endTime, "the end time is preserved");
-  eq(
-    scheduleStaleReason(switched, relTasks, "23:00", NOW),
-    null,
-    "rebalancing labels does not make the schedule stale",
-  );
-
-  // Idempotent: labels that are still valid are left exactly where they are.
-  const again = applyRestMode(switched, CODE_GAME, ROLL);
-  eq(again, switched, "a second pass changes nothing at all");
-  eq(
-    applyRestMode(switched, { advanced: false, types: ["Code", "Game"] }),
-    switched,
-    "switching off keeps the stored kinds for next time",
-  );
-  eq(
-    applyRestMode(applyRestMode(switched, { advanced: false, types: ["Code", "Game"] }), CODE_GAME, ROLL),
-    switched,
-    "off and back on does not reshuffle",
-  );
-
-  // Adding a kind rebalances the Rest labels without moving task blocks.
-  const withWalk = applyRestMode(switched, { advanced: true, types: ["Code", "Game", "Walk"] });
-  const withWalkCounts = ["Code", "Game", "Walk"].map(
-    (title) => withWalk.blocks.filter((b) => b.taskId === null && b.title === title).length,
-  );
-  eq(Math.max(...withWalkCounts) - Math.min(...withWalkCounts) <= 1, true, "adding a kind rebalances evenly");
-  eq(
-    withWalk.blocks.map((b) => b.taskId),
-    switched.blocks.map((b) => b.taskId),
-    "adding a kind leaves task allocation untouched",
-  );
-
-  // Removing a kind rebalances the Rest labels around what remains.
-  const onlyGame = applyRestMode(switched, { advanced: true, types: ["Game"] });
-  eq(
-    onlyGame.blocks.filter((b) => b.taskId === null).every((b) => b.title === "Game"),
-    true,
-    "a removed kind is reallocated to one still on offer",
-  );
-  eq(
-    onlyGame.blocks.map((b) => b.taskId),
-    plain.blocks.map((b) => b.taskId),
-    "and even then the task picks do not move",
-  );
-
-  eq(applyRestMode(null, CODE_GAME), null, "no schedule stays no schedule");
-
-  // Even an older, skewed set of valid labels is corrected rather than kept.
-  const skewed = {
-    ...switched,
-    blocks: switched.blocks.map((block) => block.taskId === null ? { ...block, title: "Code" } : block),
+  const legacyState = {
+    tasks,
+    recommendation: null,
+    schedule: legacySchedule,
+    endTime: "23:00",
+    restMode: { advanced: true, types: ["Code", "Game"] },
   };
-  const corrected = applyRestMode(skewed, CODE_GAME);
-  const correctedCounts = ["Code", "Game"].map(
-    (title) => corrected.blocks.filter((b) => b.taskId === null && b.title === title).length,
-  );
+  const migrated = sanitizeState(legacyState, NOW);
+  eq(migrated.schedule, generated, "loading old named breaks preserves the plan and normalizes labels");
+  eq("restMode" in migrated, false, "retired preferences are ignored in older payloads");
+  eq(sanitizeSchedule(migrated.schedule), migrated.schedule, "normalizing again is idempotent");
+  eq(scheduleStaleReason(migrated.schedule, tasks, "23:00", NOW), null, "removing kinds does not invalidate an otherwise current plan");
+  const byId = indexTasks(tasks);
   eq(
-    Math.abs(correctedCounts[0] - correctedCounts[1]) <= 1,
+    legacySchedule.blocks.filter((block) => block.taskId === null)
+      .every((block) => resolveBlock(block, byId).title === REST_LABEL),
     true,
-    "an existing skewed schedule is rebalanced",
+    "legacy blocks also render as Rest before normalization",
   );
+  const taskBlock = legacySchedule.blocks.find((block) => block.taskId !== null);
+  eq(resolveBlock(taskBlock, byId).title, "Code", "a real task named Code keeps its title");
 
-  // What the panel actually renders, before and after.
-  const relIndex = indexTasks(relTasks);
-  const aRest = switched.blocks.find((b) => b.taskId === null);
-  eq(resolveBlock(aRest, relIndex, CODE_GAME).title, aRest.title, "the kind renders");
-  eq(
-    resolveBlock(aRest, relIndex, { advanced: false, types: ["Code", "Game"] }).title,
-    REST_LABEL,
-    "switched off it renders as Rest again",
-  );
-  // A kind deleted without rebalancing must not linger on screen.
-  eq(
-    resolveBlock({ ...aRest, title: "Gone" }, relIndex, CODE_GAME).title,
-    REST_LABEL,
-    "a kind no longer on offer falls back to Rest",
-  );
-}
-
-console.log("== rest kinds are coerced like everything else ==");
-{
-const {
-  sanitizeRestMode,
-  sanitizeState,
-  isEmptyState,
-  emptyState,
-} = require("../.test-build/app-state.js");
-eq(sanitizeRestMode(null), defaultRestMode(), "nothing stored -> the default");
-eq(sanitizeRestMode(undefined), defaultRestMode(), "missing -> the default");
-eq(sanitizeRestMode({ advanced: "yes", types: [] }).advanced, false, "only true is on");
-eq(
-  sanitizeRestMode({ advanced: true, types: ["  Code  "] }).types,
-  ["Code"],
-  "labels are trimmed",
-);
-eq(
-  sanitizeRestMode({ advanced: true, types: ["Code", "", "   ", "Game"] }).types,
-  ["Code", "Game"],
-  "blank labels are dropped",
-);
-// A duplicate is not cosmetic: it would quietly skew the even split.
-eq(
-  sanitizeRestMode({ advanced: true, types: ["Code", "code", "CODE", "Game"] }).types,
-  ["Code", "Game"],
-  "duplicates are dropped case-insensitively, first spelling wins",
-);
-eq(
-  sanitizeRestMode({ advanced: true, types: ["a".repeat(200)] }).types[0].length,
-  40,
-  "an overlong label is capped",
-);
-eq(
-  sanitizeRestMode({ advanced: true, types: Array.from({ length: 50 }, (_, i) => `k${i}`) })
-    .types.length,
-  20,
-  "the list is capped",
-);
-eq(
-  sanitizeRestMode({ advanced: true, types: "not an array" }).types,
-  [],
-  "a non-array list is dropped",
-);
-eq(
-  sanitizeRestMode({ advanced: true, types: [1, null, {}, "Ok"] }).types,
-  ["Ok"],
-  "non-string entries are dropped",
-);
-// State stored before advanced rest existed has no restMode key at all.
-eq(
-  sanitizeState({ tasks: [] }).restMode,
-  defaultRestMode(),
-  "older state gains the default",
-);
-eq(
-  sanitizeState({ tasks: [], restMode: { advanced: true, types: ["Walk"] } }).restMode,
-  { advanced: true, types: ["Walk"] },
-  "a stored rest mode survives sanitizing",
-);
-// It is a preference, like the end time — not something a migration counts.
-eq(
-  isEmptyState({ ...emptyState(), restMode: { advanced: true, types: ["Walk"] } }),
-  true,
-  "rest kinds alone do not make an account non-empty",
-);
+  // The web guest store bypasses sanitizeState, so exercise that load path too.
+  const { localStore } = require("../.test-build/storage.js");
+  const savedWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map([
+    ["yantasks.tasks.v1", JSON.stringify(tasks)],
+    ["yantasks.schedule.v1", JSON.stringify(legacySchedule)],
+    ["yantasks.endTime.v1", JSON.stringify("23:00")],
+    ["yantasks.restMode.v1", JSON.stringify(legacyState.restMode)],
+  ]);
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    localStorage: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    },
+  } });
+  try {
+    const loaded = localStore.load();
+    eq(loaded.schedule, generated, "the web guest store loads old schedules as plain Rest");
+    eq("restMode" in loaded, false, "the web guest store ignores the retired preference key");
+    localStore.save(loaded);
+    eq(JSON.parse(values.get("yantasks.schedule.v1")), generated, "saving preserves the normalized schedule");
+    localStore.clear();
+    eq(values.size, 0, "migration cleanup still clears the legacy guest preference");
+  } finally {
+    if (savedWindow) Object.defineProperty(globalThis, "window", savedWindow);
+    else delete globalThis.window;
+  }
 }
 
 console.log("== credential rules ==");
@@ -1524,30 +1296,31 @@ eq(restored.tasks[1].completed, true, "completion survives the round-trip");
 eq(restored.recommendation, guestState.recommendation, "the recommendation round-trips");
 eq(restored.schedule.blocks, guestState.schedule.blocks, "schedule blocks round-trip");
 eq(restored.endTime, "22:00", "the end time round-trips");
-// guestState has no restMode at all — an older client, or a payload written
-// before the column existed. It has to land on the default rather than null.
-eq(restored.restMode, defaultRestMode(), "a payload with no rest mode gets the default");
-
-// And a configured one survives the trip through the new prefs column.
-await db.saveState(alice.id, {
-  ...guestState,
-  restMode: { advanced: true, types: ["Code", "Game", "Walk"] },
-});
-eq(
-  (await db.loadState(alice.id)).restMode,
-  { advanced: true, types: ["Code", "Game", "Walk"] },
-  "advanced rest round-trips through postgres",
-);
-// Turning it off keeps the kinds, so switching back on does not lose them.
-await db.saveState(alice.id, {
-  ...guestState,
-  restMode: { advanced: false, types: ["Code", "Game", "Walk"] },
-});
-eq(
-  (await db.loadState(alice.id)).restMode,
-  { advanced: false, types: ["Code", "Game", "Walk"] },
-  "switching off keeps the kinds",
-);
+// Simulate a prefs row written before the feature was removed. Existing
+// schedules load with plain Rest; the retired column can stay in the database.
+const legacyDbSchedule = {
+  ...guestState.schedule,
+  blocks: [
+    ...guestState.schedule.blocks,
+    { start: "2026-08-12T09:00:00.000Z", end: "2026-08-12T09:30:00.000Z", taskId: null, title: "Game" },
+  ],
+};
+const normalizedDbSchedule = {
+  ...legacyDbSchedule,
+  blocks: legacyDbSchedule.blocks.map((block) =>
+    block.taskId === null ? { ...block, title: "Rest" } : block),
+};
+const legacyDbMode = { advanced: true, types: ["Code", "Game"] };
+await pg.query("UPDATE prefs SET schedule = $1, rest_mode = $2 WHERE user_id = $3", [
+  JSON.stringify(legacyDbSchedule), JSON.stringify(legacyDbMode), alice.id,
+]);
+const legacyLoaded = await db.loadState(alice.id);
+eq(legacyLoaded.schedule, normalizedDbSchedule, "legacy database breaks load as plain Rest");
+eq("restMode" in legacyLoaded, false, "database responses omit the removed preference");
+await db.saveState(alice.id, { ...guestState, schedule: legacyDbSchedule, restMode: legacyDbMode });
+eq((await db.loadState(alice.id)).schedule, normalizedDbSchedule, "an old client's save normalizes named breaks");
+const persistedSchedule = (await pg.query("SELECT schedule FROM prefs WHERE user_id = $1", [alice.id])).rows[0].schedule;
+eq(JSON.parse(persistedSchedule), normalizedDbSchedule, "named breaks are normalized before storage");
 
 const bob = await db.createUser({
   id: "u-bob",

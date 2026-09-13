@@ -152,7 +152,8 @@ task's share of the working 3/4.
 Each task row shows its target share of a generated schedule. Completing a
 task zeroes its weight, so it receives no blocks, and the other open tasks
 divide the working share between them. If there are no open tasks, every block
-is Rest.
+is Rest. All breaks are labelled **Rest**, including named breaks in older saved
+schedules.
 
 ## Schedule
 
@@ -231,47 +232,16 @@ Note that `mobile/app.json` sets `userInterfaceStyle` to `automatic`. It was
 `dark`, which pins `useColorScheme()` and would keep System from ever reporting
 light — changing it needs a native rebuild, not just a reload.
 
-## Advanced rest
-
-Rest can be split into kinds — Code, Game, Walk, whatever you like. Turn on
-**Advanced rest** under the schedule and each rest block becomes one of them,
-allocated as evenly as whole blocks allow: two kinds are about 50/50, three are
-about a third each. The kinds are interleaved across the Rest blocks rather
-than sampled independently, so equal kinds cannot drift far apart by chance.
-When the Rest-block count does not divide evenly, each kind has an equal chance
-of receiving the extra block.
-
-This is post-processing and nothing more. Rest is allocated its absolute 1/4
-share before any kind is chosen, so a day with advanced rest on has exactly as
-much rest in it as the same day with it off. The kinds rename the slice; they
-cannot resize it.
-
-Switching the mode on does not cost you the schedule you are already working
-from. `applyRestMode` rebalances the rest labels in place, leaving the task
-picks, block times, generated timestamp and signature alone — so the schedule
-does not go stale and nothing asks you to regenerate. Adding or removing a kind
-redistributes only the Rest labels to restore the closest whole-block split;
-task blocks never move.
-
-Turning the mode off keeps the list, so switching back on does not mean typing
-them again. A kind that has been deleted never lingers on screen either —
-`resolveBlock` only ever shows a kind that is currently on offer, and falls
-back to plain "Rest" otherwise.
-
-Kinds are capped at 20, trimmed, and de-duplicated case-insensitively. That
-last one is not cosmetic: "Code" listed twice next to "Game" would quietly make
-code two-thirds of every rest.
-
 ## Tests
 
 ```bash
 npm test
 ```
 
-417 assertions covering date parsing, the weight formulas, the absolute Rest
+Assertions covering date parsing, the weight formulas, the absolute Rest
 share, proportional and evenly spread block allocation, block boundaries,
 when a schedule goes stale, when regenerating is worth asking about,
-splitting rest into kinds without changing how much rest there is,
+loading older named breaks as plain Rest without changing their allocation,
 work days that end after midnight, how blocks
 resolve against a changed task list, how tasks sort into the four buckets,
 rejecting

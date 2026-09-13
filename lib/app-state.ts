@@ -2,12 +2,11 @@ import { todayKey } from "./dates";
 import {
   AppState,
   Recommendation,
-  RestMode,
   Schedule,
   ScheduleBlock,
   Task,
 } from "./types";
-import { defaultRestMode } from "./weights";
+import { REST_LABEL } from "./weights";
 
 export const DEFAULT_END_TIME = "23:00";
 
@@ -16,8 +15,6 @@ const MAX_TASKS = 2000;
 const MAX_BLOCKS = 200;
 const MAX_TITLE = 500;
 const MAX_DESCRIPTION = 5000;
-const MAX_REST_TYPES = 20;
-const MAX_REST_LABEL = 40;
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^\d{1,2}:\d{2}$/;
@@ -28,7 +25,6 @@ export function emptyState(): AppState {
     recommendation: null,
     schedule: null,
     endTime: DEFAULT_END_TIME,
-    restMode: defaultRestMode(),
   };
 }
 
@@ -135,15 +131,22 @@ function sanitizeBlock(raw: unknown): ScheduleBlock | null {
   const start = isoOrNull(raw.start);
   const end = isoOrNull(raw.end);
   if (!start || !end) return null;
+  const taskId = typeof raw.taskId === "string" ? str(raw.taskId, 100) : null;
   return {
     start,
     end,
-    taskId: typeof raw.taskId === "string" ? str(raw.taskId, 100) : null,
-    title: str(raw.title, MAX_TITLE, "Rest"),
+    taskId,
+    // Old clients may have stored a named Rest kind. Keep the time and task
+    // allocation, but every break now has the same label.
+    title: taskId === null ? REST_LABEL : str(raw.title, MAX_TITLE, REST_LABEL),
   };
 }
 
-function sanitizeSchedule(raw: unknown, today: string, now: string): Schedule | null {
+export function sanitizeSchedule(
+  raw: unknown,
+  today: string = todayKey(),
+  now: string = new Date().toISOString(),
+): Schedule | null {
   if (!isRecord(raw)) return null;
   if (!Array.isArray(raw.blocks)) return null;
 
@@ -161,32 +164,6 @@ function sanitizeSchedule(raw: unknown, today: string, now: string): Schedule | 
     signature: str(raw.signature, 100_000),
     endTime: sanitizeEndTime(raw.endTime),
   };
-}
-
-/**
- * Rest kinds are allocated evenly, so a duplicate is not cosmetic — "Code" twice
- * alongside "Game" would quietly make code two-thirds of every rest. They are
- * matched case-insensitively and the first spelling wins, which is also what
- * stops a list from growing by one every time someone retypes a kind.
- */
-export function sanitizeRestMode(raw: unknown): RestMode {
-  if (!isRecord(raw)) return defaultRestMode();
-
-  const seen = new Set<string>();
-  const types: string[] = [];
-  if (Array.isArray(raw.types)) {
-    for (const entry of raw.types) {
-      if (types.length >= MAX_REST_TYPES) break;
-      const label = str(entry, MAX_REST_LABEL).trim();
-      if (!label) continue;
-      const key = label.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      types.push(label);
-    }
-  }
-
-  return { advanced: raw.advanced === true, types };
 }
 
 /**
@@ -218,8 +195,6 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
     recommendation: sanitizeRecommendation(raw.recommendation, nowIso),
     schedule: sanitizeSchedule(raw.schedule, today, nowIso),
     endTime: sanitizeEndTime(raw.endTime),
-    // Absent entirely for anything stored before advanced rest existed.
-    restMode: "restMode" in raw ? sanitizeRestMode(raw.restMode) : defaultRestMode(),
   };
 }
 

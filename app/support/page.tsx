@@ -69,7 +69,7 @@ export default function SupportPage() {
           Generating a schedule gives every task the closest possible number of
           half-hour blocks for its target share, then spreads those blocks evenly
           between now and the end of your work day. One quarter of the blocks are Rest,
-          rounded to the nearest whole block. When equal tasks or Rest kinds compete
+          rounded to the nearest whole block. When equal tasks compete
           for an indivisible extra block, the recipient is chosen fairly at random.
           An end time in the small
           hours means the night ahead, so setting 12:00 AM in the morning plans your

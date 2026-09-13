@@ -60,9 +60,8 @@ const SCHEMA: string[] = [
      schedule       TEXT,
      rest_mode      TEXT
    )`,
-  // Advanced rest arrived after prefs did, so a database created before it
-  // needs the column added rather than the table created. Same self-healing
-  // idea as the CREATE statements above: no deploy-time migration step.
+  // Retired preference column: keep it for compatibility with older server
+  // versions during a rollout. Current clients neither read nor write it.
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_mode TEXT`,
 
   // Login throttling lives here rather than in process memory, because on
