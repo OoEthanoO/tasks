@@ -71,3 +71,8 @@ rest-warning, rest-start and rest-complete alerts with iOS. A new native build i
 required after this dependency change. Open the app after changing tracking on
 another device so iOS can replace any old scheduled alerts. Time itself is
 computed from the shared server timestamps and does not rely on notifications.
+
+The local-notifications entitlement mod runs after `expo-notifications` to omit
+the unused APNs entitlement. Local timer alerts do not register push tokens or
+require the Push Notifications capability in the App Store signing profile.
+The cleanup plugin is listed first because Expo nests entitlement mods.
