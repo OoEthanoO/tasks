@@ -86,6 +86,71 @@ check("midnight wipes every counter, pauses, and makes tasks eligible anew", () 
   assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0); near(reset.restMs,0); near(reset.cycleWorkMs,0); assert.equal(reset.mode,"idle"); assert.equal(reset.dayKey,"2026-09-15");
   assert.ok(taskProgress(reset).every(p=>!p.doneToday));
 });
+check("manual reset wipes all task time and pauses without mutating the old session", () => {
+  let before=actOnTracking(fresh(),{type:"start"},"device-1",T);
+  before=actOnTracking(before,{type:"start",taskId:"second"},"device-1",T+20*MIN);
+  const copy=JSON.stringify(before);
+  const reset=actOnTracking(before,{type:"reset"},"device-2",T+40*MIN);
+  assert.deepEqual(reset.taskMs,{});
+  for(const key of ["workMs","restMs","cycleWorkMs","cycleRestMs"]) near(reset[key],0);
+  assert.equal(reset.mode,"idle"); assert.equal(reset.taskId,null);
+  assert.equal(reset.controllerId,"device-2"); assert.equal(reset.cursor,T+40*MIN);
+  assert.equal(JSON.stringify(before),copy);
+});
+check("manual reset clears active rest and paused rest debt", () => {
+  const initial=actOnTracking(fresh(),{type:"start"},"device-1",T);
+  const resting=advanceTracking(initial,T+100*MIN).state;
+  assert.equal(resting.mode,"rest"); near(resting.cycleRestMs,10*MIN);
+  for(const before of [resting,actOnTracking(resting,{type:"pause"},"device-1",T+100*MIN)]) {
+    const reset=actOnTracking(before,{type:"reset"},"device-2",T+105*MIN);
+    near(reset.restMs,0); near(reset.cycleRestMs,0); near(reset.cycleWorkMs,0);
+    assert.equal(reset.mode,"idle");
+    const resumed=actOnTracking(reset,{type:"start"},"device-2",T+110*MIN);
+    assert.equal(resumed.mode,"work");
+    near(advanceTracking(resumed,T+120*MIN).state.workMs,10*MIN);
+  }
+});
+check("reset preserves task metadata, permanent completion, cutoff, zone and revision", () => {
+  const list=[...tasks,{...task("done"),completed:true,completedAt:new Date(T).toISOString()}];
+  const initial={...createTracking(list,"20:15","America/Toronto",T),revision:42};
+  const before=actOnTracking(initial,{type:"start"},"device-1",T);
+  const reset=actOnTracking(before,{type:"reset"},"device-2",T+40*MIN);
+  assert.deepEqual(reset.tasks,list); assert.equal(reset.endTime,"20:15");
+  assert.equal(reset.timeZone,initial.timeZone); assert.equal(reset.dayKey,initial.dayKey); assert.equal(reset.revision,42);
+});
+check("reset makes daily-complete tasks eligible and uses only the remaining day", () => {
+  const before=advanceTracking(actOnTracking(fresh([task("a"),task("b")],"10:00"),{type:"start"},"device-1",T),T+60*MIN).state;
+  assert.equal(taskProgress(before)[0].doneToday,true);
+  const reset=actOnTracking(before,{type:"reset"},"device-1",T+60*MIN);
+  near(workBudget(reset),60*MIN);
+  assert.ok(taskProgress(reset).every(p=>!p.doneToday && p.trackedMs===0 && p.targetMs===30*MIN));
+  assert.equal(actOnTracking(reset,{type:"start"},"device-1",T+60*MIN).taskId,"a");
+});
+check("reset checkpoint cannot replay old time and cancels upcoming alerts", () => {
+  const before=actOnTracking(fresh(),{type:"start"},"device-1",T);
+  assert.ok(upcomingTrackingEvents(before,T).length>0);
+  const reset=actOnTracking(before,{type:"reset"},"device-2",T+40*MIN);
+  const restored=parseTracking(JSON.parse(JSON.stringify(reset)));
+  assert.deepEqual(restored,reset);
+  const projected=advanceTracking(restored,T+80*MIN);
+  near(projected.state.workMs,0); near(projected.state.restMs,0);
+  assert.deepEqual(projected.events,[]); assert.deepEqual(upcomingTrackingEvents(restored,T+40*MIN),[]);
+  const started=actOnTracking(restored,{type:"start"},"device-2",T+80*MIN);
+  near(advanceTracking(started,T+90*MIN).state.workMs,10*MIN);
+});
+check("reset is allowed after cutoff but cannot extend the work day", () => {
+  const before=actOnTracking(fresh([task("a")],"08:20"),{type:"start"},"device-1",T);
+  const reset=actOnTracking(before,{type:"reset"},"device-1",T+40*MIN);
+  near(reset.workMs,0); near(workBudget(reset),0); assert.equal(reset.endTime,"08:20");
+  assert.throws(()=>actOnTracking(reset,{type:"start"},"device-1",T+40*MIN),/work day has ended/);
+});
+check("reset handles empty sessions and repeated requests without starting work", () => {
+  for(const initial of [fresh([]),fresh([{...task("done"),completed:true}])]) {
+    const reset=actOnTracking(initial,{type:"reset"},"device-1",T+MIN);
+    assert.deepEqual(actOnTracking(reset,{type:"reset"},"device-1",T+MIN),reset);
+    near(reset.workMs,0); assert.equal(reset.mode,"idle");
+  }
+});
 check("work day ends without tracking beyond the cutoff", () => {
   const s=actOnTracking(fresh([task("a")],"08:20"),{type:"start"},"device-1",T);
   const out=advanceTracking(s,T+80*MIN).state;
@@ -160,6 +225,24 @@ assert.deepEqual(await loadTracking("timer-alice"),shared); count++;
 await configureAccountTracking("timer-alice",tasks.slice(1),"18:00",T+20*MIN);
 const changed=await loadTracking("timer-alice"); assert.ok(changed.revision>shared.revision); assert.deepEqual(changed.tasks,tasks.slice(1)); count++;
 assert.ok((await loadState("timer-alice")).tasks.length===3); count++;
+// A reset uses the same revision-checked command path as every other client.
+const accountBeforeReset=await loadState("timer-alice");
+const reset=await commandTracking("timer-alice",changed.revision,{type:"reset"},"device-reset","America/Toronto",tasks,"18:00",T+25*MIN);
+assert.equal(reset.revision,changed.revision+1); assert.equal(reset.timeZone,"UTC");
+assert.equal(reset.mode,"idle"); assert.equal(reset.controllerId,"device-reset");
+assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0); near(reset.restMs,0); near(reset.cycleWorkMs,0); near(reset.cycleRestMs,0);
+assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
+for(const type of ["start","pause","reset"]) {
+  await assert.rejects(commandTracking("timer-alice",changed.revision,{type},"stale-device","UTC",tasks,"18:00",T+26*MIN),TrackingConflict);
+}
+assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
+assert.deepEqual(await loadState("timer-alice"),accountBeforeReset);
+assert.equal(await loadTracking("timer-bob"),null); count++;
+await saveState("timer-alice",accountBeforeReset);
+assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
+const resumed=await commandTracking("timer-alice",reset.revision,{type:"start"},"device-3","UTC",tasks,"18:00",T+30*MIN);
+near(advanceTracking(resumed,T+40*MIN).state.workMs,10*MIN);
+assert.equal(resumed.taskId,"first"); count++;
 await pg.query("DELETE FROM users WHERE id = $1",["timer-alice"]); assert.equal(await loadTracking("timer-alice"),null); count++;
 await pg.close(); setSql(null);
 console.log(`${count} tracking scenarios passed`);

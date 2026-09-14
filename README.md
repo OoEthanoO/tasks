@@ -163,6 +163,12 @@ counters reset at midnight; tracking stays paused until you start the new day.
 The first device starting an account timer establishes its time zone, which
 all clients then share. There is no overnight carry-over.
 
+Use **Reset today’s progress** to start fresh without waiting for midnight.
+After confirmation, it clears all daily task, work, rest, and break-cycle counters
+and pauses the shared timer. Tasks, permanent completion, and the end time stay
+unchanged. Targets are recalculated from the time still left today; resetting
+does not extend the day. The reset cannot be undone.
+
 Signed-in users share one timestamp-based session in a separate Postgres row.
 Revision-checked commands prevent two devices from overwriting the same timer.
 Clients refresh it every three seconds, and compute elapsed time locally from
@@ -171,7 +177,9 @@ network drops; changing a signed-in timer requires the server. Legacy
 whole-state saves cannot overwrite tracked time.
 
 Enable alerts to receive task completion, a five-minute rest warning, rest-start
-and rest-complete notifications. iOS schedules these with the operating system;
+and rest-complete notifications. The button reads the device's current permission
+on launch and on returning to the app, so its status survives refreshes and
+reflects permission changes in settings. iOS schedules these with the operating system;
 web notifications require the page to remain open. Alerts belong to the device
 that last started or switched tracking. If the timer is changed elsewhere while
 the phone is suspended, open the phone app to refresh its scheduled alerts;

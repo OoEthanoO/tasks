@@ -3,6 +3,7 @@ import { taskWeight, WeightedTask } from "./weights";
 
 export const WORK_CYCLE_MS = 90 * 60_000;
 export const REST_CYCLE_MS = 30 * 60_000;
+export const RESET_PROGRESS_CONFIRMATION = "Clear all of today’s tracked work, rest, and progress toward the next break? Tracking will pause on your synced devices. Your tasks and work day end time will stay unchanged. This cannot be undone.";
 const EPSILON = 1;
 const formatters = new Map<string, Intl.DateTimeFormat>();
 const endCache = new Map<string, number>();
@@ -25,7 +26,7 @@ export type TrackingState = {
   taskId: string | null;
   controllerId: string | null;
 };
-export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" };
+export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" };
 export type TrackingEvent = {
   id: string;
   at: number;
@@ -194,6 +195,11 @@ export function configureTracking(original: TrackingState, tasks: Task[], endTim
 export function actOnTracking(original: TrackingState, action: TrackingAction, controllerId: string, now: number): TrackingState {
   const state = advanceTracking(original, now).state;
   state.controllerId = controllerId;
+  if (action.type === "reset") {
+    // A new checkpoint prevents any pre-reset elapsed time from being replayed.
+    // The persistence layer increments the revision, just as for start/pause.
+    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now), revision: state.revision, controllerId };
+  }
   if (action.type === "pause") { state.mode = "idle"; state.taskId = null; return state; }
   if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
   // Pausing or switching devices cannot bypass a break already earned.

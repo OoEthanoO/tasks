@@ -20,17 +20,28 @@ export default function ConfirmDialog({
   onCancel,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
 
-  // Focus lands on the way out, not the way through. G is a single unmodified
-  // keystroke, so a stray Enter behind it must not be what replaces a schedule
-  // this dialog exists to protect.
+  // Accidental Enter must not confirm a destructive action.
   useEffect(() => {
+    const previous = document.activeElement;
     cancelRef.current?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, []);
 
   return (
     <div
       className="overlay"
+      onKeyDown={(e) => {
+        // Keep page shortcuts and keyboard focus behind the confirmation inert.
+        e.stopPropagation();
+        if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          if (document.activeElement === cancelRef.current) confirmRef.current?.focus();
+          else cancelRef.current?.focus();
+        }
+      }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -53,7 +64,7 @@ export default function ConfirmDialog({
             {cancelLabel}
           </button>
           <div className="spacer" />
-          <button type="button" className="btn btn-primary" onClick={onConfirm}>
+          <button type="button" className="btn btn-primary" ref={confirmRef} onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>

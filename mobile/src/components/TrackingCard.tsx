@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { dayEnd, formatDuration, REST_CYCLE_MS, WORK_CYCLE_MS } from "../../../lib/tracking";
+import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, REST_CYCLE_MS, WORK_CYCLE_MS } from "../../../lib/tracking";
 import { Tracker } from "../useTracking";
 import { themed, useStyles } from "../theme";
 import { Banner, Btn, Card, CardHead } from "./ui";
+import ConfirmSheet from "./ConfirmSheet";
 
 export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: { tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void }) {
   const s = useStyles(styles);
   const state = t.state;
   const [draftEnd, setDraftEnd] = useState(endTime);
+  const [confirmReset, setConfirmReset] = useState(false);
+  useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
   useEffect(() => setDraftEnd(endTime), [endTime]);
   const current = t.progress.find(p => p.task.id === state.taskId);
   const resting = state.mode === "rest";
@@ -35,9 +38,11 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
       <View><Text style={s.hint}>Rested today</Text><Text style={s.total}>{formatDuration(state.restMs, true)}</Text></View>
       <View><Text style={s.hint}>Work budget</Text><Text style={s.total}>{formatDuration(t.budgetMs)}</Text></View>
     </View>
+    <Btn tone="danger" label="Reset today’s progress" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} style={{ marginBottom: 12 }} />
     <Text style={s.explainer}>Daily target = task share × (time until day end + work already tracked). Targets shrink while paused or resting.</Text>
     <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
     <Text style={s.hint}>Alerts follow the device that last started or switched tracking. Open this app to refresh alerts after changing the timer elsewhere.</Text>
+    {confirmReset && <ConfirmSheet title="Reset today’s progress?" body={RESET_PROGRESS_CONFIRMATION} confirmLabel="Reset progress" cancelLabel="Keep progress" onCancel={() => setConfirmReset(false)} onConfirm={() => { setConfirmReset(false); void t.command({ type: "reset" }); }} />}
   </Card>;
 }
 const styles = themed(c => ({

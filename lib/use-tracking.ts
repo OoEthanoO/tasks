@@ -8,6 +8,8 @@ export type TrackingAdapter = {
   read(): Promise<string | null>;
   write(value: string): Promise<void>;
   controllerId(): Promise<string>;
+  notificationPermission(): Promise<string>;
+  onForeground(listener: () => void): () => void;
   enableNotifications(): Promise<string>;
   scheduleNotifications(events: TrackingEvent[]): Promise<void>;
   notify(event: TrackingEvent): void;
@@ -25,7 +27,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
-    const [permission, setPermission] = useState("Enable alerts");
+    const [permission, setPermission] = useState("Checking alerts…");
     const [controller, setController] = useState("");
     const snapshotRef = useRef(snapshot); snapshotRef.current = snapshot;
     const config = useRef({ tasks, endTime }); config.current = { tasks, endTime };
@@ -35,6 +37,23 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     const commanding = useRef(false);
     const seen = useRef(new Set<string>());
     const lastCheck = useRef(Date.now());
+    const permissionRead = useRef(0);
+
+    useEffect(() => {
+      let cancelled = false;
+      const readPermission = async () => {
+        const read = ++permissionRead.current;
+        try {
+          const label = await adapter.notificationPermission();
+          if (!cancelled && read === permissionRead.current) setPermission(label);
+        } catch {
+          if (!cancelled && read === permissionRead.current) setPermission("Alerts unavailable — check device settings");
+        }
+      };
+      void readPermission();
+      const unsubscribe = adapter.onForeground(() => void readPermission());
+      return () => { cancelled = true; unsubscribe(); };
+    }, []);
 
     const adopt = useCallback((value: TrackingState | null, serverNow?: number) => {
       if (serverNow !== undefined) offset.current = serverNow - Date.now();
@@ -42,6 +61,10 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       // A slow poll must never replace a more recent command response.
       if (snapshotRef.current && next.revision < snapshotRef.current.revision) return;
       if (JSON.stringify(snapshotRef.current) !== JSON.stringify(next)) {
+        if (next.mode === "idle" && next.workMs === 0 && next.restMs === 0) {
+          // Also clear stale in-app alerts when another client resets the day.
+          setMessage(null); seen.current.clear(); lastCheck.current = next.cursor;
+        }
         snapshotRef.current = next;
         setSnapshot(next);
       }
@@ -104,7 +127,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       if (!snapshot || !controller) return;
       const events = snapshot.controllerId === controller ? upcomingTrackingEvents(snapshot, Date.now() + offset.current) : [];
       void adapter.scheduleNotifications(events).catch(() => setPermission("Alerts unavailable — check device settings"));
-    }, [snapshot, controller]);
+    }, [snapshot, controller, permission]);
 
     useEffect(() => {
       if (!projected) return;
@@ -140,6 +163,9 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
           await adapter.write(JSON.stringify(next));
           if (scope.current === token) adopt(next);
         }
+        if (scope.current === token && action.type === "reset") {
+          setMessage("Today’s progress was reset. Tracking is paused.");
+        }
       } catch (e) {
         if (scope.current === token) {
           // Ambiguous network failures never create a second local timer.
@@ -153,8 +179,11 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     }, [accountId, beforeCommand, controller, enabled, adopt]);
 
     const enableNotifications = useCallback(async () => {
+      // An older startup/resume check must not replace the prompt's new result.
+      permissionRead.current++;
       try {
-        setPermission(await adapter.enableNotifications());
+        const label = await adapter.enableNotifications();
+        permissionRead.current++; setPermission(label);
         const current = snapshotRef.current;
         if (current?.controllerId === controller) await adapter.scheduleNotifications(upcomingTrackingEvents(current, Date.now() + offset.current));
       } catch { setPermission("Alerts unavailable — check device settings"); }

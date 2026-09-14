@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Malformed request." }, { status: 400 }); }
   if (!body || !Number.isSafeInteger(body.revision) || body.revision < 0 ||
     typeof body.controllerId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(body.controllerId) ||
-    !["start", "pause"].includes(body.action?.type) ||
+    !["start", "pause", "reset"].includes(body.action?.type) ||
     (body.action.taskId !== undefined && (typeof body.action.taskId !== "string" || body.action.taskId.length > 100))) {
     return NextResponse.json({ error: "Invalid timer command." }, { status: 400 });
   }
