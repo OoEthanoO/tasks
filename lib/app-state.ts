@@ -7,6 +7,7 @@ import {
   Task,
 } from "./types";
 import { REST_LABEL } from "./weights";
+import { parseTracking } from "./tracking";
 
 export const DEFAULT_END_TIME = "23:00";
 
@@ -192,6 +193,7 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
 
   return {
     tasks,
+    ...(parseTracking(raw.tracking) ? { tracking: parseTracking(raw.tracking)! } : {}),
     recommendation: sanitizeRecommendation(raw.recommendation, nowIso),
     schedule: sanitizeSchedule(raw.schedule, today, nowIso),
     endTime: sanitizeEndTime(raw.endTime),
@@ -213,7 +215,7 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
  * anything on its own.
  */
 export function isEmptyState(state: AppState): boolean {
-  return state.tasks.length === 0 && state.schedule === null;
+  return state.tasks.length === 0 && state.schedule === null && !(state.tracking && (state.tracking.workMs > 0 || state.tracking.restMs > 0 || state.tracking.mode !== "idle"));
 }
 
 /**
@@ -239,6 +241,7 @@ export function summarizeState(state: AppState): string {
     parts.push(`${state.tasks.length} task${state.tasks.length === 1 ? "" : "s"}`);
   }
   if (state.schedule) parts.push("a saved schedule");
+  if (state.tracking && (state.tracking.workMs > 0 || state.tracking.restMs > 0)) parts.push("today's tracked time");
 
   if (parts.length === 0) return "nothing";
   if (parts.length === 1) return parts[0];

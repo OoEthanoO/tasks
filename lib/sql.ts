@@ -64,6 +64,14 @@ const SCHEMA: string[] = [
   // versions during a rollout. Current clients neither read nor write it.
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_mode TEXT`,
 
+  // Tracking is deliberately separate from the legacy whole-state save. A
+  // stale client can never overwrite the shared timer or its accumulated time.
+  `CREATE TABLE IF NOT EXISTS tracking (
+     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+     revision INTEGER NOT NULL DEFAULT 0,
+     state TEXT NOT NULL
+   )`,
+
   // Login throttling lives here rather than in process memory, because on
   // Vercel each instance would otherwise hand out its own fresh allowance.
   `CREATE TABLE IF NOT EXISTS rate_limits (

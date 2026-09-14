@@ -73,7 +73,7 @@ export default function AccountSheet({
                 <Text style={s.dangerLabel}>DANGER ZONE</Text>
                 <Text style={s.dangerBody}>
                   Deleting your account erases it from the server for good — every task,
-                  your schedule, and your sign-in. It cannot be undone.
+                  your tracked time, and your sign-in. It cannot be undone.
                 </Text>
                 <Btn
                   label="Delete account"

@@ -25,15 +25,16 @@ async function read(key: string): Promise<unknown> {
 
 export const guestStore = {
   async load(): Promise<AppState> {
-    const [tasks, recommendation, schedule, endTime] = await Promise.all([
+    const [tasks, recommendation, schedule, endTime, tracking] = await Promise.all([
       read(KEYS.tasks),
       read(KEYS.recommendation),
       read(KEYS.schedule),
       read(KEYS.endTime),
+      read("yantasks.tracking.v1"),
     ]);
     // Everything read back off the device goes through the same coercion the
     // server applies, so a half-written key cannot take the app down.
-    return sanitizeState({ tasks, recommendation, schedule, endTime });
+    return sanitizeState({ tasks, recommendation, schedule, endTime, tracking });
   },
 
   async save(state: AppState): Promise<void> {
@@ -52,7 +53,7 @@ export const guestStore = {
   /** Called after a successful migration: the account copy is authoritative. */
   async clear(): Promise<void> {
     try {
-      await AsyncStorage.multiRemove([...Object.values(KEYS), LEGACY_REST_MODE_KEY]);
+      await AsyncStorage.multiRemove([...Object.values(KEYS), LEGACY_REST_MODE_KEY, "yantasks.tracking.v1"]);
     } catch {
       // Nothing to do.
     }

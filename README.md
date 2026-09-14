@@ -1,8 +1,8 @@
 # YanTasks
 
 A task manager that decides what you should work on next. Tasks are weighted by
-how urgent they are, and the scheduler turns those weights into a balanced set
-of 30-minute blocks for the rest of your day.
+how urgent they are. Start a shared work timer, meet proportional daily targets,
+and take a 30-minute rest after every 90 minutes of tracked work.
 
 ```bash
 npm install
@@ -91,7 +91,7 @@ username shows a live sync state — including a retry if a save fails.
 | Key | Action |
 | --- | --- |
 | `Q` | New task |
-| `G` | Generate today's schedule |
+| `G` | Start or pause tracking |
 | `↵` | Create the task |
 | `Esc` | Close anything |
 | `?` | Shortcut reference |
@@ -142,62 +142,45 @@ With `n` = days until due (negative once overdue):
 
 In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
 
-**Rest has an absolute 1/4 share.** It is not another relative weight in the
-task pile. Open tasks divide the remaining 3/4 in proportion to their due-date
-weights, regardless of how many tasks there are or how urgent they are. With
-one open task, that task gets 3/4 of the schedule; with two equal tasks, each
-gets 3/8. If one task has twice another task's weight, it gets twice that
-task's share of the working 3/4.
+Open tasks divide **100% of work time** by weight. Rest is separate.
+Daily targets use `task share × (time remaining today + tracked work today)`.
+Working keeps that budget steady; pausing or resting reduces it. A task whose
+tracked time meets its current target is **Done for today**, not permanently
+completed. Changing tasks or the cutoff recalculates future targets while
+preserving earned time.
 
-Each task row shows its target share of a generated schedule. Completing a
-task zeroes its weight, so it receives no blocks, and the other open tasks
-divide the working share between them. If there are no open tasks, every block
-is Rest. All breaks are labelled **Rest**, including named breaks in older saved
-schedules.
+## Work and rest tracking
 
-## Schedule
+Start chooses the highest-weight unfinished daily target in list order. Each
+task also has a Track button. Reaching a target alerts you and moves to the next
+eligible task. Ninety accumulated work minutes automatically start a 30-minute
+rest, after which work resumes. Pausing either mode stops its counter and does
+not bypass an unfinished break. Complete cycles are 75% work and 25% rest;
+a shortened final cycle can differ.
 
-`G` blocks out the rest of the working day in 30-minute slots. It first assigns
-each task and Rest the closest possible whole-block count for their target
-shares, then uses smooth weighted round-robin to spread those blocks through
-the day. Equal-weight tasks differ by at most one block, a task with twice the
-weight gets approximately twice the runtime, and about one quarter of the blocks
-are Rest. If equal tasks compete for an indivisible extra block, its owner is
-chosen fairly at random instead of always favouring the first task. Very small
-task shares can round down to zero blocks in a short day.
+The timer stops at the selected same-day cutoff (default 23:00). All daily
+counters reset at midnight; tracking stays paused until you start the new day.
+The first device starting an account timer establishes its time zone, which
+all clients then share. There is no overnight carry-over.
 
-The first block is a stub from right now to the next :00 or :30, so at 8:32 AM
-you get 8:32–9:00, then 9:00–9:30, and so on until the end of the work day
-(configurable, default 11:00 PM). The block covering the current time is
-highlighted.
+Signed-in users share one timestamp-based session in a separate Postgres row.
+Revision-checked commands prevent two devices from overwriting the same timer.
+Clients refresh it every three seconds, and compute elapsed time locally from
+the same timestamps. An active timer continues when the app is closed or the
+network drops; changing a signed-in timer requires the server. Legacy
+whole-state saves cannot overwrite tracked time.
 
-An end time in the small hours means the night that is starting, not one that
-has already gone: set the day to end at 12:00 AM at nine in the morning and you
-get a schedule running until tonight's midnight. Once it is actually the small
-hours that stops applying — at 2 AM a 1 AM end really has passed, and the day
-really is over.
+Enable alerts to receive task completion, a five-minute rest warning, rest-start
+and rest-complete notifications. iOS schedules these with the operating system;
+web notifications require the page to remain open. Alerts belong to the device
+that last started or switched tracking. If the timer is changed elsewhere while
+the phone is suspended, open the phone app to refresh its scheduled alerts;
+otherwise a previously scheduled alert can be stale. This is a local-notification
+implementation, not a background cross-device push service.
 
-A schedule has to reflect the weights of the current task list at all times.
-Anything that moves a weight invalidates it, because the alternative is worse:
-if adding a task did not force a regenerate, that task would receive no share
-of the schedule.
-
-So it is flagged as outdated when it has run past its last block, when the date
-changes, when the work day is set to end at a different time, or when any task
-is added, deleted, completed, or has its due date moved. The date counts even
-though nothing was edited — weights are measured against today, so at midnight
-every one of them moves and a schedule that ran past midnight uses yesterday's
-shares. Renaming a task does not invalidate it, since the weights
-are unchanged — the block simply picks up the new name.
-
-Regenerating when the schedule is *not* outdated asks first. `G` is a single
-unmodified keystroke sitting next to nothing in particular, and a regenerate
-rebuilds every block from the current time, so hitting it by accident would
-quietly replace a schedule that was still describing your day correctly. A
-schedule that is outdated regenerates straight away — it needs to, and a question there would
-only be in the way — and so does one that does not exist yet, or one with no
-blocks in it, since neither holds any picks worth keeping. The rule and the
-wording both live in `lib/schedule.ts` so the two apps cannot drift.
+Old schedule data remains readable for compatibility, but no schedule is
+generated or displayed. It is never converted into worked time. Guest timer
+data migrates only into an account that has no timer, and imports paused.
 
 ## Appearance
 

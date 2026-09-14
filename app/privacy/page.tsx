@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "What YanTasks stores, why, and how to get rid of it.",
 };
 
-const UPDATED = "August 16, 2026";
+const UPDATED = "September 14, 2026";
 const CONTACT = "ethanxucoder@gmail.com";
 
 export default function PrivacyPage() {
@@ -33,8 +33,8 @@ export default function PrivacyPage() {
           The short version
         </h2>
         <p>
-          YanTasks stores the tasks you type and the account you sign in with. That is
-          all. There is no analytics, no advertising, no tracking, and nothing is sold
+          YanTasks stores your tasks, tracked work and rest time, and account. There is
+          no analytics, no advertising or cross-site tracking, and nothing is sold
           or handed to anyone else. You can delete your account, and everything in it,
           from inside the app at any time.
         </p>
@@ -68,8 +68,7 @@ export default function PrivacyPage() {
             description field the way you would any note you keep online.
           </li>
           <li>
-            <strong>Your schedule and preferences</strong>: the generated day plan, your
-            last recommendation, and the time your work day ends.
+            <strong>Your timer and preferences</strong>: daily work and rest totals, per-task time, active timer timestamps, the timer’s time zone, a random app-generated controller ID, and the work-day end time. Legacy schedules and recommendations may remain from older versions.
           </li>
           <li>
             <strong>Session tokens</strong>, stored only as a SHA-256 digest, so a copy
@@ -78,7 +77,7 @@ export default function PrivacyPage() {
         </ul>
         <p>
           No email address, phone number, real name, contacts, location, photos, or
-          device identifiers are collected. The app asks for no system permissions.
+          hardware identifiers are collected. A random app-generated ID identifies which client controls timer alerts. Notification permission is optional. Notifications are scheduled locally on your device; no push token is collected.
         </p>
 
         <h2 className="card-title" style={{ marginTop: 24 }}>
@@ -105,7 +104,7 @@ export default function PrivacyPage() {
         <p>
           In the iOS app, tap your username, then <strong>Delete account</strong>. On the
           web, use <strong>Delete account</strong> beside your username. Deletion is
-          immediate and permanent: the account row and every task, preference, schedule
+          immediate and permanent: the account row and every task, preference, tracked time, legacy schedule
           and session belonging to it are removed from the database. There is no
           soft-delete, no archive, and no way to restore it afterwards.
         </p>

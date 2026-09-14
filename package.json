@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsc -p tsconfig.test.json && node test/logic.test.mjs"
+    "test": "tsc -p tsconfig.test.json && node test/logic.test.mjs && node test/tracking.test.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

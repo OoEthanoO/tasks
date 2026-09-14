@@ -1,5 +1,6 @@
 import { sanitizeState } from "./app-state";
 import { AppState, User } from "./types";
+import { TrackingAction, TrackingState } from "./tracking";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -60,6 +61,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export type AuthResult = { user: User; state: AppState; migrated?: boolean };
 
 export const api = {
+  async loadTracking(): Promise<{ tracking: TrackingState | null; serverNow: number }> {
+    return request("/api/tracking");
+  },
+  async track(input: { revision: number; action: TrackingAction; controllerId: string; timeZone: string }): Promise<{ tracking: TrackingState; serverNow: number }> {
+    return request("/api/tracking", { method: "POST", body: JSON.stringify(input) });
+  },
   async me(): Promise<User | null> {
     const body = await request<{ user: User | null }>("/api/auth/me");
     return body.user;

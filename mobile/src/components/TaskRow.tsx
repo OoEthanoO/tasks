@@ -1,6 +1,8 @@
 import { Pressable, Text, View } from "react-native";
 import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
 import { dueBucket } from "../../../lib/grouping";
+import { TaskProgress, formatDuration } from "../../../lib/tracking";
+import { Btn } from "./ui";
 import {
   WeightedTask,
   formatProbability,
@@ -12,12 +14,20 @@ export default function TaskRow({
   entry,
   today,
   maxProbability,
+  progress,
+  active,
+  trackingDisabled,
+  onTrack,
   onToggle,
   onEdit,
 }: {
   entry: WeightedTask;
   today: DateKey;
   maxProbability: number;
+  progress?: TaskProgress;
+  active: boolean;
+  trackingDisabled: boolean;
+  onTrack: () => void;
   onToggle: () => void;
   onEdit: () => void;
 }) {
@@ -62,6 +72,11 @@ export default function TaskRow({
             {task.description}
           </Text>
         ) : null}
+        {progress && !task.completed && <>
+          <Text style={s.metaText}>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</Text>
+          <Text style={[s.metaText, { color: progress.doneToday ? c.ok : c.accent }]}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</Text>
+          <Btn label={active ? "Tracking" : "Track"} disabled={trackingDisabled || progress.doneToday || active} onPress={onTrack} />
+        </>}
         <View style={s.meta}>
           <Text style={[s.metaText, { color: dueColor }]}>
             {formatDueDate(task.dueDate, today)}
@@ -83,7 +98,7 @@ export default function TaskRow({
           accessibilityLabel={
             task.completed
               ? "Completed tasks are never picked"
-              : `${formatProbability(probability)} target share of the generated schedule`
+              : `${formatProbability(probability)} share of work time`
           }
         >
           {task.completed ? "—" : formatProbability(probability)}

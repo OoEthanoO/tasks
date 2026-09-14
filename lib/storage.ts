@@ -1,5 +1,6 @@
 import { sanitizeEndTime, sanitizeSchedule } from "./app-state";
 import { AppState, Recommendation, Task } from "./types";
+import { parseTracking } from "./tracking";
 
 // Unchanged key names: data written before accounts existed still loads, which
 // is exactly the data a migration offers to move.
@@ -37,7 +38,9 @@ function write(key: string, value: unknown): void {
 /** The signed-out store: everything this browser is holding on its own. */
 export const localStore = {
   load(): AppState {
+    const tracking = parseTracking(read<unknown>("yantasks.tracking.v1", null));
     return {
+      ...(tracking ? { tracking } : {}),
       tasks: read<Task[]>(KEYS.tasks, []),
       recommendation: read<Recommendation | null>(KEYS.recommendation, null),
       schedule: sanitizeSchedule(read<unknown>(KEYS.schedule, null)),
@@ -55,7 +58,7 @@ export const localStore = {
   /** Called after a successful migration — the data now lives in the account. */
   clear(): void {
     if (typeof window === "undefined") return;
-    for (const key of [...Object.values(KEYS), LEGACY_REST_MODE_KEY]) {
+    for (const key of [...Object.values(KEYS), LEGACY_REST_MODE_KEY, "yantasks.tracking.v1"]) {
       try {
         window.localStorage.removeItem(key);
       } catch {

@@ -13,20 +13,13 @@ import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-cont
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "../lib/app-state";
 import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
-import {
-  REGENERATE_CONFIRM,
-  generateSchedule,
-  needsRegenerateConfirmation,
-  nextTickDelay,
-  scheduleStaleReason,
-} from "../lib/schedule";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
-import { buildWeightTable, formatProbability } from "../lib/weights";
+import { taskProgress } from "../lib/tracking";
+import { useTracking } from "./src/useTracking";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
-import ConfirmSheet from "./src/components/ConfirmSheet";
-import ScheduleCard from "./src/components/ScheduleCard";
+import TrackingCard from "./src/components/TrackingCard";
 import TaskListView from "./src/components/TaskListView";
 import TaskSheet, { TaskDraft } from "./src/components/TaskSheet";
 import ThemeChip from "./src/components/ThemeChip";
@@ -44,7 +37,7 @@ function storeKey(user: User | null): string {
 
 const SAVE_DEBOUNCE_MS = 500;
 /** How often a foregrounded app asks whether anything changed elsewhere. */
-const REFRESH_MS = 30_000;
+const REFRESH_MS = 5_000;
 
 function YanTasks() {
   const insets = useSafeAreaInsets();
@@ -56,13 +49,11 @@ function YanTasks() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
-  const [now, setNow] = useState(() => new Date());
 
   const [account, setAccount] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authSheet, setAuthSheet] = useState<"signin" | "signup" | null>(null);
   const [accountSheet, setAccountSheet] = useState(false);
-  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -326,7 +317,7 @@ function YanTasks() {
       const { user, state, migrated } = await api.signUp({
         username,
         password,
-        importState: migrate ? stateRef.current : null,
+        importState: migrate ? { ...stateRef.current, tracking: (await guestStore.load()).tracking } : null,
       });
       if (migrated) await guestStore.clear();
 
@@ -376,32 +367,20 @@ function YanTasks() {
 
   /* ---------- task state ---------- */
 
-  // Keeps the "Now" block, weights, and day rollover honest without a reload.
-  // Each wait runs to the next block edge rather than to a fixed interval, so a
-  // block is highlighted on the stroke of its start time and not a tick later.
+  const beforeTrack = useCallback(async () => {
+    if (!account) return;
+    await flushRemote();
+    if (pendingRef.current || syncingRef.current) throw new Error("Wait for your task changes to sync, then try again.");
+  }, [account, flushRemote]);
+  const tracker = useTracking(tasks, endTime, account?.id ?? null, ready && !authLoading, beforeTrack);
+  const today = tracker.state.dayKey;
+  const entries = taskProgress({ ...tracker.state, tasks, endTime });
+  const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
+  const maxProbability = Math.max(0, ...entries.map(e => e.probability));
   useEffect(() => {
-    let id: ReturnType<typeof setTimeout>;
-    function wait(from: Date) {
-      id = setTimeout(() => {
-        const current = new Date();
-        setNow(current);
-        wait(current);
-      }, nextTickDelay(from, schedule));
-    }
-    wait(new Date());
-    return () => clearTimeout(id);
-  }, [schedule]);
-
-  const today = useMemo(() => todayKey(), [now]);
-  const table = useMemo(() => buildWeightTable(tasks, today), [tasks, today]);
-  const maxProbability = useMemo(
-    () => table.entries.reduce((max, e) => Math.max(max, e.probability), 0),
-    [table],
-  );
-  const staleReason = useMemo(
-    () => scheduleStaleReason(schedule, tasks, endTime, now),
-    [schedule, tasks, endTime, now],
-  );
+    const sub = RNAppState.addEventListener("change", next => { if (next === "active") void tracker.refresh(); });
+    return () => sub.remove();
+  }, [tracker.refresh]);
 
   const addTask = useCallback((draft: TaskDraft) => {
     const task: Task = {
@@ -437,21 +416,6 @@ function YanTasks() {
   const updateTask = useCallback((id: string, patch: Partial<Task>) => {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
-
-  const regenerateSchedule = useCallback(() => {
-    setConfirmRegenerate(false);
-    setSchedule(generateSchedule(tasks, table, endTime, new Date()));
-  }, [tasks, table, endTime]);
-
-  // A schedule that is still accurate is worth one tap to protect; a stale or
-  // empty one is not, and goes straight through.
-  const requestRegenerate = useCallback(() => {
-    if (needsRegenerateConfirmation(schedule, staleReason)) {
-      setConfirmRegenerate(true);
-      return;
-    }
-    regenerateSchedule();
-  }, [schedule, staleReason, regenerateSchedule]);
 
   // Notices are informational; they should not pile up.
   useEffect(() => {
@@ -532,22 +496,14 @@ function YanTasks() {
           </Banner>
         )}
 
-        <ScheduleCard
-          schedule={ready ? schedule : null}
-          tasks={tasks}
-          endTime={endTime}
-          now={now}
-          staleReason={staleReason}
-          onEndTimeChange={setEndTime}
-          onGenerate={requestRegenerate}
-        />
+        <TrackingCard tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} />
 
         <Card>
           <CardHead
             title={ready && openCount > 0 ? `Tasks · ${openCount} open` : "Tasks"}
             right={
               <Text style={s.restHint}>
-                Rest gets {formatProbability(table.restProbability)}
+                Daily work share
               </Text>
             }
           />
@@ -557,6 +513,10 @@ function YanTasks() {
               entries={table.entries}
               today={today}
               maxProbability={maxProbability}
+              progress={entries}
+              activeId={tracker.state.taskId}
+              trackingDisabled={!tracker.ready || tracker.busy || tracker.state.cycleWorkMs >= 5_400_000}
+              onTrack={id => void tracker.command({ type: "start", taskId: id })}
               onToggle={toggleTask}
               onEdit={setEditing}
             />
@@ -567,8 +527,6 @@ function YanTasks() {
           {ready && tasks.length > 0 && (
             <View style={s.stats}>
               <Text style={s.stat}>Task weight {table.taskTotal.toFixed(3)}</Text>
-              <Text style={s.stat}>Tasks {formatProbability(1 - table.restProbability)}</Text>
-              <Text style={s.stat}>Rest {formatProbability(table.restProbability)}</Text>
             </View>
           )}
         </Card>
@@ -620,17 +578,6 @@ function YanTasks() {
           onSignOut={signOut}
           onDeleteAccount={deleteAccount}
           onClose={() => setAccountSheet(false)}
-        />
-      )}
-
-      {confirmRegenerate && (
-        <ConfirmSheet
-          title={REGENERATE_CONFIRM.title}
-          body={REGENERATE_CONFIRM.body}
-          confirmLabel={REGENERATE_CONFIRM.confirm}
-          cancelLabel={REGENERATE_CONFIRM.cancel}
-          onConfirm={regenerateSchedule}
-          onCancel={() => setConfirmRegenerate(false)}
         />
       )}
 

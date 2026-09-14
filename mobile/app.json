@@ -8,6 +8,7 @@
     "scheme": "yantasks",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "plugins": ["expo-notifications"],
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",

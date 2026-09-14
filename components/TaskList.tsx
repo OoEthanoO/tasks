@@ -5,11 +5,16 @@ import { DateKey, describeDelta, formatDueDate } from "@/lib/dates";
 import { dueBucket, groupTasks } from "@/lib/grouping";
 import { Task } from "@/lib/types";
 import { WeightedTask, formatProbability, formatWeight } from "@/lib/weights";
+import { TaskProgress, formatDuration } from "@/lib/tracking";
 
 type Props = {
   entries: WeightedTask[];
   today: DateKey;
   maxProbability: number;
+  progress: TaskProgress[];
+  activeId: string | null;
+  trackingDisabled: boolean;
+  onTrack: (id: string) => void;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Task>) => void;
@@ -19,6 +24,10 @@ export default function TaskList({
   entries,
   today,
   maxProbability,
+  progress,
+  activeId,
+  trackingDisabled,
+  onTrack,
   onToggle,
   onDelete,
   onUpdate,
@@ -66,6 +75,10 @@ export default function TaskList({
                 entry={entry}
                 today={today}
                 maxProbability={maxProbability}
+                progress={progress.find(p => p.task.id === entry.task.id)}
+                active={activeId === entry.task.id}
+                trackingDisabled={trackingDisabled}
+                onTrack={() => onTrack(entry.task.id)}
                 onToggle={() => onToggle(entry.task.id)}
                 onEdit={() => setEditingId(entry.task.id)}
                 onDelete={() => onDelete(entry.task.id)}
@@ -82,6 +95,10 @@ function TaskRow({
   entry,
   today,
   maxProbability,
+  progress,
+  active,
+  trackingDisabled,
+  onTrack,
   onToggle,
   onEdit,
   onDelete,
@@ -89,6 +106,10 @@ function TaskRow({
   entry: WeightedTask;
   today: DateKey;
   maxProbability: number;
+  progress?: TaskProgress;
+  active: boolean;
+  trackingDisabled: boolean;
+  onTrack: () => void;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -113,6 +134,11 @@ function TaskRow({
       <div className="task-main">
         <div className="task-title">{task.title}</div>
         {task.description && <p className="task-desc">{task.description}</p>}
+        {progress && !task.completed && <div className="task-progress">
+          <span>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</span>
+          <span className={progress.doneToday ? "daily-done" : ""}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</span>
+          <progress max={Math.max(1, progress.targetMs)} value={Math.min(progress.trackedMs, progress.targetMs)} aria-label={`${task.title} daily progress`} />
+        </div>}
         <div className="task-meta">
           <span className={`due${dueClass}`}>{formatDueDate(task.dueDate, today)}</span>
           {!task.completed && (
@@ -120,7 +146,7 @@ function TaskRow({
               <span className="sep">·</span>
               <span>{describeDelta(task.dueDate, today)}</span>
               <span className="sep">·</span>
-              <span title="This task's weight in the recommender">
+              <span title="This task's relative share of work time">
                 weight {formatWeight(weight)}
               </span>
             </>
@@ -131,7 +157,7 @@ function TaskRow({
       <div className="prob" title={
         task.completed
           ? "Completed tasks have weight 0 and are never picked"
-          : `${formatProbability(probability)} target share of the generated schedule`
+          : `${formatProbability(probability)} share of work time`
       }>
         <span className={`prob-value${probability <= 0 ? " is-zero" : ""}`}>
           {task.completed ? "—" : formatProbability(probability)}
@@ -144,6 +170,7 @@ function TaskRow({
       </div>
 
       <div className="task-actions">
+        {!task.completed && <button type="button" className="btn btn-ghost" disabled={trackingDisabled || progress?.doneToday || active} onClick={onTrack} aria-label={`Track ${task.title}`}>{active ? "Tracking" : "Track"}</button>}
         <button type="button" className="icon-btn" onClick={onEdit} title="Edit task">
           Edit
         </button>

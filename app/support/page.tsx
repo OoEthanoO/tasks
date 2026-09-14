@@ -36,54 +36,12 @@ export default function SupportPage() {
         <h2 className="card-title" style={{ marginTop: 26 }}>
           How the weighting works
         </h2>
-        <p>
-          Every open task gets a weight from its due date. Tasks divide three quarters of
-          the schedule in proportion to those weights.
-        </p>
-        <ul className="help-list">
-          <li>
-            Due <strong>tomorrow</strong> weighs 1, the day after 1/2, three days out
-            1/3, and so on.
-          </li>
-          <li>
-            Due <strong>today</strong> weighs 2. Each day it goes past due adds one —
-            yesterday 3, the day before 4.
-          </li>
-          <li>
-            <strong>Completed</strong> tasks weigh 0 and receive no blocks.
-          </li>
-          <li>
-            <strong>Rest</strong> always owns the other one quarter of the schedule,
-            regardless of how many tasks you have or how urgent they are.
-          </li>
-        </ul>
-        <p>
-          The percentage beside each task is its target share of a generated schedule.
-          Together, the task percentages add up to three quarters.
-        </p>
-
-        <h2 className="card-title" style={{ marginTop: 26 }}>
-          Today&apos;s schedule
-        </h2>
-        <p>
-          Generating a schedule gives every task the closest possible number of
-          half-hour blocks for its target share, then spreads those blocks evenly
-          between now and the end of your work day. One quarter of the blocks are Rest,
-          rounded to the nearest whole block. When equal tasks compete
-          for an indivisible extra block, the recipient is chosen fairly at random.
-          An end time in the small
-          hours means the night ahead, so setting 12:00 AM in the morning plans your
-          day through to midnight.
-        </p>
-        <p>
-          A schedule only means anything while it matches the weights used to build
-          it, so it tells you when it is out of date: once it has run to its last
-          block, when the date changes, when you move the end of your work day, or
-          when you add, finish, delete or re-date a task. The date counts on its own —
-          every weight is measured against today, so at midnight they all move.
-          Renaming a task is the one edit that does not, since the weighting is
-          unchanged; the block just shows the new name.
-        </p>
+        <p>Open tasks divide 100% of work time by their due-date weights: tomorrow weighs 1, today weighs 2, and each overdue day adds 1. Later tasks weigh 1 divided by days until due. Permanently completed tasks weigh zero.</p>
+        <h2 className="card-title" style={{ marginTop: 26 }}>Track your work</h2>
+        <p>Start working chooses the highest-weight task that has not met its daily target. Use Track on another task to switch. Each target is its share multiplied by time remaining until day end plus work already tracked today. Targets shrink while paused or resting. Reaching a target marks the task Done for today and automatically moves to the next eligible task.</p>
+        <p>Every 90 accumulated work minutes starts 30 minutes of tracked rest, then work resumes. Pausing stops either counter without bypassing an unfinished break. The work-day cutoff stops tracking. At midnight in your shared timer’s time zone, daily time is reset and tracking stays paused until you start again.</p>
+        <h2 className="card-title" style={{ marginTop: 26 }}>Alerts</h2>
+        <p>Enable alerts for task completion, a five-minute rest warning, rest start and rest completion. Browser alerts need the page open; phone alerts can fire while locked. Alerts follow the device that last started or switched tracking. If you change the timer elsewhere while the phone is suspended, reopen the phone app to refresh its previously scheduled alerts.</p>
 
         <h2 className="card-title" style={{ marginTop: 26 }}>
           Typing dates
@@ -103,7 +61,7 @@ export default function SupportPage() {
         </h2>
         <p>
           You do not need an account. Without one, everything stays on the device you
-          typed it on. Sign in and your tasks, schedule and preferences sync between
+          typed it on. Sign in and your tasks, tracked time, active timer and preferences sync between
           the iPhone app and this website. If you already have tasks on a device and
           sign in to an empty account, you will be asked before anything moves.
         </p>
@@ -119,7 +77,7 @@ export default function SupportPage() {
         <p>
           In the iPhone app, tap your username, then <strong>Delete account</strong>. On
           this website, use <strong>Delete account</strong> beside your username. It is
-          immediate and permanent — the account and every task, preference, schedule and
+          immediate and permanent — the account and every task, preference, tracked time and
           session belonging to it are erased. If you cannot reach your account, email the
           address above.
         </p>

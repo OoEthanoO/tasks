@@ -2,7 +2,7 @@
 
 The phone client for [tasks.ethanyanxu.com](https://tasks.ethanyanxu.com). Same
 account, same database, same weights: this app imports `../lib` directly rather
-than reimplementing any of it, so the weighting and balanced schedule builder
+than reimplementing any of it, so the weighting and timestamp-based work timer
 exist in exactly one place.
 
 ## Run it on your iPhone
@@ -49,7 +49,7 @@ phone.
 
 | Concern | Where |
 | --- | --- |
-| Weights, schedule, date parsing, state coercion | `../lib` (shared with the web app) |
+| Weights, tracking, date parsing, state coercion | `../lib` (shared with the web app) |
 | API client | `../lib/remote.ts`, pointed at an absolute base by `src/config.ts` |
 | Guest storage | `src/store.ts` — AsyncStorage, same four keys the web app uses in `localStorage` |
 | Screen, sync loop, account flows | `App.tsx` — mirrors `app/page.tsx` |
@@ -63,3 +63,11 @@ second copy of React.
 Expo Go covers development. A standalone `.ipa` for TestFlight or the App Store
 needs either a Mac with Xcode or an EAS build (`npx eas build -p ios`), which is
 a paid Expo service for private projects.
+
+## Timer alerts
+
+Enable alerts in the focus card. `expo-notifications` schedules task-complete,
+rest-warning, rest-start and rest-complete alerts with iOS. A new native build is
+required after this dependency change. Open the app after changing tracking on
+another device so iOS can replace any old scheduled alerts. Time itself is
+computed from the shared server timestamps and does not rely on notifications.

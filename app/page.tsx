@@ -3,25 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AccountMenu from "@/components/AccountMenu";
 import AuthDialog from "@/components/AuthDialog";
-import ConfirmDialog from "@/components/ConfirmDialog";
 import QuickAdd from "@/components/QuickAdd";
-import SchedulePanel from "@/components/SchedulePanel";
+import TrackingPanel from "@/components/TrackingPanel";
+import { useTracking } from "@/components/useTracking";
+import { taskProgress } from "@/lib/tracking";
 import TaskList from "@/components/TaskList";
 import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
 import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api } from "@/lib/remote";
-import {
-  REGENERATE_CONFIRM,
-  generateSchedule,
-  needsRegenerateConfirmation,
-  nextTickDelay,
-  scheduleStaleReason,
-} from "@/lib/schedule";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
-import { buildWeightTable, formatProbability } from "@/lib/weights";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -30,7 +23,7 @@ function storeKey(user: User | null): string {
 
 const SAVE_DEBOUNCE_MS = 500;
 /** How often a visible tab asks the server whether anything changed elsewhere. */
-const REFRESH_MS = 30_000;
+const REFRESH_MS = 5_000;
 
 export default function Page() {
   const [ready, setReady] = useState(false);
@@ -38,10 +31,8 @@ export default function Page() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
-  const [now, setNow] = useState(() => new Date());
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
 
   const [account, setAccount] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -305,7 +296,7 @@ export default function Page() {
       const { user, state, migrated } = await api.signUp({
         username,
         password,
-        importState: migrate ? stateRef.current : null,
+        importState: migrate ? { ...stateRef.current, tracking: localStore.load().tracking } : null,
       });
       // Only clear the device copy once the server confirms it took it.
       if (migrated) localStore.clear();
@@ -333,7 +324,7 @@ export default function Page() {
     if (!user) return;
     if (
       !window.confirm(
-        `Permanently delete ${user.username}? Every task, your schedule and your ` +
+        `Permanently delete ${user.username}? Every task, your tracked time and your ` +
           `sign-in are erased from the server. This cannot be undone.`,
       )
     ) {
@@ -376,34 +367,16 @@ export default function Page() {
 
   /* ---------- task state ---------- */
 
-  // Keeps the "Now" block, weights, and day rollover honest without a reload.
-  // Each wait runs to the next block edge rather than to a fixed interval, so a
-  // block is highlighted on the stroke of its start time and not a tick later.
-  useEffect(() => {
-    let id: ReturnType<typeof setTimeout>;
-    function wait(from: Date) {
-      id = setTimeout(() => {
-        const current = new Date();
-        setNow(current);
-        wait(current);
-      }, nextTickDelay(from, schedule));
-    }
-    wait(new Date());
-    return () => clearTimeout(id);
-  }, [schedule]);
-
-  const today = useMemo(() => todayKey(), [now]);
-
-  const table = useMemo(() => buildWeightTable(tasks, today), [tasks, today]);
-  const maxProbability = useMemo(
-    () => table.entries.reduce((max, e) => Math.max(max, e.probability), 0),
-    [table],
-  );
-
-  const staleReason = useMemo(
-    () => scheduleStaleReason(schedule, tasks, endTime, now),
-    [schedule, tasks, endTime, now],
-  );
+  const beforeTrack = useCallback(async () => {
+    if (!account) return;
+    await flushRemote();
+    if (pendingRef.current || syncingRef.current) throw new Error("Wait for your task changes to sync, then try again.");
+  }, [account, flushRemote]);
+  const tracker = useTracking(tasks, endTime, account?.id ?? null, ready && !authLoading, beforeTrack);
+  const today = tracker.state.dayKey;
+  const entries = taskProgress({ ...tracker.state, tasks, endTime });
+  const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
+  const maxProbability = Math.max(0, ...entries.map(e => e.probability));
 
   const addTask = useCallback(
     (input: { title: string; description: string; dueDate: string }) => {
@@ -443,44 +416,8 @@ export default function Page() {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
 
-  // The table is read through a ref so the hotkey handler never goes stale.
-  const tableRef = useRef(table);
-  tableRef.current = table;
-
-  const tasksRef = useRef(tasks);
-  tasksRef.current = tasks;
-  const endTimeRef = useRef(endTime);
-  endTimeRef.current = endTime;
-
-  const regenerateSchedule = useCallback(() => {
-    setConfirmRegenerate(false);
-    setSchedule(
-      generateSchedule(
-        tasksRef.current,
-        tableRef.current,
-        endTimeRef.current,
-        new Date(),
-      ),
-    );
-  }, []);
-
-  // Both the button and G come through here. Refs rather than the values
-  // themselves, because the key handler outlives the render it was bound in.
-  const scheduleRef = useRef(schedule);
-  scheduleRef.current = schedule;
-  const staleReasonRef = useRef(staleReason);
-  staleReasonRef.current = staleReason;
-
-  const requestRegenerate = useCallback(() => {
-    if (needsRegenerateConfirmation(scheduleRef.current, staleReasonRef.current)) {
-      setConfirmRegenerate(true);
-      return;
-    }
-    regenerateSchedule();
-  }, [regenerateSchedule]);
-
   // Global hotkeys. Typing in a field always wins over a shortcut.
-  const modalOpen = quickAddOpen || authDialog !== null || confirmRegenerate;
+  const modalOpen = quickAddOpen || authDialog !== null;
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -496,7 +433,6 @@ export default function Page() {
       if (e.key === "Escape") {
         setQuickAddOpen(false);
         setHelpOpen(false);
-        setConfirmRegenerate(false);
         return;
       }
       if (typing || modalOpen) return;
@@ -507,7 +443,7 @@ export default function Page() {
         setQuickAddOpen(true);
       } else if (key === "g") {
         e.preventDefault();
-        requestRegenerate();
+        void tracker.command({ type: tracker.state.mode === "idle" ? "start" : "pause" });
       } else if (e.key === "?") {
         e.preventDefault();
         setHelpOpen((v) => !v);
@@ -516,7 +452,7 @@ export default function Page() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, requestRegenerate]);
+  }, [modalOpen, tracker.command, tracker.state.mode]);
 
   // Notices are informational; they should not pile up.
   useEffect(() => {
@@ -534,7 +470,7 @@ export default function Page() {
           <h1>
             YanTasks<span className="dot">.</span>
           </h1>
-          <span className="tagline">balanced weighted planner</span>
+          <span className="tagline">weighted work tracker</span>
         </div>
         <div className="topbar-actions">
           <span className="today-chip">
@@ -593,7 +529,7 @@ export default function Page() {
               Tasks {ready && openCount > 0 && <span>· {openCount} open</span>}
             </h2>
             <span className="hint">
-              Rest gets {formatProbability(table.restProbability)}
+              Daily work share
             </span>
           </div>
 
@@ -602,6 +538,10 @@ export default function Page() {
               entries={table.entries}
               today={today}
               maxProbability={maxProbability}
+              progress={entries}
+              activeId={tracker.state.taskId}
+              trackingDisabled={!tracker.ready || tracker.busy || tracker.state.cycleWorkMs >= 5_400_000}
+              onTrack={id => void tracker.command({ type: "start", taskId: id })}
               onToggle={toggleTask}
               onDelete={deleteTask}
               onUpdate={updateTask}
@@ -615,26 +555,12 @@ export default function Page() {
               <span>
                 Task weight <b>{table.taskTotal.toFixed(3)}</b>
               </span>
-              <span>
-                Tasks <b>{formatProbability(1 - table.restProbability)}</b>
-              </span>
-              <span>
-                Rest <b>{formatProbability(table.restProbability)}</b>
-              </span>
             </div>
           )}
         </section>
 
         <div className="stack">
-          <SchedulePanel
-            schedule={ready ? schedule : null}
-            tasks={tasks}
-            endTime={endTime}
-            now={now}
-            staleReason={staleReason}
-            onEndTimeChange={setEndTime}
-            onGenerate={requestRegenerate}
-          />
+          <TrackingPanel tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} />
         </div>
       </div>
 
@@ -650,17 +576,6 @@ export default function Page() {
           onSignUp={signUp}
           onAdoptLocal={adoptLocal}
           onClose={() => setAuthDialog(null)}
-        />
-      )}
-
-      {confirmRegenerate && (
-        <ConfirmDialog
-          title={REGENERATE_CONFIRM.title}
-          body={REGENERATE_CONFIRM.body}
-          confirmLabel={REGENERATE_CONFIRM.confirm}
-          cancelLabel={REGENERATE_CONFIRM.cancel}
-          onConfirm={regenerateSchedule}
-          onCancel={() => setConfirmRegenerate(false)}
         />
       )}
 
@@ -684,7 +599,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
             <span className="kbd">Q</span> New task — type the name, trail it with a date
           </li>
           <li>
-            <span className="kbd">G</span> Generate today&apos;s schedule
+            <span className="kbd">G</span> Start or pause tracking
           </li>
           <li>
             <span className="kbd">↵</span> Create the task
@@ -713,8 +628,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               Completed: <code>0</code>.
             </div>
             <div>
-              <code>Rest</code> always owns an absolute <code>1/4</code> of the schedule.
-              Open tasks divide the other <code>3/4</code> in proportion to their weights.
+              Open tasks divide tracked work in proportion to their weights. After every 90 minutes of tracked work, take 30 minutes of rest. Daily targets and time reset at midnight.
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ import {
   sanitizeState,
 } from "./app-state";
 import { Statement, ensureSchema, getSql } from "./sql";
+import { configureAccountTracking, importAccountTracking } from "./tracking-db";
 import { AppState, Recommendation, Task, User } from "./types";
 
 type UserRow = {
@@ -286,4 +287,6 @@ export async function saveState(userId: string, incoming: AppState): Promise<voi
 
   await ensureSchema();
   await getSql().transaction(statements);
+  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime);
+  await configureAccountTracking(userId, state.tasks, state.endTime);
 }

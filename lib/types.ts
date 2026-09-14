@@ -1,4 +1,5 @@
 import { DateKey } from "./dates";
+import type { TrackingState } from "./tracking";
 
 export type Task = {
   id: string;
@@ -46,6 +47,8 @@ export type User = {
  * localStorage; a signed-in user keeps it on the server.
  */
 export type AppState = {
+  /** Included only in guest migration payloads; account timers use /api/tracking. */
+  tracking?: TrackingState;
   tasks: Task[];
   recommendation: Recommendation | null;
   schedule: Schedule | null;
