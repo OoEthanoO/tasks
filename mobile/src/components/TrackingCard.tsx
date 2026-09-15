@@ -36,10 +36,10 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
     <View style={s.totals}>
       <View><Text style={s.hint}>Worked today</Text><Text style={s.total}>{formatDuration(state.workMs, true)}</Text></View>
       <View><Text style={s.hint}>Rested today</Text><Text style={s.total}>{formatDuration(state.restMs, true)}</Text></View>
-      <View><Text style={s.hint}>Work budget</Text><Text style={s.total}>{formatDuration(t.budgetMs)}</Text></View>
+      <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(t.remainingWorkMs)}</Text></View>
     </View>
     <Btn tone="danger" label="Reset today’s progress" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} style={{ marginBottom: 12 }} />
-    <Text style={s.explainer}>Daily target = task share × (time until day end + work already tracked). Targets shrink while paused or resting.</Text>
+    <Text style={s.explainer}>Remaining targets fit the work time left after reserving breaks. Logged time stays fixed; unfinished targets balance by weight.</Text>
     <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
     <Text style={s.hint}>Alerts follow the device that last started or switched tracking. Open this app to refresh alerts after changing the timer elsewhere.</Text>
     {confirmReset && <ConfirmSheet title="Reset today’s progress?" body={RESET_PROGRESS_CONFIRMATION} confirmLabel="Reset progress" cancelLabel="Keep progress" onCancel={() => setConfirmReset(false)} onConfirm={() => { setConfirmReset(false); void t.command({ type: "reset" }); }} />}

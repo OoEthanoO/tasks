@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { createTrackingHook } = require("../.test-build/use-tracking.js");
+const { createTracking } = require("../.test-build/tracking.js");
 
 // Exercise the shared hook through its injected hook/adapter boundary without
 // adding another React renderer (web and mobile use separate React versions).
-function mount(adapter) {
+function mount(adapter, { tasks = [], endTime = "23:00" } = {}) {
   const slots = [];
   let index = 0, dirty = true, effects = [], result;
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -33,14 +34,14 @@ function mount(adapter) {
     },
   };
   const useTracking = createTrackingHook(hooks, adapter);
-  const tasks = [], beforeCommand = async () => {};
+  const beforeCommand = async () => {};
   return {
     get value() { return result; },
     async flush() {
       for (let i = 0; i < 12; i++) {
         if (dirty) {
           dirty = false; index = 0; effects = [];
-          result = useTracking(tasks, "23:00", null, true, beforeCommand);
+          result = useTracking(tasks, endTime, null, true, beforeCommand);
           for (const effect of effects) effect();
         }
         await new Promise(resolve => setImmediate(resolve));
@@ -88,3 +89,23 @@ try {
   assert.equal(tracker.value.permission, "Alerts enabled", "a stale startup read must not undo a grant");
 } finally { tracker.unmount(); }
 console.log("5 alert permission lifecycle scenarios passed");
+
+const realNow=Date.now, start=Date.parse("2026-09-14T08:00:00Z"), minute=60_000;
+const tasks=["a","b"].map(id=>({id,title:id,description:"",dueDate:"2026-09-14",createdAt:new Date(start).toISOString(),completed:false,completedAt:null}));
+const legacy={...createTracking(tasks,"10:00","UTC",start),mode:"work",taskId:"a",controllerId:"test-device"};
+delete legacy.allocationVersion;
+let saved=JSON.stringify(legacy), writes=0;
+Date.now=()=>start+60*minute;
+tracker=mount({...adapter,read:async()=>saved,write:async value=>{saved=value;writes++;}}, {tasks,endTime:"10:00"});
+try {
+  await tracker.flush();
+  assert.equal(writes,1,"guest migration must persist its checkpoint");
+  assert.equal(tracker.value.state.allocationVersion,2);
+  assert.equal(tracker.value.state.taskMs.a,60*minute);
+  assert.equal(tracker.value.state.taskMs.b??0,0);
+  assert.equal(tracker.value.remainingWorkMs,30*minute);
+  await tracker.value.refresh(); await tracker.flush();
+  assert.equal(writes,1,"polling must not repeat the migration");
+  assert.equal(JSON.parse(saved).revision,1);
+} finally { tracker.unmount(); Date.now=realNow; }
+console.log("1 guest allocation upgrade scenario passed");

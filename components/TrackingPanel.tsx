@@ -34,10 +34,10 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange }: 
       <div className="tracking-totals">
         <div><span>Worked today</span><strong>{formatDuration(s.workMs, true)}</strong></div>
         <div><span>Rested today</span><strong>{formatDuration(s.restMs, true)}</strong></div>
-        <div><span>Work budget</span><strong>{formatDuration(t.budgetMs)}</strong></div>
+        <div><span>Work left</span><strong>{formatDuration(t.remainingWorkMs)}</strong></div>
       </div>
       <button type="button" className="btn btn-danger reset-progress" disabled={!t.ready || t.busy} onClick={() => setConfirmReset(true)}>Reset today’s progress</button>
-      <div className="tracking-explainer">Daily target = task share × (time until day end + work already tracked). Targets shrink while paused or resting. Time resets at midnight.</div>
+      <div className="tracking-explainer">Remaining targets fit the work time left after reserving breaks. Logged time stays fixed; unfinished targets balance by weight. Time resets at midnight.</div>
       <button type="button" className="btn btn-ghost" onClick={() => void t.enableNotifications()}>{t.permission}</button>
       <p className="hint">Browser alerts need this page open. Phone alerts can fire while locked. Alerts follow the device that last started or switched tracking.</p>
       {confirmReset && <ConfirmDialog title="Reset today’s progress?" body={RESET_PROGRESS_CONFIRMATION} confirmLabel="Reset progress" cancelLabel="Keep progress" onCancel={() => setConfirmReset(false)} onConfirm={() => { setConfirmReset(false); void t.command({ type: "reset" }); }} />}

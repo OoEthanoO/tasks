@@ -1,7 +1,7 @@
 import type * as React from "react";
 import { api, ApiError } from "./remote";
 import { Task } from "./types";
-import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
 
 export const TRACKING_KEY = "yantasks.tracking.v1";
 export type TrackingAdapter = {
@@ -83,9 +83,12 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
           const raw = await adapter.read();
           let saved: TrackingState | null = null;
           try { saved = raw ? parseTracking(JSON.parse(raw)) : null; } catch { /* reset corrupt guest state */ }
-          if (saved && advanceTracking(saved, Date.now()).state.dayKey !== saved.dayKey) {
-            saved = { ...advanceTracking(saved, Date.now()).state, revision: saved.revision + 1 };
-            await adapter.write(JSON.stringify(saved));
+          if (saved) {
+            const advanced = advanceTracking(saved, Date.now()).state;
+            if (advanced.dayKey !== saved.dayKey || advanced.allocationVersion !== saved.allocationVersion) {
+              saved = { ...advanced, revision: saved.revision + 1 };
+              await adapter.write(JSON.stringify(saved));
+            }
           }
           if (scope.current === token) adopt(saved);
         }
@@ -189,6 +192,6 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       } catch { setPermission("Alerts unavailable — check device settings"); }
     }, [controller]);
 
-    return { state, progress, budgetMs: workBudget(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
+    return { state, progress, budgetMs: workBudget(state), remainingWorkMs: remainingWorkTime(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
   };
 }

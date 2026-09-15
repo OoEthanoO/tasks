@@ -11,6 +11,8 @@ const endCache = new Map<string, number>();
 /** One timestamp-based session, not one counter per device. */
 export type TrackingState = {
   version: 1;
+  /** Absent on legacy sessions; checkpoint their old projection before upgrading. */
+  allocationVersion?: 2;
   revision: number;
   dayKey: string;
   timeZone: string;
@@ -89,19 +91,55 @@ export function trackingConfigKey(tasks: Task[], endTime: string): string {
 export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now()): TrackingState {
   timeZone = validTimeZone(timeZone);
   return {
-    version: 1, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
+    version: 1, allocationVersion: 2, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
     endTime, cursor: now, tasks, taskMs: {}, workMs: 0, restMs: 0,
     cycleWorkMs: 0, cycleRestMs: 0, mode: "idle", taskId: null, controllerId: null,
   };
 }
 
+/** Work that can still fit before cutoff, including partial/paused rest debt. */
+export function remainingWorkTime(state: TrackingState, now = state.cursor): number {
+  let wall = Math.max(0, dayEnd(state) - now);
+  const owesRest = state.mode === "rest" || state.cycleWorkMs + EPSILON >= WORK_CYCLE_MS;
+  if (owesRest) wall = Math.max(0, wall - (REST_CYCLE_MS - state.cycleRestMs));
+  const firstWork = Math.min(wall, owesRest ? WORK_CYCLE_MS : WORK_CYCLE_MS - state.cycleWorkMs);
+  // After the first work stretch comes a break, then full 90/30 cycles.
+  const tail = Math.max(0, wall - firstWork - REST_CYCLE_MS);
+  const cycle = WORK_CYCLE_MS + REST_CYCLE_MS;
+  return firstWork + Math.floor(tail / cycle) * WORK_CYCLE_MS + Math.min(WORK_CYCLE_MS, tail % cycle);
+}
 export function workBudget(state: TrackingState, now = state.cursor): number {
-  return state.workMs + Math.max(0, dayEnd(state) - now);
+  return state.workMs + remainingWorkTime(state, now);
 }
 export function taskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
+  const entries = state.tasks.map(task => ({
+    task, weight: taskWeight(task, state.dayKey),
+    trackedMs: Object.hasOwn(state.taskMs, task.id) ? state.taskMs[task.id] : 0,
+  }));
+  const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
+  const available = remainingWorkTime(state, now);
+  // Weighted water filling: solve sum(max(0, weight * level - tracked)) =
+  // available. Tasks already above the common level keep their logged time
+  // but receive no more; the remaining tasks approach proportional totals.
+  const open = entries.filter(e => e.weight > 0).sort((a, b) => a.trackedMs / a.weight - b.trackedMs / b.weight);
+  let level = 0, weight = 0, tracked = 0;
+  for (let i = 0; i < open.length; i++) {
+    weight += open[i].weight; tracked += open[i].trackedMs;
+    level = (available + tracked) / weight;
+    if (i + 1 === open.length || level <= open[i + 1].trackedMs / open[i + 1].weight) break;
+  }
+  return entries.map(entry => {
+    const remainingMs = Math.max(0, entry.weight * level - entry.trackedMs);
+    return { ...entry, probability: total > 0 ? entry.weight / total : 0,
+      targetMs: entry.trackedMs + remainingMs, remainingMs, doneToday: remainingMs <= EPSILON };
+  });
+}
+
+/** Only used once to preserve elapsed history when upgrading a running timer. */
+function legacyTaskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
   const entries = state.tasks.map(task => ({ task, weight: taskWeight(task, state.dayKey) }));
   const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
-  const budget = workBudget(state, now);
+  const budget = state.workMs + Math.max(0, dayEnd(state) - now);
   return entries.map(entry => {
     const probability = total > 0 ? entry.weight / total : 0;
     const trackedMs = Object.hasOwn(state.taskMs, entry.task.id) ? state.taskMs[entry.task.id] : 0;
@@ -109,8 +147,8 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
     return { ...entry, probability, trackedMs, targetMs, remainingMs: Math.max(0, targetMs - trackedMs), doneToday: trackedMs + EPSILON >= targetMs };
   });
 }
-function nextTask(state: TrackingState): TaskProgress | undefined {
-  return taskProgress(state).filter(p => p.weight > 0 && !p.doneToday)
+function nextTask(state: TrackingState, progressFor = taskProgress): TaskProgress | undefined {
+  return progressFor(state).filter(p => p.weight > 0 && !p.doneToday)
     .sort((a, b) => b.weight - a.weight || a.task.createdAt.localeCompare(b.task.createdAt) || state.tasks.indexOf(a.task) - state.tasks.indexOf(b.task))[0];
 }
 
@@ -119,7 +157,7 @@ function nextTask(state: TrackingState): TaskProgress | undefined {
  * projection runs on the server, in the browser and after iOS wakes up. No
  * heartbeat or background JavaScript is needed to keep time accurately.
  */
-export function advanceTracking(original: TrackingState, now: number): { state: TrackingState; events: TrackingEvent[] } {
+function integrateTracking(original: TrackingState, now: number, progressFor: typeof taskProgress): { state: TrackingState; events: TrackingEvent[] } {
   const state: TrackingState = { ...original, taskMs: { ...original.taskMs } };
   const events: TrackingEvent[] = [];
   const emit = (type: TrackingEvent["type"], title: string, body: string, taskId = "") => {
@@ -141,13 +179,14 @@ export function advanceTracking(original: TrackingState, now: number): { state: 
       state.cursor += elapsed;
       if (state.cycleRestMs + EPSILON >= REST_CYCLE_MS) {
         state.cycleWorkMs = 0; state.cycleRestMs = 0;
-        const next = nextTask(state);
+        state.mode = "idle";
+        const next = nextTask(state, progressFor);
         state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
         emit("rest-complete", "Rest complete", next ? `Now tracking ${next.task.title}.` : "All daily targets are met. Nice work.");
       }
       continue;
     }
-    const current = taskProgress(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday) ?? nextTask(state);
+    const current = progressFor(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday) ?? nextTask(state, progressFor);
     if (!current) { state.mode = "idle"; state.taskId = null; break; }
     state.taskId = current.task.id;
     const toRest = Math.max(0, WORK_CYCLE_MS - state.cycleWorkMs);
@@ -167,7 +206,7 @@ export function advanceTracking(original: TrackingState, now: number): { state: 
       state.mode = "rest"; state.taskId = null;
       emit("rest-start", "Time to rest", "90 minutes of work complete. Now tracking a 30-minute break.");
     } else if (!state.taskId) {
-      const next = nextTask(state);
+      const next = nextTask(state, progressFor);
       state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
     }
   }
@@ -178,6 +217,20 @@ export function advanceTracking(original: TrackingState, now: number): { state: 
   }
   state.cursor = now;
   return { state, events: events.sort((a, b) => a.at - b.at) };
+}
+
+export function advanceTracking(original: TrackingState, now: number): { state: TrackingState; events: TrackingEvent[] } {
+  if (original.allocationVersion === 2) return integrateTracking(original, now, taskProgress);
+  // Old snapshots may be hours behind the live display. Integrate that elapsed
+  // work with the old rule first; only future time uses the corrected targets.
+  const result = integrateTracking(original, now, legacyTaskProgress);
+  result.state.allocationVersion = 2;
+  if (result.state.mode === "work") {
+    const current = taskProgress(result.state).find(p => p.task.id === result.state.taskId && p.weight > 0 && !p.doneToday);
+    const next = current ?? nextTask(result.state);
+    result.state.mode = next ? "work" : "idle"; result.state.taskId = next?.task.id ?? null;
+  }
+  return result;
 }
 
 export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number): TrackingState {
@@ -229,6 +282,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (!value || typeof value !== "object") return null;
   const s = value as TrackingState;
   if (s.version !== 1 || !Number.isSafeInteger(s.revision) || s.revision < 0 || !Number.isFinite(s.cursor) || s.cursor < 0 || s.cursor > 8.64e15) return null;
+  if (s.allocationVersion !== undefined && s.allocationVersion !== 2) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.dayKey) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.endTime)) return null;
   if (typeof s.timeZone !== "string" || validTimeZone(s.timeZone) !== s.timeZone || !Array.isArray(s.tasks) || s.tasks.length > 2000) return null;
   if (!s.taskMs || typeof s.taskMs !== "object" || Array.isArray(s.taskMs)) return null;

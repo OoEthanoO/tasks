@@ -44,11 +44,11 @@ export async function configureAccountTracking(userId: string, tasks: Task[], en
   throw new TrackingConflict();
 }
 
-/** Erase yesterday's totals on the first read, not just in the display. */
+/** Persist day rollover and the one-time allocation upgrade for every client. */
 export async function readAccountTracking(userId: string, now = Date.now()): Promise<TrackingState | null> {
   for (let attempt = 0; attempt < 8; attempt++) {
     const previous = await loadTracking(userId);
-    if (!previous || previous.dayKey === trackingDay(now, previous.timeZone)) return previous;
+    if (!previous || (previous.dayKey === trackingDay(now, previous.timeZone) && previous.allocationVersion === 2)) return previous;
     try { return await replace(userId, previous, advanceTracking(previous, now).state); }
     catch (error) { if (!(error instanceof TrackingConflict)) throw error; }
   }

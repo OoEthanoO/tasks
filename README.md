@@ -142,12 +142,20 @@ With `n` = days until due (negative once overdue):
 
 In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
 
-Open tasks divide **100% of work time** by weight. Rest is separate.
-Daily targets use `task share × (time remaining today + tracked work today)`.
-Working keeps that budget steady; pausing or resting reduces it. A task whose
-tracked time meets its current target is **Done for today**, not permanently
-completed. Changing tasks or the cutoff recalculates future targets while
-preserving earned time.
+Open tasks aim for proportional **work time** by weight. Rest is separate.
+The app first reserves all 90/30 breaks that fall before the cutoff, including
+any unfinished break. It then balances final task totals by weight while treating
+logged time as a lower bound. Tasks already above that balance receive no extra
+time; all unfinished targets together fit the available work time.
+
+Specifically, weighted water filling finds a level `L` such that
+`sum(max(0, weight * L - tracked)) = remaining available work` over open tasks.
+Each final target is `max(tracked, weight * L)`. This keeps overruns fixed instead
+of asking other tasks to make up more time than the day contains. Completed or
+deleted tasks keep their historical work but receive no new allocation.
+The **Work left** display excludes reserved rest. A task whose tracked time meets
+its current target is **Done for today**, not permanently completed. Changing
+tasks or the cutoff recalculates future targets while preserving earned time.
 
 ## Work and rest tracking
 
@@ -175,6 +183,9 @@ Clients refresh it every three seconds, and compute elapsed time locally from
 the same timestamps. An active timer continues when the app is closed or the
 network drops; changing a signed-in timer requires the server. Legacy
 whole-state saves cannot overwrite tracked time.
+Existing timers are upgraded at a shared checkpoint: elapsed time under the old
+allocation is preserved before the corrected calculation starts. Refresh web
+clients and install the latest mobile build to use the same calculation everywhere.
 
 Enable alerts to receive task completion, a five-minute rest warning, rest-start
 and rest-complete notifications. The button reads the device's current permission
