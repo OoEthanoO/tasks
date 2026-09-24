@@ -631,7 +631,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               <code>×4</code>.
             </div>
             <div>
-              Open tasks divide tracked work in proportion to their weights. After every 90 minutes of tracked work, take 30 minutes of rest. Daily targets and time reset at midnight.
+              Open tasks divide tracked work in proportion to their weights. A task whose share would come to under 30 minutes is skipped for the day, and its time goes to more urgent tasks. After every 90 minutes of tracked work, take 30 minutes of rest. Daily targets and time reset at midnight.
             </div>
           </div>
         </div>

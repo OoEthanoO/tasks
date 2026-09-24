@@ -13,7 +13,7 @@ import {
   formatWeight,
 } from "@/lib/weights";
 import PriorityPicker from "./PriorityPicker";
-import { TaskProgress, formatDuration } from "@/lib/tracking";
+import { MIN_DAILY_TARGET_MS, SKIPPED_EXPLANATION, TaskProgress, formatDuration } from "@/lib/tracking";
 
 type Props = {
   entries: WeightedTask[];
@@ -142,7 +142,11 @@ function TaskRow({
       <div className="task-main">
         <div className="task-title">{task.title}</div>
         {task.description && <p className="task-desc">{task.description}</p>}
-        {progress && !task.completed && <div className="task-progress">
+        {progress && !task.completed && progress.skipped && <div className="task-progress">
+          <span>{formatDuration(progress.trackedMs)} today</span>
+          <span className="daily-skipped" title={SKIPPED_EXPLANATION}>Skipped today: under {formatDuration(MIN_DAILY_TARGET_MS)}</span>
+        </div>}
+        {progress && !task.completed && !progress.skipped && <div className="task-progress">
           <span>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</span>
           <span className={progress.doneToday ? "daily-done" : ""}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</span>
           <progress max={Math.max(1, progress.targetMs)} value={Math.min(progress.trackedMs, progress.targetMs)} aria-label={`${task.title} daily progress`} />
@@ -176,7 +180,9 @@ function TaskRow({
       <div className="prob" title={
         task.completed
           ? "Completed tasks have weight 0 and are never picked"
-          : `${formatProbability(probability)} share of work time`
+          : progress?.skipped
+            ? SKIPPED_EXPLANATION
+            : `${formatProbability(probability)} share of work time`
       }>
         <span className={`prob-value${probability <= 0 ? " is-zero" : ""}`}>
           {task.completed ? "—" : formatProbability(probability)}

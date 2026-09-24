@@ -175,6 +175,17 @@ The **Work left** display excludes reserved rest. A task whose tracked time meet
 its current target is **Done for today**, not permanently completed. Changing
 tasks or the cutoff recalculates future targets while preserving earned time.
 
+**30-minute minimum.** A task whose whole day would come to less than 30
+minutes (time already logged plus its share of what is left) is skipped for the
+day: a few minutes on something due weeks away barely counts. Tasks are
+considered from least to most important, the reverse of the order Start picks
+in, and each skipped share goes only to the tasks above it, never to less urgent
+ones. The most important open task is never skipped, so a short day is not
+wasted, and a task with 30 minutes already logged is never skipped. Skipped
+tasks show a 0% share and cannot be tracked that day. The decision follows the
+day as it changes, so while tracking is paused and the time left shrinks, more
+tasks can drop out.
+
 ## Work and rest tracking
 
 Start chooses the highest-weight unfinished daily target in list order. Each

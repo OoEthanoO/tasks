@@ -36,7 +36,18 @@ export type TrackingEvent = {
   title: string;
   body: string;
 };
-export type TaskProgress = WeightedTask & { trackedMs: number; targetMs: number; remainingMs: number; doneToday: boolean };
+/**
+ * A task whose whole day would come to less than this is skipped. A few
+ * minutes on something due weeks away barely counts; that time does more
+ * good on the tasks that are more urgent.
+ */
+export const MIN_DAILY_TARGET_MS = 30 * 60_000;
+export const SKIPPED_EXPLANATION = `Its share of today’s work would come to under ${MIN_DAILY_TARGET_MS / 60_000} minutes, so that time goes to more urgent tasks instead.`;
+export type TaskProgress = WeightedTask & {
+  trackedMs: number; targetMs: number; remainingMs: number; doneToday: boolean;
+  /** Its day would total under MIN_DAILY_TARGET_MS, so its share went to more urgent tasks. */
+  skipped: boolean;
+};
 
 export function validTimeZone(value: unknown): string {
   if (typeof value === "string") {
@@ -111,28 +122,61 @@ export function remainingWorkTime(state: TrackingState, now = state.cursor): num
 export function workBudget(state: TrackingState, now = state.cursor): number {
   return state.workMs + remainingWorkTime(state, now);
 }
-export function taskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
-  const entries = state.tasks.map(task => ({
-    task, weight: taskWeight(task, state.dayKey),
-    trackedMs: Object.hasOwn(state.taskMs, task.id) ? state.taskMs[task.id] : 0,
-  }));
-  const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
-  const available = remainingWorkTime(state, now);
-  // Weighted water filling: solve sum(max(0, weight * level - tracked)) =
-  // available. Tasks already above the common level keep their logged time
-  // but receive no more; the remaining tasks approach proportional totals.
-  const open = entries.filter(e => e.weight > 0).sort((a, b) => a.trackedMs / a.weight - b.trackedMs / b.weight);
+/**
+ * Weighted water filling: the level at which sum(max(0, weight * level -
+ * tracked)) = available. Tasks already above the level keep their logged time
+ * but receive no more; the rest approach proportional totals. `open` must be
+ * sorted by tracked / weight and hold only positive weights.
+ */
+function waterLevel(open: { weight: number; trackedMs: number }[], available: number): number {
   let level = 0, weight = 0, tracked = 0;
   for (let i = 0; i < open.length; i++) {
     weight += open[i].weight; tracked += open[i].trackedMs;
     level = (available + tracked) / weight;
     if (i + 1 === open.length || level <= open[i + 1].trackedMs / open[i + 1].weight) break;
   }
-  return entries.map(entry => {
-    const remainingMs = Math.max(0, entry.weight * level - entry.trackedMs);
-    return { ...entry, probability: total > 0 ? entry.weight / total : 0,
-      targetMs: entry.trackedMs + remainingMs, remainingMs, doneToday: remainingMs <= EPSILON };
-  });
+  return level;
+}
+
+export function taskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
+  const entries = state.tasks.map((task, index) => ({
+    task, index, weight: taskWeight(task, state.dayKey),
+    trackedMs: Object.hasOwn(state.taskMs, task.id) ? state.taskMs[task.id] : 0,
+  }));
+  const open = entries.filter(e => e.weight > 0);
+  const byRatio = [...open].sort((a, b) => a.trackedMs / a.weight - b.trackedMs / b.weight);
+  const remaining = entries.map(() => 0);
+  const skipped = entries.map(() => false);
+  const receives = entries.map(e => e.weight > 0);
+  const pour = (available: number) => {
+    const level = waterLevel(byRatio.filter(e => receives[e.index]), available);
+    for (const e of open) if (receives[e.index]) remaining[e.index] = Math.max(0, e.weight * level - e.trackedMs);
+  };
+  pour(remainingWorkTime(state, now));
+  // Then, least important first (the reverse of the order Start picks in),
+  // skip each task whose day would total under the minimum. Its share goes
+  // only to the tasks above it, never sideways to less urgent ones, and the
+  // most important task is never skipped: there would be nowhere to send its
+  // time. The day's total, not just what is left, decides — so a task is
+  // never cut off in its last few minutes, and one with 30 minutes already
+  // logged is never skipped.
+  const ascending = [...open].sort((a, b) => a.weight - b.weight || b.task.createdAt.localeCompare(a.task.createdAt) || b.index - a.index);
+  for (const e of ascending.slice(0, -1)) {
+    receives[e.index] = false;
+    const freed = remaining[e.index];
+    // Nothing left to give (the day is over, or it is past its share): done, not skipped.
+    if (freed <= EPSILON || e.trackedMs + freed + EPSILON >= MIN_DAILY_TARGET_MS) continue;
+    skipped[e.index] = true;
+    remaining[e.index] = 0;
+    pour(freed + open.reduce((sum, o) => sum + (receives[o.index] ? remaining[o.index] : 0), 0));
+  }
+  const keptWeight = open.reduce((sum, e) => sum + (skipped[e.index] ? 0 : e.weight), 0);
+  return entries.map(({ task, index, weight, trackedMs }) => ({
+    task, weight, trackedMs,
+    probability: skipped[index] || keptWeight <= 0 ? 0 : weight / keptWeight,
+    targetMs: trackedMs + remaining[index], remainingMs: remaining[index],
+    doneToday: remaining[index] <= EPSILON, skipped: skipped[index],
+  }));
 }
 
 /** Only used once to preserve elapsed history when upgrading a running timer. */
@@ -144,7 +188,7 @@ function legacyTaskProgress(state: TrackingState, now = state.cursor): TaskProgr
     const probability = total > 0 ? entry.weight / total : 0;
     const trackedMs = Object.hasOwn(state.taskMs, entry.task.id) ? state.taskMs[entry.task.id] : 0;
     const targetMs = probability * budget;
-    return { ...entry, probability, trackedMs, targetMs, remainingMs: Math.max(0, targetMs - trackedMs), doneToday: trackedMs + EPSILON >= targetMs };
+    return { ...entry, probability, trackedMs, targetMs, remainingMs: Math.max(0, targetMs - trackedMs), doneToday: trackedMs + EPSILON >= targetMs, skipped: false };
   });
 }
 function nextTask(state: TrackingState, progressFor = taskProgress): TaskProgress | undefined {

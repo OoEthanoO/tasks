@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from "react-native";
 import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
 import { dueBucket } from "../../../lib/grouping";
-import { TaskProgress, formatDuration } from "../../../lib/tracking";
+import { MIN_DAILY_TARGET_MS, SKIPPED_EXPLANATION, TaskProgress, formatDuration } from "../../../lib/tracking";
 import { Btn } from "./ui";
 import {
   DEFAULT_PRIORITY,
@@ -75,8 +75,13 @@ export default function TaskRow({
           </Text>
         ) : null}
         {progress && !task.completed && <>
-          <Text style={s.metaText}>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</Text>
-          <Text style={[s.metaText, { color: progress.doneToday ? c.ok : c.accent }]}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</Text>
+          {progress.skipped ? <>
+            <Text style={s.metaText}>{formatDuration(progress.trackedMs)} today</Text>
+            <Text style={s.metaText} accessibilityHint={SKIPPED_EXPLANATION}>Skipped today: under {formatDuration(MIN_DAILY_TARGET_MS)}</Text>
+          </> : <>
+            <Text style={s.metaText}>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</Text>
+            <Text style={[s.metaText, { color: progress.doneToday ? c.ok : c.accent }]}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</Text>
+          </>}
           <Btn label={active ? "Tracking" : "Track"} disabled={trackingDisabled || progress.doneToday || active} onPress={onTrack} />
         </>}
         <View style={s.meta}>

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
-const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
+const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
 const { commandTracking, loadTracking, readAccountTracking, configureAccountTracking, TrackingConflict } = require("../.test-build/tracking-db.js");
 const { saveState, loadState } = require("../.test-build/db.js");
@@ -206,30 +206,32 @@ check("reserved property names can be valid task ids without corrupting counters
   near(s.taskMs.__proto__,MIN); near(s.workMs,MIN);
 });
 
-check("overruns cannot book more than the 16 minutes left", () => {
+check("overruns cannot book more than the 16 minutes left, and slivers go to the tasks above", () => {
   const list=[...["chemistry","english","physics","yanvpn"].map(id=>task(id,"2026-09-15")),task("isu","2026-09-17"),task("ee","2026-09-17")];
   const s={...fresh(list,"08:16"),taskMs:{chemistry:41*MIN,english:24*MIN,physics:20*MIN,yanvpn:5*MIN},workMs:90*MIN,cycleWorkMs:28*MIN};
-  const before=JSON.stringify(s), p=taskProgress(s);
+  const before=JSON.stringify(s), p=taskProgress(s), get=id=>p.find(p=>p.task.id===id);
   near(p.reduce((sum,p)=>sum+p.remainingMs,0),16*MIN);
-  for(const id of ["chemistry","english","physics"]) assert.equal(p.find(p=>p.task.id===id).remainingMs,0);
-  near(p.find(p=>p.task.id==="yanvpn").remainingMs,7.6*MIN);
-  near(p.find(p=>p.task.id==="isu").remainingMs,4.2*MIN);
-  near(p.find(p=>p.task.id==="isu").remainingMs,p.find(p=>p.task.id==="ee").remainingMs);
+  // Without the minimum these would get 7.6, 4.2 and 4.2 minutes: days of
+  // 12.6, 4.2 and 4.2 minutes in all. Each is skipped instead.
+  for(const id of ["yanvpn","isu","ee"]) { assert.equal(get(id).skipped,true); assert.equal(get(id).remainingMs,0); assert.equal(get(id).probability,0); }
+  // Their 16 minutes go up the list, bringing physics and english to 30 each.
+  near(get("physics").remainingMs,10*MIN); near(get("english").remainingMs,6*MIN); assert.equal(get("chemistry").remainingMs,0);
+  for(const id of ["chemistry","english","physics"]) assert.equal(get(id).skipped,false);
   assert.equal(JSON.stringify(s),before,"rebalancing never rewrites logged time");
 });
 check("remaining allocation catches up underworked tasks instead of splitting blindly", () => {
-  const s={...fresh([task("a"),task("b")],"08:16"),taskMs:{a:14*MIN,b:0},workMs:14*MIN,cycleWorkMs:14*MIN};
-  const p=taskProgress(s); near(p[0].remainingMs,MIN); near(p[1].remainingMs,15*MIN);
+  const s={...fresh([task("a"),task("b")],"09:00"),taskMs:{a:14*MIN,b:0},workMs:14*MIN,cycleWorkMs:14*MIN};
+  const p=taskProgress(s); near(p[0].remainingMs,23*MIN); near(p[1].remainingMs,37*MIN);
   near(p[0].targetMs,p[1].targetMs);
 });
 check("unequal weights preserve proportional final totals when feasible", () => {
-  const s={...fresh([task("a"),task("b","2026-09-15")],"08:30"),taskMs:{a:9*MIN,b:6*MIN},workMs:15*MIN,cycleWorkMs:15*MIN};
-  const p=taskProgress(s); near(p[0].targetMs,30*MIN); near(p[1].targetMs,15*MIN);
-  near(p[0].remainingMs+p[1].remainingMs,30*MIN);
+  const s={...fresh([task("a"),task("b","2026-09-15")],"10:00"),taskMs:{a:9*MIN,b:6*MIN},workMs:15*MIN,cycleWorkMs:15*MIN};
+  const p=taskProgress(s); near(p[0].targetMs,70*MIN); near(p[1].targetMs,35*MIN);
+  near(p[0].remainingMs+p[1].remainingMs,90*MIN);
 });
 check("overruns never inflate later tasks and removed/completed work stays in history", () => {
-  const s={...fresh([task("a"),task("b"),{...task("done"),completed:true}],"08:16"),taskMs:{a:40*MIN,b:0,done:15*MIN,deleted:30*MIN},workMs:85*MIN,cycleWorkMs:20*MIN};
-  const p=taskProgress(s); near(p[0].remainingMs,0); near(p[1].remainingMs,16*MIN); near(p[2].remainingMs,0);
+  const s={...fresh([task("a"),task("b"),{...task("done"),completed:true}],"08:35"),taskMs:{a:40*MIN,b:0,done:15*MIN,deleted:30*MIN},workMs:85*MIN,cycleWorkMs:20*MIN};
+  const p=taskProgress(s); near(p[0].remainingMs,0); near(p[1].remainingMs,35*MIN); near(p[2].remainingMs,0);
   near(p[0].targetMs,40*MIN); near(p[2].targetMs,15*MIN); near(s.workMs,85*MIN);
 });
 check("16 wall minutes with a break due in 5 only allocate 5 work minutes", () => {
@@ -308,6 +310,55 @@ check("snapshots from before priorities load; unknown priorities are rejected", 
   assert.ok(parseTracking(fresh()));
   assert.ok(parseTracking(fresh([{...task("a"), priority:"medium"}])));
   assert.equal(parseTracking(fresh([{...task("a"), priority:"urgent"}])), null);
+});
+// 08:00 to 18:00 leaves 450 minutes of work after breaks.
+check("a task whose day would total under 30 minutes is skipped and its time goes to the rest", () => {
+  assert.equal(MIN_DAILY_TARGET_MS, 30*MIN);
+  const s=fresh([task("a"),task("b"),task("far","2026-11-13")]);
+  const p=taskProgress(s), far=p[2];
+  assert.equal(far.skipped,true); assert.equal(far.remainingMs,0); assert.equal(far.targetMs,0); assert.equal(far.doneToday,true); assert.equal(far.probability,0);
+  near(p[0].remainingMs,225*MIN); near(p[1].remainingMs,225*MIN); near(p[0].probability,.5); near(p[1].probability,.5);
+  near(p.reduce((sum,p)=>sum+p.remainingMs,0),remainingWorkTime(s));
+  // Start never lands on it, it cannot be tracked by hand, and a full day of work gives it nothing.
+  assert.throws(()=>actOnTracking(s,{type:"start",taskId:"far"},"device-1",T),/No unfinished daily target/);
+  const end=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),dayEnd(s)).state;
+  assert.equal(end.taskMs.far,undefined); near(end.taskMs.a,225*MIN); near(end.taskMs.b,225*MIN);
+});
+check("exactly 30 minutes is kept; just under is skipped", () => {
+  // Weight 1/7 against 2: 450 * (1/7) / (15/7) = 30 minutes exactly.
+  const kept=taskProgress(fresh([task("a"),task("week","2026-09-21")]))[1];
+  assert.equal(kept.skipped,false); near(kept.targetMs,30*MIN);
+  // Weight 1/8: 450 / 17 = 26.5 minutes, so it goes.
+  const gone=taskProgress(fresh([task("a"),task("eight","2026-09-22")]))[1];
+  assert.equal(gone.skipped,true);
+});
+check("tied tasks drop one at a time, newest first, until the rest reach 30 minutes", () => {
+  // 60 minutes over three equal tasks is 20 each. Dropping one gives 30 each.
+  const p=taskProgress(fresh([task("a"),task("b"),task("c")],"09:00"));
+  assert.deepEqual(p.map(p=>p.skipped),[false,false,true]);
+  near(p[0].remainingMs,30*MIN); near(p[1].remainingMs,30*MIN);
+});
+check("the most important task is never skipped, so short days are not wasted", () => {
+  const s=fresh([task("a"),task("tomorrow","2026-09-15")],"08:20");
+  const p=taskProgress(s);
+  assert.equal(p[0].skipped,false); near(p[0].remainingMs,20*MIN); assert.equal(p[1].skipped,true);
+  assert.equal(actOnTracking(s,{type:"start"},"device-1",T).taskId,"a");
+});
+check("skipped time goes only to more urgent tasks, never to less urgent ones", () => {
+  // "mid" would get all 20 minutes (a 20-minute day) and is skipped. "light"
+  // sits below it, so none of that time may go there, even though light is
+  // nearer its share than "heavy", which is far over its own.
+  const list=[task("light","2026-09-16"),task("mid","2026-09-15"),task("heavy")];
+  const s={...fresh(list,"08:20"),taskMs:{light:40*MIN,heavy:300*MIN},workMs:340*MIN};
+  const p=taskProgress(s);
+  assert.equal(p[1].skipped,true); near(p[0].remainingMs,0); near(p[2].remainingMs,20*MIN);
+});
+check("30 logged minutes protect a task, and nothing reads as skipped once the day is over", () => {
+  const s={...fresh([task("a"),task("far","2026-11-13")]),taskMs:{far:35*MIN},workMs:35*MIN};
+  const far=taskProgress(s)[1];
+  assert.equal(far.skipped,false); assert.equal(far.doneToday,true); near(far.targetMs,35*MIN);
+  const over=advanceTracking(fresh([task("a"),task("b"),task("far","2026-11-13")]),dayEnd(fresh())).state;
+  assert.ok(taskProgress(over).every(p=>!p.skipped));
 });
 check("randomized overrun cases conserve remaining time and finish with projected totals", () => {
   let seed=73191;
