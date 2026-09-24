@@ -1,5 +1,5 @@
 import { DateKey, diffDays, todayKey } from "./dates";
-import { Task } from "./types";
+import { Priority, Task } from "./types";
 
 /**
  * The weight curve, where `n` is the number of days until a task is due
@@ -22,10 +22,26 @@ export function weightForDaysOut(n: number): number {
 export const REST_SHARE = 1 / 4;
 export const REST_LABEL = "Rest";
 
+/**
+ * Priority multiplies the due-date weight. Low is the default and leaves the
+ * curve as it is; medium doubles it and high quadruples it, so a high-priority
+ * task due in four days pulls exactly as hard as a low one due tomorrow.
+ */
+export const PRIORITIES: readonly Priority[] = ["low", "medium", "high"];
+export const DEFAULT_PRIORITY: Priority = "low";
+export const PRIORITY_MULTIPLIER: Record<Priority, number> = { low: 1, medium: 2, high: 4 };
+export const PRIORITY_LABEL: Record<Priority, string> = { low: "Low", medium: "Medium", high: "High" };
+
+export function isPriority(value: unknown): value is Priority {
+  return value === "low" || value === "medium" || value === "high";
+}
+
 /** A task's pull on the recommender. Completed tasks weigh 0 and never win. */
 export function taskWeight(task: Task, today: DateKey = todayKey()): number {
   if (task.completed) return 0;
-  return weightForDaysOut(diffDays(task.dueDate, today));
+  // Tasks copied into a timer snapshot before priorities existed carry none.
+  const multiplier = isPriority(task.priority) ? PRIORITY_MULTIPLIER[task.priority] : 1;
+  return multiplier * weightForDaysOut(diffDays(task.dueDate, today));
 }
 
 export type WeightedTask = {
@@ -81,12 +97,23 @@ export function formatProbability(p: number): string {
 }
 
 /**
- * How a weight reads in the list. The curve only ever produces small integers
- * (2, 3, 4…) or unit fractions (1/2, 1/3…), so "1/n" is exact rather than an
- * approximation — see the round-trip test that walks the whole curve.
+ * How a weight reads in the list, as an exact fraction rather than a rounded
+ * decimal. The curve only produces whole numbers or unit fractions 1/n, and a
+ * priority multiplies that by 1, 2 or 4 — so any fractional weight is m/n with
+ * m dividing 4, and 4/weight is a whole number. Writing it as 4/k and reducing
+ * gives 2/3, 4/5 or 4/3 exactly — see the round-trip test that walks the whole
+ * curve at every priority.
  */
 export function formatWeight(weight: number): string {
   if (weight <= 0) return "0";
-  if (weight >= 1) return String(Math.round(weight * 100) / 100);
-  return `1/${Math.round(1 / weight)}`;
+  const whole = Math.round(weight);
+  if (Math.abs(weight - whole) < 1e-9) return String(whole);
+  const scale = PRIORITY_MULTIPLIER.high; // divisible by every multiplier
+  const denominator = Math.round(scale / weight);
+  const common = gcd(scale, denominator);
+  return `${scale / common}/${denominator / common}`;
+}
+
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
 }

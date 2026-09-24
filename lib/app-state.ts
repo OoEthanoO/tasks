@@ -6,7 +6,7 @@ import {
   ScheduleBlock,
   Task,
 } from "./types";
-import { REST_LABEL } from "./weights";
+import { DEFAULT_PRIORITY, isPriority, REST_LABEL } from "./weights";
 import { parseTracking } from "./tracking";
 
 export const DEFAULT_END_TIME = "23:00";
@@ -110,6 +110,8 @@ function sanitizeTask(raw: unknown, today: string, now: string): Task | null {
     title,
     description: str(raw.description, MAX_DESCRIPTION),
     dueDate: dateKey(raw.dueDate, today),
+    // Tasks saved before priorities existed have none; they stay at the default.
+    priority: isPriority(raw.priority) ? raw.priority : DEFAULT_PRIORITY,
     completed,
     createdAt: iso(raw.createdAt, now),
     completedAt: completed ? (isoOrNull(raw.completedAt) ?? now) : null,
@@ -198,6 +200,21 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
     schedule: sanitizeSchedule(raw.schedule, today, nowIso),
     endTime: sanitizeEndTime(raw.endTime),
   };
+}
+
+/**
+ * Ids of the tasks in an untrusted payload that carry no priority field at
+ * all — the mark of a client built before priorities existed. See `saveState`.
+ */
+export function tasksWithoutPriority(raw: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (!isRecord(raw) || !Array.isArray(raw.tasks)) return ids;
+  for (const task of raw.tasks) {
+    if (isRecord(task) && !("priority" in task) && typeof task.id === "string") {
+      ids.add(str(task.id, 100));
+    }
+  }
+  return ids;
 }
 
 /**

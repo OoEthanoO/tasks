@@ -14,7 +14,7 @@ import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api, getStateRefreshInterval } from "@/lib/remote";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
-import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
+import { AppState, Priority, Recommendation, Schedule, Task, User } from "@/lib/types";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -377,12 +377,13 @@ export default function Page() {
   const maxProbability = Math.max(0, ...entries.map(e => e.probability));
 
   const addTask = useCallback(
-    (input: { title: string; description: string; dueDate: string }) => {
+    (input: { title: string; description: string; dueDate: string; priority: Priority }) => {
       const task: Task = {
         id: newId(),
         title: input.title,
         description: input.description,
         dueDate: input.dueDate,
+        priority: input.priority,
         completed: false,
         createdAt: new Date().toISOString(),
         completedAt: null,
@@ -624,6 +625,10 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               Completed: <code>0</code>.
+            </div>
+            <div>
+              Priority multiplies it: low <code>×1</code>, medium <code>×2</code>, high{" "}
+              <code>×4</code>.
             </div>
             <div>
               Open tasks divide tracked work in proportion to their weights. After every 90 minutes of tracked work, take 30 minutes of rest. Daily targets and time reset at midnight.

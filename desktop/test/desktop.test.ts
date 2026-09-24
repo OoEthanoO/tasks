@@ -9,7 +9,7 @@ import type { Task } from "../../lib/types";
 import type { ApiReply } from "../src/contract";
 
 const T = Date.parse("2026-09-15T10:00:00Z");
-const task: Task = { id: "a", title: "Code", description: "", dueDate: "2026-09-16", completed: false, createdAt: new Date(T).toISOString(), completedAt: null };
+const task: Task = { id: "a", title: "Code", description: "", dueDate: "2026-09-16", priority: "low", completed: false, createdAt: new Date(T).toISOString(), completedAt: null };
 function setup(saved?: TrackingState) {
   let now = T;
   const notifications: TrackingEvent[] = [];

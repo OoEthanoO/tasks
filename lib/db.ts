@@ -5,6 +5,7 @@ import {
   sanitizeState,
 } from "./app-state";
 import { Statement, ensureSchema, getSql } from "./sql";
+import { DEFAULT_PRIORITY, isPriority } from "./weights";
 import { configureAccountTracking, importAccountTracking } from "./tracking-db";
 import { AppState, Recommendation, Task, User } from "./types";
 
@@ -190,6 +191,7 @@ type TaskRow = {
   title: string;
   description: string;
   due_date: string;
+  priority: string;
   completed: boolean;
   created_at: string;
   completed_at: string | null;
@@ -197,7 +199,7 @@ type TaskRow = {
 
 export async function loadState(userId: string): Promise<AppState> {
   const rows = await query<TaskRow>(
-    `SELECT id, title, description, due_date, completed, created_at, completed_at
+    `SELECT id, title, description, due_date, priority, completed, created_at, completed_at
        FROM tasks WHERE user_id = $1 ORDER BY position ASC`,
     [userId],
   );
@@ -207,6 +209,7 @@ export async function loadState(userId: string): Promise<AppState> {
     title: row.title,
     description: row.description,
     dueDate: row.due_date,
+    priority: isPriority(row.priority) ? row.priority : DEFAULT_PRIORITY,
     completed: row.completed === true,
     createdAt: row.created_at,
     completedAt: row.completed_at,
@@ -243,9 +246,35 @@ function parseJson<T>(raw: string | null | undefined): T | null {
 /**
  * Replace a user's whole state in one transaction. The client owns the task
  * list wholesale, so a full swap is both simpler and safer than diffing.
+ *
+ * `keepPriority` names tasks that arrived with no priority at all: the sender
+ * predates priorities, so it has not chosen low — it simply cannot see the
+ * field. Those tasks keep whatever priority the account already stores, or an
+ * older phone would reset every priority the next time it saved.
  */
-export async function saveState(userId: string, incoming: AppState): Promise<void> {
+export async function saveState(
+  userId: string,
+  incoming: AppState,
+  keepPriority: ReadonlySet<string> = new Set(),
+): Promise<void> {
   const state = sanitizeState(incoming);
+
+  if (keepPriority.size > 0) {
+    const stored = new Map(
+      (
+        await query<{ id: string; priority: string }>(
+          `SELECT id, priority FROM tasks WHERE user_id = $1`,
+          [userId],
+        )
+      ).map((row) => [row.id, row.priority]),
+    );
+    state.tasks = state.tasks.map((task) => {
+      const previous = stored.get(task.id);
+      return keepPriority.has(task.id) && isPriority(previous)
+        ? { ...task, priority: previous }
+        : task;
+    });
+  }
 
   const statements: Statement[] = [
     { text: `DELETE FROM tasks WHERE user_id = $1`, params: [userId] },
@@ -254,14 +283,15 @@ export async function saveState(userId: string, incoming: AppState): Promise<voi
   state.tasks.forEach((task, index) => {
     statements.push({
       text: `INSERT INTO tasks
-               (user_id, id, title, description, due_date, completed, created_at, completed_at, position)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+               (user_id, id, title, description, due_date, priority, completed, created_at, completed_at, position)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       params: [
         userId,
         task.id,
         task.title,
         task.description,
         task.dueDate,
+        task.priority,
         task.completed,
         task.createdAt,
         task.completedAt,

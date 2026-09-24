@@ -4,7 +4,15 @@ import { useState } from "react";
 import { DateKey, describeDelta, formatDueDate } from "@/lib/dates";
 import { dueBucket, groupTasks } from "@/lib/grouping";
 import { Task } from "@/lib/types";
-import { WeightedTask, formatProbability, formatWeight } from "@/lib/weights";
+import {
+  DEFAULT_PRIORITY,
+  PRIORITY_LABEL,
+  PRIORITY_MULTIPLIER,
+  WeightedTask,
+  formatProbability,
+  formatWeight,
+} from "@/lib/weights";
+import PriorityPicker from "./PriorityPicker";
 import { TaskProgress, formatDuration } from "@/lib/tracking";
 
 type Props = {
@@ -145,6 +153,17 @@ function TaskRow({
             <>
               <span className="sep">·</span>
               <span>{describeDelta(task.dueDate, today)}</span>
+              {task.priority !== DEFAULT_PRIORITY && (
+                <>
+                  <span className="sep">·</span>
+                  <span
+                    className={`priority-tag is-${task.priority}`}
+                    title={`${PRIORITY_LABEL[task.priority]} priority multiplies the weight by ${PRIORITY_MULTIPLIER[task.priority]}`}
+                  >
+                    {PRIORITY_LABEL[task.priority]} priority
+                  </span>
+                </>
+              )}
               <span className="sep">·</span>
               <span title="This task's relative share of work time">
                 weight {formatWeight(weight)}
@@ -202,11 +221,12 @@ function TaskEditor({
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [dueDate, setDueDate] = useState(task.dueDate);
+  const [priority, setPriority] = useState(task.priority);
 
   function save() {
     const trimmed = title.trim();
     if (!trimmed) return;
-    onSave({ title: trimmed, description: description.trim(), dueDate });
+    onSave({ title: trimmed, description: description.trim(), dueDate, priority });
   }
 
   return (
@@ -229,6 +249,14 @@ function TaskEditor({
             className="input time-input"
             value={dueDate}
             onChange={(e) => e.target.value && setDueDate(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label id={`priority-${task.id}`}>Priority</label>
+          <PriorityPicker
+            value={priority}
+            onChange={setPriority}
+            labelledBy={`priority-${task.id}`}
           />
         </div>
         <div className="field">

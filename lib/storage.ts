@@ -1,4 +1,4 @@
-import { sanitizeEndTime, sanitizeSchedule } from "./app-state";
+import { sanitizeEndTime, sanitizeSchedule, sanitizeState } from "./app-state";
 import { AppState, Recommendation, Task } from "./types";
 import { parseTracking } from "./tracking";
 
@@ -41,7 +41,9 @@ export const localStore = {
     const tracking = parseTracking(read<unknown>("yantasks.tracking.v1", null));
     return {
       ...(tracking ? { tracking } : {}),
-      tasks: read<Task[]>(KEYS.tasks, []),
+      // Same coercion the phone and server apply, so tasks saved before a
+      // field existed (priority, most recently) come back with its default.
+      tasks: sanitizeState({ tasks: read<unknown>(KEYS.tasks, []) }).tasks,
       recommendation: read<Recommendation | null>(KEYS.recommendation, null),
       schedule: sanitizeSchedule(read<unknown>(KEYS.schedule, null)),
       endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),

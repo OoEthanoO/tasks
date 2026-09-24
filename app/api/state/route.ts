@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sanitizeState } from "@/lib/app-state";
+import { sanitizeState, tasksWithoutPriority } from "@/lib/app-state";
 import { loadState, saveState } from "@/lib/db";
 import { currentUser } from "@/lib/server/session";
 import { accountsUnavailable } from "@/lib/server/db-status";
@@ -31,10 +31,11 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Malformed request." }, { status: 400 });
   }
 
-  const state = sanitizeState((body as { state?: unknown })?.state);
+  const raw = (body as { state?: unknown })?.state;
+  const state = sanitizeState(raw);
 
   try {
-    await saveState(user.id, state);
+    await saveState(user.id, state, tasksWithoutPriority(raw));
   } catch (error) {
     // This is the failure the client shows as "the server had a problem", and
     // an uncaught throw here leaves nothing in the logs but a stack. Postgres

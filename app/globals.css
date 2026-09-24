@@ -227,7 +227,8 @@ select {
 
 /* ---------- theme toggle ---------- */
 
-.theme-toggle {
+.theme-toggle,
+.priority-picker {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
@@ -236,7 +237,8 @@ select {
   background: var(--bg-elev);
 }
 
-.theme-option {
+.theme-option,
+.priority-option {
   background: transparent;
   border: none;
   border-radius: 999px;
@@ -246,18 +248,31 @@ select {
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-.theme-option:hover {
+.theme-option:hover,
+.priority-option:hover {
   color: var(--text-dim);
 }
 
-.theme-option.is-active {
+.theme-option.is-active,
+.priority-option.is-active {
   background: var(--bg-elev-2);
   color: var(--text);
 }
 
-.theme-option:focus-visible {
+.theme-option:focus-visible,
+.priority-option:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+/* A form control rather than a header switch: don't stretch, and a bigger target. */
+.priority-picker {
+  align-self: flex-start;
+}
+
+.priority-option {
+  padding: 6px 14px;
+  font-size: 13px;
 }
 
 .columns {
@@ -509,6 +524,21 @@ select {
 
 .sep {
   color: var(--sep);
+}
+
+/* Accent, not warn/danger: those already mean "due today" and "overdue". */
+.priority-tag.is-medium,
+.priority-tag.is-high {
+  color: var(--accent-text);
+}
+
+.priority-tag.is-high {
+  font-weight: 700;
+}
+
+.pill.priority-tag {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
 }
 
 .prob {

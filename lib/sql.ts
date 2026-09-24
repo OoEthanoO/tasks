@@ -50,8 +50,11 @@ const SCHEMA: string[] = [
      created_at   TEXT NOT NULL,
      completed_at TEXT,
      position     INTEGER NOT NULL DEFAULT 0,
+     priority     TEXT NOT NULL DEFAULT 'low',
      PRIMARY KEY (user_id, id)
    )`,
+  // Added after launch; rows written before it read as low priority.
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'low'`,
 
   `CREATE TABLE IF NOT EXISTS prefs (
      user_id        TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

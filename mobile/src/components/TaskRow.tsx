@@ -4,6 +4,8 @@ import { dueBucket } from "../../../lib/grouping";
 import { TaskProgress, formatDuration } from "../../../lib/tracking";
 import { Btn } from "./ui";
 import {
+  DEFAULT_PRIORITY,
+  PRIORITY_LABEL,
   WeightedTask,
   formatProbability,
   formatWeight,
@@ -85,6 +87,14 @@ export default function TaskRow({
             <>
               <Text style={s.sep}>·</Text>
               <Text style={s.metaText}>{describeDelta(task.dueDate, today)}</Text>
+              {task.priority !== DEFAULT_PRIORITY && (
+                <>
+                  <Text style={s.sep}>·</Text>
+                  <Text style={[s.metaText, s.priority, task.priority === "high" && s.priorityHigh]}>
+                    {PRIORITY_LABEL[task.priority]} priority
+                  </Text>
+                </>
+              )}
               <Text style={s.sep}>·</Text>
               <Text style={s.metaText}>weight {formatWeight(weight)}</Text>
             </>
@@ -141,6 +151,9 @@ const styles = themed((c) => ({
   desc: { color: c.dim, fontSize: 13, lineHeight: 18 },
   meta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 },
   metaText: { color: c.faint, fontSize: 12 },
+  // Accent, not warn/danger: those already mean "due today" and "overdue".
+  priority: { color: c.accentText },
+  priorityHigh: { fontWeight: "700" },
   sep: { color: c.line, fontSize: 12 },
   prob: { alignItems: "flex-end", gap: 5, minWidth: 56 },
   probValue: {

@@ -131,6 +131,23 @@ eq(taskWeight(mk(-2), today), 4, "day before yesterday -> 4");
 eq(taskWeight(mk(-5), today), 7, "5 days overdue -> 7");
 eq(taskWeight(mk(0, true), today), 0, "completed -> 0");
 
+// Priority multiplies the curve: low (the default) ×1, medium ×2, high ×4.
+const withPriority = (offset, priority) => ({ ...mk(offset), priority });
+eq(taskWeight(withPriority(0, "low"), today), 2, "low leaves the curve alone");
+eq(taskWeight(withPriority(0, "medium"), today), 4, "medium doubles: due today 2 -> 4");
+eq(taskWeight(withPriority(0, "high"), today), 8, "high quadruples: due today 2 -> 8");
+eq(taskWeight(withPriority(3, "medium"), today), 2 / 3, "medium in 3 days -> 2/3");
+eq(taskWeight(withPriority(-1, "high"), today), 12, "high and a day overdue -> 12");
+eq(
+  taskWeight(withPriority(4, "high"), today),
+  taskWeight(withPriority(1, "low"), today),
+  "high due in 4 days pulls exactly like low due tomorrow",
+);
+eq(taskWeight({ ...withPriority(0, "high"), completed: true }, today), 0, "completed weighs 0 at any priority");
+eq(taskWeight(mk(0), today), 2, "a task saved before priorities existed weighs as low");
+eq(taskWeight(withPriority(0, "urgent"), today), 2, "an unknown priority weighs as low");
+eq(taskWeight(withPriority(0, "constructor"), today), 2, "a prototype key is not a multiplier");
+
 // Strictly decreasing as the due date moves further out.
 let prev = Infinity;
 let monotonic = true;
@@ -634,22 +651,28 @@ console.log("== how a weight reads ==");
   eq(formatWeight(1), "1", "due tomorrow");
   eq(formatWeight(1 / 2), "1/2", "unit fraction");
   eq(formatWeight(1 / 17), "1/17", "small unit fraction");
+  eq(formatWeight(2 / 3), "2/3", "medium, due in 3 days");
+  eq(formatWeight(4 / 5), "4/5", "high, due in 5 days");
+  eq(formatWeight(4 / 3), "4/3", "high, due in 3 days: above 1 but still a fraction");
+  eq(formatWeight(2 / 4), "1/2", "reduced to lowest terms");
+  eq(formatWeight(12), "12", "high and a day overdue");
 
-  // The comment on formatWeight claims "1/n" is exact for everything the curve
-  // produces, rather than a rounded approximation. Walk the curve and check.
+  // The comment on formatWeight claims the fraction is exact for everything
+  // the curve produces at every priority, rather than a rounded approximation.
+  // Walk the curve at each multiplier and check.
   let exact = true;
   const seen = new Set();
-  for (let n = -30; n <= 400; n++) {
-    const w = weightForDaysOut(n);
-    const text = formatWeight(w);
-    seen.add(text);
-    const parsed = text.includes("/")
-      ? 1 / Number(text.split("/")[1])
-      : Number(text);
-    if (Math.abs(parsed - w) > 1e-9) exact = false;
+  for (const multiplier of [1, 2, 4]) {
+    for (let n = -30; n <= 400; n++) {
+      const w = multiplier * weightForDaysOut(n);
+      const text = formatWeight(w);
+      if (multiplier === 1) seen.add(text);
+      const [numerator, denominator = "1"] = text.split("/");
+      if (Math.abs(Number(numerator) / Number(denominator) - w) > 1e-9) exact = false;
+    }
   }
-  eq(exact, true, "every weight the curve produces round-trips exactly");
-  eq(seen.size, 431, "and each one reads differently");
+  eq(exact, true, "every weight the curve produces round-trips exactly, at every priority");
+  eq(seen.size, 431, "and each low-priority one reads differently");
 }
 
 console.log("== the four task buckets, shared by both apps ==");
@@ -964,6 +987,7 @@ const {
   shouldOfferMigration,
   summarizeState,
   emptyState,
+  tasksWithoutPriority,
 } = require("../.test-build/app-state.js");
 
 eq(sanitizeState(null), emptyState(), "null becomes an empty state");
@@ -1018,12 +1042,34 @@ const goodTask = {
   title: "Write it up",
   description: "notes",
   dueDate: T(1),
+  priority: "low",
   completed: false,
   createdAt: "2026-08-12T00:00:00.000Z",
   completedAt: null,
 };
 eq(sanitizeState({ tasks: [goodTask] }).tasks, [goodTask], "a well-formed task survives intact");
 eq(sanitizeState({ tasks: [{ title: "no id" }] }).tasks, [], "a task without an id is dropped");
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "x" }] }).tasks[0].priority,
+  "low",
+  "a task saved before priorities existed defaults to low",
+);
+eq(
+  sanitizeState({ tasks: [{ id: "t", title: "x", priority: "urgent" }] }).tasks[0].priority,
+  "low",
+  "an unknown priority falls back to low",
+);
+eq(
+  sanitizeState({ tasks: [{ ...goodTask, priority: "high" }] }).tasks[0].priority,
+  "high",
+  "a chosen priority survives",
+);
+eq(
+  [...tasksWithoutPriority({ tasks: [{ id: "old" }, { id: "new", priority: "low" }, "junk", { id: 5 }] })],
+  ["old"],
+  "only a task with no priority field at all marks an older client",
+);
+eq([...tasksWithoutPriority(null)], [], "a malformed payload marks nothing");
 eq(sanitizeState({ tasks: [{ id: "t", title: "   " }] }).tasks, [], "a blank title is dropped");
 eq(
   sanitizeState({ tasks: [goodTask, { ...goodTask, title: "dupe" }] }).tasks.length,
@@ -1296,6 +1342,43 @@ eq(restored.tasks[1].completed, true, "completion survives the round-trip");
 eq(restored.recommendation, guestState.recommendation, "the recommendation round-trips");
 eq(restored.schedule.blocks, guestState.schedule.blocks, "schedule blocks round-trip");
 eq(restored.endTime, "22:00", "the end time round-trips");
+
+// Priorities round-trip, and a client built before they existed cannot wipe
+// them: its whole-state save carries no priority field at all.
+{
+  const carol = await db.createUser({
+    id: "u-carol",
+    username: "Carol",
+    usernameLower: "carol",
+    passwordHash: hashPassword("carolcarol12"),
+  });
+  const chosen = [
+    { ...goodTask, id: "c1", priority: "high" },
+    { ...goodTask, id: "c2", priority: "medium" },
+  ];
+  await db.saveState(carol.id, { ...emptyState(), tasks: chosen });
+  eq((await db.loadState(carol.id)).tasks.map((t) => t.priority), ["high", "medium"], "priorities round-trip");
+
+  const withoutPriority = ({ priority, ...rest }) => rest;
+  const oldClient = [
+    { ...withoutPriority(chosen[0]), title: "Renamed on an old phone" },
+    withoutPriority(chosen[1]),
+    withoutPriority({ ...goodTask, id: "c3", title: "Added on an old phone" }),
+  ];
+  await db.saveState(carol.id, { ...emptyState(), tasks: oldClient }, tasksWithoutPriority({ tasks: oldClient }));
+  const afterOld = (await db.loadState(carol.id)).tasks;
+  eq(afterOld.map((t) => t.priority), ["high", "medium", "low"], "an old client's save keeps stored priorities; its new task is low");
+  eq(afterOld[0].title, "Renamed on an old phone", "while its other edits still apply");
+
+  const lowered = [{ ...chosen[0], priority: "low" }, withoutPriority(chosen[1])];
+  await db.saveState(carol.id, { ...emptyState(), tasks: lowered }, tasksWithoutPriority({ tasks: lowered }));
+  eq(
+    (await db.loadState(carol.id)).tasks.map((t) => t.priority),
+    ["low", "medium"],
+    "an explicit low still lowers a task; only a missing field is preserved",
+  );
+  await db.deleteUser(carol.id);
+}
 // Simulate a prefs row written before the feature was removed. Existing
 // schedules load with plain Rest; the retired column can stay in the database.
 const legacyDbSchedule = {

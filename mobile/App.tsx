@@ -388,6 +388,7 @@ function YanTasks() {
       title: draft.title,
       description: draft.description,
       dueDate: draft.dueDate,
+      priority: draft.priority,
       completed: false,
       createdAt: new Date().toISOString(),
       completedAt: null,

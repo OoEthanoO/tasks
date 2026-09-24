@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
-const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, upcomingTrackingEvents, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
+const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
 const { commandTracking, loadTracking, readAccountTracking, configureAccountTracking, TrackingConflict } = require("../.test-build/tracking-db.js");
 const { saveState, loadState } = require("../.test-build/db.js");
@@ -287,6 +287,28 @@ check("legacy paused counters are preserved and allocation upgrades are idempote
   assert.deepEqual(advanceTracking(upgraded,T+MIN).state,upgraded);
   assert.equal(parseTracking({...upgraded,allocationVersion:99}),null);
 });
+check("priority multiplies a task's share of work time", () => {
+  const p = taskProgress(fresh([task("a"), {...task("b"), priority:"medium"}, {...task("c"), priority:"high"}]));
+  near(p[1].probability/p[0].probability, 2); near(p[2].probability/p[0].probability, 4);
+  near(p[2].targetMs, 4*p[0].targetMs);
+  assert.equal(actOnTracking(fresh([task("a"), {...task("c"), priority:"high"}]),{type:"start"},"device-1",T).taskId,"c");
+});
+check("raising a priority rebalances future targets and keeps earned time", () => {
+  const s = advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+30*MIN).state;
+  const raised = tasks.map(t => t.id==="second" ? {...t, priority:"high"} : t);
+  assert.notEqual(trackingConfigKey(raised,"18:00"), trackingConfigKey(tasks,"18:00"));
+  // No priority and an explicit low are the same configuration: no needless checkpoint.
+  assert.equal(trackingConfigKey(tasks.map(t => ({...t, priority:"low"})),"18:00"), trackingConfigKey(tasks,"18:00"));
+  const next = configureTracking(s, raised, "18:00", T+30*MIN);
+  near(next.taskMs.first, 30*MIN);
+  const before = taskProgress(s).find(p=>p.task.id==="second"), after = taskProgress(next).find(p=>p.task.id==="second");
+  assert.ok(after.targetMs > before.targetMs); near(workBudget(next), workBudget(s));
+});
+check("snapshots from before priorities load; unknown priorities are rejected", () => {
+  assert.ok(parseTracking(fresh()));
+  assert.ok(parseTracking(fresh([{...task("a"), priority:"medium"}])));
+  assert.equal(parseTracking(fresh([{...task("a"), priority:"urgent"}])), null);
+});
 check("randomized overrun cases conserve remaining time and finish with projected totals", () => {
   let seed=73191;
   const random=()=>{ seed=(Math.imul(seed,1664525)+1013904223)>>>0; return seed/2**32; };
@@ -352,6 +374,13 @@ assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
 const resumed=await commandTracking("timer-alice",reset.revision,{type:"start"},"device-3","UTC",tasks,"18:00",T+30*MIN);
 near(advanceTracking(resumed,T+40*MIN).state.workMs,10*MIN);
 assert.equal(resumed.taskId,"first"); count++;
+// A priority change saved from any client reconfigures the shared timer.
+await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)",["timer-carol",new Date(T).toISOString()]);
+const carolTimer=await commandTracking("timer-carol",0,{type:"start"},"device-1","UTC",tasks,"18:00",T);
+await saveState("timer-carol",{tasks:tasks.map(t=>t.id==="later"?{...t,priority:"high"}:t),recommendation:null,schedule:null,endTime:"18:00"});
+const carolAfter=await loadTracking("timer-carol");
+assert.ok(carolAfter.revision>carolTimer.revision); assert.equal(carolAfter.tasks.find(t=>t.id==="later").priority,"high"); count++;
+await pg.query("DELETE FROM users WHERE id = $1",["timer-carol"]);
 // Upgrading on GET is revision-checked and persisted once, so other clients
 // inherit the same checkpoint rather than reinterpreting old elapsed work.
 const legacy={...fresh([task("a"),task("b")],"10:00"),revision:resumed.revision,mode:"work",taskId:"a",controllerId:"old-device"};

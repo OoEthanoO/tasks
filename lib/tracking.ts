@@ -1,5 +1,5 @@
 import { Task } from "./types";
-import { taskWeight, WeightedTask } from "./weights";
+import { isPriority, taskWeight, WeightedTask } from "./weights";
 
 export const WORK_CYCLE_MS = 90 * 60_000;
 export const REST_CYCLE_MS = 30 * 60_000;
@@ -85,7 +85,7 @@ export function dayEnd(state: Pick<TrackingState, "dayKey" | "endTime" | "timeZo
 }
 
 export function trackingConfigKey(tasks: Task[], endTime: string): string {
-  return JSON.stringify([endTime, tasks.map(t => [t.id, t.title, t.dueDate, t.completed, t.createdAt])]);
+  return JSON.stringify([endTime, tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt])]);
 }
 
 export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now()): TrackingState {
@@ -291,6 +291,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (s.controllerId !== null && typeof s.controllerId !== "string") return null;
   if ([s.workMs, s.restMs, s.cycleWorkMs, s.cycleRestMs, ...Object.values(s.taskMs)].some(v => !Number.isFinite(v) || v < 0 || v > 86_400_000)) return null;
   if (s.cycleWorkMs > WORK_CYCLE_MS || s.cycleRestMs > REST_CYCLE_MS) return null;
-  if (s.tasks.some(t => !t || typeof t.id !== "string" || typeof t.title !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.dueDate) || typeof t.createdAt !== "string")) return null;
+  // Snapshots from before priorities existed carry none; those weigh as low.
+  if (s.tasks.some(t => !t || typeof t.id !== "string" || typeof t.title !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.dueDate) || typeof t.createdAt !== "string" || (t.priority !== undefined && !isPriority(t.priority)))) return null;
   return s;
 }

@@ -1,11 +1,15 @@
 import { DateKey } from "./dates";
 import type { TrackingState } from "./tracking";
 
+/** Scales a task's due-date weight: low ×1, medium ×2, high ×4. */
+export type Priority = "low" | "medium" | "high";
+
 export type Task = {
   id: string;
   title: string;
   description: string;
   dueDate: DateKey;
+  priority: Priority;
   completed: boolean;
   createdAt: string;
   completedAt: string | null;

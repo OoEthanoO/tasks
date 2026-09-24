@@ -11,11 +11,12 @@ import {
 } from "react-native";
 import { DateKey, addDays, formatDueDate, fromKey, toKey, todayKey } from "../../../lib/dates";
 import { parseTrailingDate } from "../../../lib/parse-date";
-import { Task } from "../../../lib/types";
+import { Priority, Task } from "../../../lib/types";
+import { DEFAULT_PRIORITY, PRIORITIES, PRIORITY_LABEL } from "../../../lib/weights";
 import { radius, themed, useStyles, useTheme } from "../theme";
 import { Btn, Field, useInputStyle } from "./ui";
 
-export type TaskDraft = { title: string; description: string; dueDate: DateKey };
+export type TaskDraft = { title: string; description: string; dueDate: DateKey; priority: Priority };
 
 type Props = {
   /** An existing task to edit, or null to create a new one. */
@@ -41,6 +42,7 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
 
   const [raw, setRaw] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
+  const [priority, setPriority] = useState<Priority>(task?.priority ?? DEFAULT_PRIORITY);
   // Null until the user picks a date explicitly; new tasks let the text decide.
   const [pickedDate, setPickedDate] = useState<DateKey | null>(
     task ? task.dueDate : null,
@@ -61,6 +63,7 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
       title: titleFromText,
       description: description.trim(),
       dueDate,
+      priority,
     });
   }
 
@@ -149,6 +152,28 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
                     >
                       <Text style={[s.chipText, active && s.chipTextActive]}>
                         {q.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </Field>
+
+            <Field label="Priority" hint="Medium doubles a task’s weight; high quadruples it.">
+              <View style={s.priorityRow}>
+                {PRIORITIES.map((option) => {
+                  const active = option === priority;
+                  return (
+                    <Pressable
+                      key={option}
+                      onPress={() => setPriority(option)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={`${PRIORITY_LABEL[option]} priority`}
+                      style={[s.chip, s.priorityChip, active && s.chipActive]}
+                    >
+                      <Text style={[s.chipText, active && s.chipTextActive]}>
+                        {PRIORITY_LABEL[option]}
                       </Text>
                     </Pressable>
                   );
@@ -254,6 +279,8 @@ const styles = themed((c) => ({
     paddingVertical: 7,
   },
   chipActive: { borderColor: c.accent, backgroundColor: c.accentSoft },
+  priorityRow: { flexDirection: "row", gap: 8 },
+  priorityChip: { flex: 1, alignItems: "center" },
   chipText: { color: c.dim, fontSize: 13 },
   chipTextActive: { color: c.accent, fontWeight: "700" },
   textarea: { minHeight: 76, textAlignVertical: "top" },

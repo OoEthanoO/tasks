@@ -1,8 +1,9 @@
 # YanTasks
 
 A task manager that decides what you should work on next. Tasks are weighted by
-how urgent they are. Start a shared work timer, meet proportional daily targets,
-and take a 30-minute rest after every 90 minutes of tracked work.
+how urgent they are and the priority you give them. Start a shared work timer,
+meet proportional daily targets, and take a 30-minute rest after every 90
+minutes of tracked work.
 
 The [Windows desktop app](desktop/README.md) adds native background alerts,
 taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync.
@@ -146,6 +147,18 @@ With `n` = days until due (negative once overdue):
 | Completed | `0` |
 
 In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
+
+Each task also has a **priority** that multiplies that curve:
+
+| Priority | Multiplier |
+| --- | --- |
+| Low (default) | `×1` |
+| Medium | `×2` |
+| High | `×4` |
+
+So a high-priority task due in four days (`4 × 1/4 = 1`) pulls exactly as hard
+as a low-priority task due tomorrow. Tasks created before priorities existed
+read as low. Weights display as exact fractions (`2/3`, `4/5`), never rounded.
 
 Open tasks aim for proportional **work time** by weight. Rest is separate.
 The app first reserves all 90/30 breaks that fall before the cutoff, including

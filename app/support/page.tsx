@@ -36,7 +36,7 @@ export default function SupportPage() {
         <h2 className="card-title" style={{ marginTop: 26 }}>
           How the weighting works
         </h2>
-        <p>Open tasks divide 100% of work time by their due-date weights: tomorrow weighs 1, today weighs 2, and each overdue day adds 1. Later tasks weigh 1 divided by days until due. Permanently completed tasks weigh zero.</p>
+        <p>Open tasks divide 100% of work time by their due-date weights: tomorrow weighs 1, today weighs 2, and each overdue day adds 1. Later tasks weigh 1 divided by days until due. Priority then multiplies that weight: low (the default) ×1, medium ×2, high ×4. Permanently completed tasks weigh zero.</p>
         <h2 className="card-title" style={{ marginTop: 26 }}>Track your work</h2>
         <p>Start working chooses the highest-weight task that has not met its daily target. Use Track on another task to switch. The app reserves time for upcoming breaks, then balances final task totals by weight while keeping logged time fixed. Tasks already above their fair share receive no extra time; unfinished targets together fit the work time left. Reaching a target marks the task Done for today and automatically moves to the next eligible task.</p>
         <p>Every 90 accumulated work minutes starts 30 minutes of tracked rest, then work resumes. Pausing stops either counter without bypassing an unfinished break. The work-day cutoff stops tracking. At midnight in your shared timer’s time zone, daily time is reset and tracking stays paused until you start again.</p>
