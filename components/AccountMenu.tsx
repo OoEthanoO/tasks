@@ -32,7 +32,7 @@ export default function AccountMenu({
       <div className="account">
         <span
           className="account-chip is-quiet"
-          title="Your tasks are saved in this browser only"
+          title="Your tasks are saved on this device only"
         >
           On this device
         </span>

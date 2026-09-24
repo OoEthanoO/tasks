@@ -1,0 +1,46 @@
+{
+  "name": "yantasks-desktop",
+  "productName": "YanTasks",
+  "version": "1.0.0",
+  "description": "YanTasks for Windows — a synced focus timer in your taskbar",
+  "author": "Ethan Yan Xu",
+  "private": true,
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "start": "npm run build && electron .",
+    "dist": "npm run typecheck && npm run test && npm run build && electron-builder --win nsis --x64 --publish never",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.4.1",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "sharp": "0.35.4",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "build": {
+    "appId": "com.ethanyanxu.yantasks",
+    "asar": true,
+    "directories": { "output": "release", "buildResources": "resources" },
+    "files": ["dist/**/*", "resources/*.png", "resources/*.ico", "package.json"],
+    "win": { "target": "nsis", "icon": "resources/icon.ico", "artifactName": "YanTasks-Setup-${version}-${arch}.${ext}" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "YanTasks",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

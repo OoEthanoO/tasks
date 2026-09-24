@@ -4,6 +4,11 @@ A task manager that decides what you should work on next. Tasks are weighted by
 how urgent they are. Start a shared work timer, meet proportional daily targets,
 and take a 30-minute rest after every 90 minutes of tracked work.
 
+The [Windows desktop app](desktop/README.md) adds native background alerts,
+taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync.
+Its installer is built independently from `desktop/`; web and iOS keep sharing
+the same tracking calculations and account data.
+
 ```bash
 npm install
 npm run dev

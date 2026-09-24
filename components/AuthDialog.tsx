@@ -287,12 +287,12 @@ function MigrateStep({
             ) : (
               <>Your account</>
             )}{" "}
-            has nothing in it yet, and this browser is holding{" "}
+            has nothing in it yet, and this device is holding{" "}
             <strong>{summary}</strong>.
           </>
         ) : (
           <>
-            This browser is holding <strong>{summary}</strong> from before you had
+            This device is holding <strong>{summary}</strong> from before you had
             an account.
           </>
         )}

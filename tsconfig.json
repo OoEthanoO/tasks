@@ -43,6 +43,7 @@
     // walks up into mobile/node_modules, and fails on Vercel, which only
     // installs this package.json.
     "mobile",
+    "desktop",
     ".test-build"
   ]
 }

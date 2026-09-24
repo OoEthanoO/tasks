@@ -11,7 +11,7 @@ import TaskList from "@/components/TaskList";
 import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
 import { formatDueDate, todayKey } from "@/lib/dates";
-import { ApiError, api } from "@/lib/remote";
+import { ApiError, api, getStateRefreshInterval } from "@/lib/remote";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
@@ -22,8 +22,6 @@ function storeKey(user: User | null): string {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
-/** How often a visible tab asks the server whether anything changed elsewhere. */
-const REFRESH_MS = 5_000;
 
 export default function Page() {
   const [ready, setReady] = useState(false);
@@ -214,7 +212,7 @@ export default function Page() {
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
-    const id = setInterval(() => void refreshFromServer(), REFRESH_MS);
+    const id = setInterval(() => void refreshFromServer(), getStateRefreshInterval());
 
     return () => {
       document.removeEventListener("visibilitychange", onVisible);

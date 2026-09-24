@@ -18,11 +18,29 @@ export class ApiError extends Error {
  */
 let apiBase = "";
 
+// Desktop keeps the httpOnly session in its main process. Only the existing
+// account API is exposed to its sandboxed renderer; web/mobile still use fetch.
+export type ApiTransport = (path: string, init?: RequestInit) => Promise<{ status: number; body: unknown }>;
+let transport: ApiTransport | null = null;
+let stateRefreshInterval = 5000;
+export function setApiTransport(value: ApiTransport, refreshInterval = 5000): void {
+  transport = value;
+  stateRefreshInterval = Math.max(5000, refreshInterval);
+}
+export function getStateRefreshInterval(): number { return stateRefreshInterval; }
+
 export function setApiBase(base: string): void {
   apiBase = base.replace(/\/+$/, "");
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  if (transport) {
+    const { status, body } = await transport(url, init);
+    if (status < 200 || status >= 300) {
+      throw new ApiError((body as { error?: string } | null)?.error ?? "Could not reach the server.", status);
+    }
+    return body as T;
+  }
   let res: Response;
   try {
     res = await fetch(`${apiBase}${url}`, {
