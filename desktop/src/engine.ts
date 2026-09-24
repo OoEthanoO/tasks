@@ -1,4 +1,4 @@
-import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, SKIPPED_REST_MESSAGE, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import { sanitizeState } from "../../lib/app-state";
 import type { ApiReply, DesktopState, GuestConfig, Settings } from "./contract";
 import { defaults } from "./contract";
@@ -143,7 +143,7 @@ export class TrackerEngine {
         this.persist();
       }
       this.lastTick = this.d.now() + this.offset;
-      this.message = action.type === "reset" ? "Today’s progress was reset. Tracking is paused." : null;
+      this.message = action.type === "reset" ? "Today’s progress was reset. Tracking is paused." : action.type === "skip-rest" ? SKIPPED_REST_MESSAGE : null;
     } catch (e) {
       if (epoch === this.epoch) this.error = e instanceof Error ? e.message : "Could not update the timer.";
       throw e;

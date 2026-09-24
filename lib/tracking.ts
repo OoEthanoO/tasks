@@ -28,7 +28,9 @@ export type TrackingState = {
   taskId: string | null;
   controllerId: string | null;
 };
-export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" };
+export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" } | { type: "skip-rest" };
+export const SKIP_REST_HINT = `Skipping starts a fresh ${WORK_CYCLE_MS / 60_000} minutes of work before the next break.`;
+export const SKIPPED_REST_MESSAGE = `Break skipped. The next one comes after another ${WORK_CYCLE_MS / 60_000} minutes of work.`;
 export type TrackingEvent = {
   id: string;
   at: number;
@@ -108,10 +110,15 @@ export function createTracking(tasks: Task[], endTime: string, timeZone = localT
   };
 }
 
+/** A break is due: being taken, paused part-way, or earned and not yet started. */
+export function restOwed(state: TrackingState): boolean {
+  return state.mode === "rest" || state.cycleWorkMs + EPSILON >= WORK_CYCLE_MS;
+}
+
 /** Work that can still fit before cutoff, including partial/paused rest debt. */
 export function remainingWorkTime(state: TrackingState, now = state.cursor): number {
   let wall = Math.max(0, dayEnd(state) - now);
-  const owesRest = state.mode === "rest" || state.cycleWorkMs + EPSILON >= WORK_CYCLE_MS;
+  const owesRest = restOwed(state);
   if (owesRest) wall = Math.max(0, wall - (REST_CYCLE_MS - state.cycleRestMs));
   const firstWork = Math.min(wall, owesRest ? WORK_CYCLE_MS : WORK_CYCLE_MS - state.cycleWorkMs);
   // After the first work stretch comes a break, then full 90/30 cycles.
@@ -299,9 +306,18 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
   }
   if (action.type === "pause") { state.mode = "idle"; state.taskId = null; return state; }
   if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
-  // Pausing or switching devices cannot bypass a break already earned.
-  if (state.cycleWorkMs + EPSILON >= WORK_CYCLE_MS) { state.mode = "rest"; state.taskId = null; return state; }
-  const next = action.taskId
+  if (action.type === "skip-rest") {
+    // Skipped, not postponed: the next break comes after another full stretch
+    // of work, and the unserved rest becomes work time for today's targets.
+    // Rest already taken stays in today's total.
+    if (restOwed(state)) { state.cycleWorkMs = 0; state.cycleRestMs = 0; state.mode = "idle"; state.taskId = null; }
+    // Another device already ended the break: a running task carries on.
+    else if (state.mode === "work") return state;
+  }
+  // Pausing or switching devices cannot bypass a break already earned; only
+  // skipping it explicitly can.
+  if (restOwed(state)) { state.mode = "rest"; state.taskId = null; return state; }
+  const next = action.type === "start" && action.taskId
     ? taskProgress(state).find(p => p.task.id === action.taskId && p.weight > 0 && !p.doneToday)
     : nextTask(state);
   if (!next) throw new Error("No unfinished daily target to track.");

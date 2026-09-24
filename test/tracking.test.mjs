@@ -68,6 +68,40 @@ check("pausing rest cannot bypass the remaining break", () => {
   assert.equal(s.mode,"rest"); near(s.cycleRestMs,10*MIN);
   s=advanceTracking(s,T+150*MIN).state; near(s.restMs,30*MIN); assert.equal(s.mode,"work");
 });
+check("skipping a break goes straight back to work and restarts the 90-minute stretch", () => {
+  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
+  assert.equal(s.mode,"rest"); near(s.cycleRestMs,10*MIN);
+  const left=remainingWorkTime(s);
+  s=actOnTracking(s,{type:"skip-rest"},"device-2",T+100*MIN);
+  assert.equal(s.mode,"work"); assert.equal(s.taskId,"first");
+  near(s.cycleWorkMs,0); near(s.cycleRestMs,0); near(s.restMs,10*MIN);
+  // The 20 unserved break minutes become work time for today's targets.
+  near(remainingWorkTime(s),left+20*MIN);
+  const later=advanceTracking(s,T+190*MIN);
+  assert.equal(later.state.mode,"rest"); near(later.state.workMs,180*MIN);
+  assert.ok(later.events.some(e=>e.type==="rest-start"&&e.at===T+190*MIN));
+  // Alerts follow: the old "rest complete" is gone, the next break is predicted.
+  const upcoming=upcomingTrackingEvents(s,T+100*MIN);
+  assert.ok(!upcoming.some(e=>e.type==="rest-complete"&&e.at===T+120*MIN));
+  assert.ok(upcoming.some(e=>e.type==="rest-start"&&e.at===T+190*MIN));
+});
+check("a break that is due while paused can be skipped too", () => {
+  const s={...fresh(),cycleWorkMs:90*MIN,workMs:90*MIN,taskMs:{first:90*MIN}};
+  assert.equal(actOnTracking(s,{type:"start"},"device-1",T).mode,"rest");
+  const skipped=actOnTracking(s,{type:"skip-rest"},"device-1",T);
+  assert.equal(skipped.mode,"work"); near(skipped.cycleWorkMs,0);
+});
+check("skipping when no break is due leaves the stretch alone", () => {
+  // Another device already ended the break: a running task carries on untouched.
+  const working=advanceTracking(actOnTracking(fresh(),{type:"start",taskId:"second"},"device-1",T),T+40*MIN).state;
+  const same=actOnTracking(working,{type:"skip-rest"},"device-2",T+40*MIN);
+  assert.equal(same.mode,"work"); assert.equal(same.taskId,"second"); near(same.cycleWorkMs,40*MIN);
+  // Paused mid-stretch, it resumes and keeps the progress toward the next break.
+  const paused=actOnTracking(working,{type:"pause"},"device-1",T+40*MIN);
+  const resumed=actOnTracking(paused,{type:"skip-rest"},"device-1",T+40*MIN);
+  assert.equal(resumed.mode,"work"); near(resumed.cycleWorkMs,40*MIN);
+  assert.throws(()=>actOnTracking(paused,{type:"skip-rest"},"device-1",dayEnd(paused)),/work day has ended/);
+});
 check("task completion notifies and selects next without permanent completion", () => {
   const s=actOnTracking(fresh([task("a"),task("b")],"10:00"),{type:"start"},"device-1",T);
   const out=advanceTracking(s,T+60*MIN);

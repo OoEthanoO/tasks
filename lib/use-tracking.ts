@@ -1,7 +1,7 @@
 import type * as React from "react";
 import { api, ApiError } from "./remote";
 import { Task } from "./types";
-import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, remainingWorkTime, SKIPPED_REST_MESSAGE, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
 
 export const TRACKING_KEY = "yantasks.tracking.v1";
 export type TrackingAdapter = {
@@ -168,6 +168,8 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
         }
         if (scope.current === token && action.type === "reset") {
           setMessage("Today’s progress was reset. Tracking is paused.");
+        } else if (scope.current === token && action.type === "skip-rest") {
+          setMessage(SKIPPED_REST_MESSAGE);
         }
       } catch (e) {
         if (scope.current === token) {

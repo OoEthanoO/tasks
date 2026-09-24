@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, REST_CYCLE_MS, WORK_CYCLE_MS } from "@/lib/tracking";
+import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, REST_CYCLE_MS, restOwed, SKIP_REST_HINT, WORK_CYCLE_MS } from "@/lib/tracking";
 import { Tracker } from "./useTracking";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -12,6 +12,7 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange }: 
   const resting = s.mode === "rest";
   const ended = s.cursor >= dayEnd(s);
   const canStart = !ended && (s.cycleWorkMs >= WORK_CYCLE_MS || t.progress.some(p => p.weight > 0 && !p.doneToday));
+  const breakDue = !ended && restOwed(s);
   return (
     <section className={`card tracking-card${resting ? " is-resting" : ""}`}>
       <div className="card-head"><h2 className="card-title">Today’s focus</h2><span className="hint">{s.timeZone}</span></div>
@@ -28,6 +29,8 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange }: 
       <button type="button" className="btn btn-primary focus-action" disabled={!t.ready || t.busy || (s.mode === "idle" && !canStart)} onClick={() => void t.command({ type: s.mode === "idle" ? "start" : "pause" })}>
         {t.busy ? "Syncing…" : s.mode === "idle" ? s.cycleWorkMs >= WORK_CYCLE_MS ? "Resume rest" : "Start working" : "Pause tracking"}
       </button>
+      {breakDue && <button type="button" className="btn btn-ghost skip-rest" disabled={!t.ready || t.busy} onClick={() => void t.command({ type: "skip-rest" })}>Skip break and keep working</button>}
+      {breakDue && <p className="hint">{SKIP_REST_HINT}</p>}
       {!resting && s.cycleWorkMs < WORK_CYCLE_MS && <p className="hint">Rest after {formatDuration(WORK_CYCLE_MS - s.cycleWorkMs)} more tracked work · 30-minute breaks</p>}
       {t.error && <div className="banner danger" role="alert">{t.error} <button className="btn btn-ghost" onClick={() => void t.refresh()}>Refresh timer</button></div>}
       {t.message && <div className="banner ok" role="status">{t.message}<button className="icon-btn" aria-label="Dismiss timer alert" onClick={t.dismissMessage}>×</button></div>}

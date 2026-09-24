@@ -172,6 +172,7 @@ function trayMenu() {
     { label: v.connected ? `Break in ${formatDuration(m.restIn)} tracked work` : "Offline — reconnect to sync", enabled: false },
     { type: "separator" },
     { label: v.state.mode === "idle" ? "Start / resume tracking" : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode !== "idle" || m.canStart), click: () => void toggle() },
+    ...(m.canSkipRest ? [{ label: "Skip break and keep working", enabled: v.ready && !v.busy, click: () => void engine.command({ type: "skip-rest" }).catch(() => {}) }] : []),
     { label: "Track a task", enabled: v.ready && !v.busy, submenu: m.entries.filter(p => p.weight > 0 && !p.doneToday).slice(0, 50).map(p => ({ label: `${p.task.title.slice(0, 60)} · ${formatDuration(p.remainingMs)} left`, type: "radio" as const, checked: p.task.id === v.state.taskId, click: () => void engine.command({ type: "start", taskId: p.task.id }).catch(() => {}) })) },
     { label: "Show tasks", click: showMain },
     { label: "Always-on-top mini tracker", type: "checkbox", checked: settings.mini, click: item => changeSettings({ mini: item.checked }) },

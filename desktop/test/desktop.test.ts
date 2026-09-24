@@ -113,6 +113,7 @@ test("IPC allowlists reject URL injection, unsupported verbs, malformed data and
   for (const path of ["https://evil.test", "file:///C:/private", "/api/state?x=y", "/api/tracking", "/api/../secret"]) assert.throws(() => validateApi({ path, method: "GET" }));
   assert.throws(() => validateApi({ path: "/api/state", method: "PUT", body: "{" }));
   assert.throws(() => validateAction({ type: "shell" }));
+  assert.deepEqual(validateAction({ type: "skip-rest", taskId: "ignored" }), { type: "skip-rest" });
   assert.throws(() => validateAction({ type: "start", taskId: 42 }));
   assert.ok(trustedPage("yantasks://app/index.html?mini=1"));
   assert.ok(!trustedPage("https://app/index.html")); assert.ok(!trustedPage("yantasks://evil/index.html"));

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Text, TextInput, View } from "react-native";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, REST_CYCLE_MS, WORK_CYCLE_MS } from "../../../lib/tracking";
+import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, REST_CYCLE_MS, restOwed, SKIP_REST_HINT, WORK_CYCLE_MS } from "../../../lib/tracking";
 import { Tracker } from "../useTracking";
 import { themed, useStyles } from "../theme";
 import { Banner, Btn, Card, CardHead } from "./ui";
@@ -18,6 +18,7 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
   const resting = state.mode === "rest";
   const ended = state.cursor >= dayEnd(state);
   const canStart = !ended && (state.cycleWorkMs >= WORK_CYCLE_MS || t.progress.some(p => p.weight > 0 && !p.doneToday));
+  const breakDue = !ended && restOwed(state);
   return <Card>
     <CardHead title="Today’s focus" />
     <View style={s.controls}>
@@ -30,6 +31,8 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
     <Text style={s.clock} accessibilityRole="timer">{formatDuration(resting ? REST_CYCLE_MS - state.cycleRestMs : current?.trackedMs ?? state.workMs, true)}</Text>
     <Text style={s.hint}>{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start with the highest-weight unfinished task, or choose below."}</Text>
     <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (state.mode === "idle" && !canStart)} label={t.busy ? "Syncing…" : state.mode === "idle" ? state.cycleWorkMs >= WORK_CYCLE_MS ? "Resume rest" : "Start working" : "Pause tracking"} onPress={() => void t.command({ type: state.mode === "idle" ? "start" : "pause" })} />
+    {breakDue && <Btn tone="ghost" label="Skip break and keep working" disabled={!t.ready || t.busy} onPress={() => void t.command({ type: "skip-rest" })} style={{ marginTop: -8, marginBottom: 8 }} />}
+    {breakDue && <Text style={[s.hint, { marginBottom: 12 }]}>{SKIP_REST_HINT}</Text>}
     {!resting && state.cycleWorkMs < WORK_CYCLE_MS && <Text style={s.hint}>Rest after {formatDuration(WORK_CYCLE_MS - state.cycleWorkMs)} more tracked work · 30-minute breaks</Text>}
     {t.error && <Banner tone="danger" action={<Btn label="Refresh timer" onPress={() => void t.refresh()} />}>{t.error}</Banner>}
     {t.message && <Banner tone="ok" action={<Btn label="Dismiss" onPress={t.dismissMessage} />}>{t.message}</Banner>}

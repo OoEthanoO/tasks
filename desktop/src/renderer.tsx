@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import Page from "../../app/page";
 import { ApiError, setApiTransport } from "../../lib/remote";
-import { formatDuration, remainingWorkTime } from "../../lib/tracking";
+import { formatDuration, remainingWorkTime, type TrackingAction } from "../../lib/tracking";
 import { resolveColorScheme, sanitizeThemePreference, THEME_KEY } from "../../lib/theme";
 import { statusModel } from "./model";
 import { useDesktopState } from "./useTracking";
@@ -21,9 +21,9 @@ function Mini() {
   const view = useDesktopState();
   const m = statusModel(view);
   const [error, setError] = useState("");
-  const command = async () => {
+  const command = async (action: TrackingAction = { type: view.state.mode === "idle" ? "start" : "pause" }) => {
     setError("");
-    try { await window.desktop.command({ type: view.state.mode === "idle" ? "start" : "pause" }); }
+    try { await window.desktop.command(action); }
     catch (e) { setError(e instanceof Error ? e.message : "Cannot update timer."); }
   };
   return <main className={`mini mode-${view.state.mode}`}>
@@ -34,7 +34,10 @@ function Mini() {
     <p className="mini-sub">{view.state.mode === "rest" ? "Rest remaining · work resumes automatically" : view.state.mode === "work" ? `${formatDuration(m.remaining)} left on task · break in ${formatDuration(m.restIn)}` : "Choose a task or resume your daily targets."}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current target progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>
     <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>RESTED</span><strong>{formatDuration(view.state.restMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(remainingWorkTime(view.state))}</strong></div></div>
-    <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || view.state.mode === "idle" && !m.canStart} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start / resume" : "Pause tracking"}</button><button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button></div>
+    <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || view.state.mode === "idle" && !m.canStart} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start / resume" : "Pause tracking"}</button>{m.canSkipRest
+      // The mini window has room for two buttons; during a break, skipping matters more than opening the list.
+      ? <button className="btn btn-ghost" disabled={!view.ready || view.busy} onClick={() => void command({ type: "skip-rest" })}>Skip break</button>
+      : <button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button>}</div>
     {(error || view.error || view.message) && <p role="status" className="mini-message" title={error || view.error || view.message || ""}>{error || view.error || view.message}</p>}
   </main>;
 }

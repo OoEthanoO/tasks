@@ -16,7 +16,7 @@ export function validateApi(value: unknown): ApiRequest {
 export function validateAction(value: unknown): TrackingAction {
   if (!value || typeof value !== "object") throw new Error("Invalid timer action.");
   const a = value as TrackingAction;
-  if (a.type === "pause" || a.type === "reset") return { type: a.type };
+  if (a.type === "pause" || a.type === "reset" || a.type === "skip-rest") return { type: a.type };
   if (a.type === "start" && (!("taskId" in a) || typeof a.taskId === "string" && a.taskId.length <= 100)) {
     return { type: "start", ...(a.taskId ? { taskId: a.taskId } : {}) };
   }
