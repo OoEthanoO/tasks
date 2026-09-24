@@ -11,7 +11,7 @@ export function statusModel(view: DesktopState) {
   const remaining = s.mode === "rest" ? Math.max(0, REST_CYCLE_MS - s.cycleRestMs) : current?.remainingMs ?? 0;
   const elapsed = s.mode === "rest" ? s.cycleRestMs : current?.trackedMs ?? s.workMs;
   const progress = s.mode === "rest" ? s.cycleRestMs / REST_CYCLE_MS : current && current.targetMs > 0 ? current.trackedMs / current.targetMs : -1;
-  const canStart = !ended && (s.cycleWorkMs >= WORK_CYCLE_MS || entries.some(p => p.weight > 0 && !p.doneToday));
+  const canStart = !ended && (restOwed(s) || entries.some(p => p.weight > 0 && !p.doneToday));
   const restIn = Math.max(0, WORK_CYCLE_MS - s.cycleWorkMs);
   const canSkipRest = !ended && restOwed(s);
   const caption = s.mode === "idle" ? `Worked ${formatDuration(s.workMs)}` : `${formatDuration(remaining, true)} left`;

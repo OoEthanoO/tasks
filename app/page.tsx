@@ -6,7 +6,7 @@ import AuthDialog from "@/components/AuthDialog";
 import QuickAdd from "@/components/QuickAdd";
 import TrackingPanel from "@/components/TrackingPanel";
 import { useTracking } from "@/components/useTracking";
-import { taskProgress } from "@/lib/tracking";
+import { restOwed, taskProgress } from "@/lib/tracking";
 import TaskList from "@/components/TaskList";
 import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
@@ -539,7 +539,7 @@ export default function Page() {
               maxProbability={maxProbability}
               progress={entries}
               activeId={tracker.state.taskId}
-              trackingDisabled={!tracker.ready || tracker.busy || tracker.state.cycleWorkMs >= 5_400_000}
+              trackingDisabled={!tracker.ready || tracker.busy || restOwed(tracker.state)}
               onTrack={id => void tracker.command({ type: "start", taskId: id })}
               onToggle={toggleTask}
               onDelete={deleteTask}

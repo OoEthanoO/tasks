@@ -166,10 +166,11 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
           await adapter.write(JSON.stringify(next));
           if (scope.current === token) adopt(next);
         }
-        if (scope.current === token && action.type === "reset") {
-          setMessage("Today’s progress was reset. Tracking is paused.");
-        } else if (scope.current === token && action.type === "skip-rest") {
-          setMessage(SKIPPED_REST_MESSAGE);
+        // Like the desktop app, each command replaces the last notice, so
+        // "Break skipped" does not linger once the break is resumed.
+        if (scope.current === token) {
+          setMessage(action.type === "reset" ? "Today’s progress was reset. Tracking is paused."
+            : action.type === "skip-rest" ? SKIPPED_REST_MESSAGE : null);
         }
       } catch (e) {
         if (scope.current === token) {

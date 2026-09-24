@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
-const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
+const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, restOwed, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
 const { commandTracking, loadTracking, readAccountTracking, configureAccountTracking, TrackingConflict } = require("../.test-build/tracking-db.js");
 const { saveState, loadState } = require("../.test-build/db.js");
@@ -84,6 +84,41 @@ check("skipping a break goes straight back to work and restarts the 90-minute st
   const upcoming=upcomingTrackingEvents(s,T+100*MIN);
   assert.ok(!upcoming.some(e=>e.type==="rest-complete"&&e.at===T+120*MIN));
   assert.ok(upcoming.some(e=>e.type==="rest-start"&&e.at===T+190*MIN));
+});
+check("pausing after a skip brings the skipped break back, where it left off", () => {
+  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);   // 10 minutes into the break
+  s=advanceTracking(s,T+130*MIN).state;                           // then 30 more of work
+  near(s.workMs,120*MIN); assert.equal(restOwed(s),false);
+  const paused=actOnTracking(s,{type:"pause"},"device-1",T+130*MIN);
+  assert.equal(restOwed(paused),true);
+  const resumed=actOnTracking(paused,{type:"start"},"device-1",T+130*MIN);
+  assert.equal(resumed.mode,"rest"); near(resumed.cycleRestMs,10*MIN); assert.equal(resumed.deferredBreak,undefined);
+  // Only the 20 unserved minutes remain, then a full stretch before the next break.
+  const after=advanceTracking(resumed,T+150*MIN).state;
+  assert.equal(after.mode,"work"); near(after.restMs,30*MIN); near(after.cycleWorkMs,0);
+});
+check("skipping the waiting break again keeps the stretch under way", () => {
+  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+90*MIN).state;
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+90*MIN);
+  s=actOnTracking(s,{type:"pause"},"device-1",T+130*MIN);       // 40 minutes into the new stretch
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+135*MIN);
+  assert.equal(s.mode,"work"); near(s.cycleWorkMs,40*MIN); assert.ok(s.deferredBreak);
+  // So the next break comes after 50 more minutes, not 90, and replaces the waiting one.
+  const later=advanceTracking(s,T+185*MIN).state;
+  assert.equal(later.mode,"rest"); near(later.cycleRestMs,0); assert.equal(later.deferredBreak,undefined);
+});
+check("once work stops for any reason, a skipped break is owed again", () => {
+  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+90*MIN).state;
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+90*MIN);
+  // Completing every task ends the work, not the break that was put off.
+  const done=configureTracking(s,tasks.map(t=>({...t,completed:true})),"18:00",T+100*MIN);
+  assert.equal(done.mode,"idle"); assert.equal(restOwed(done),true);
+  assert.equal(actOnTracking(done,{type:"start"},"device-1",T+100*MIN).mode,"rest");
+  // Stored timers carrying a waiting break load; malformed ones do not.
+  assert.ok(parseTracking(JSON.parse(JSON.stringify(s))));
+  assert.equal(parseTracking({...fresh(),deferredBreak:{cycleRestMs:-1}}),null);
+  assert.equal(parseTracking({...fresh(),deferredBreak:"later"}),null);
 });
 check("a break that is due while paused can be skipped too", () => {
   const s={...fresh(),cycleWorkMs:90*MIN,workMs:90*MIN,taskMs:{first:90*MIN}};

@@ -15,7 +15,7 @@ import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
-import { taskProgress } from "../lib/tracking";
+import { restOwed, taskProgress } from "../lib/tracking";
 import { useTracking } from "./src/useTracking";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
@@ -516,7 +516,7 @@ function YanTasks() {
               maxProbability={maxProbability}
               progress={entries}
               activeId={tracker.state.taskId}
-              trackingDisabled={!tracker.ready || tracker.busy || tracker.state.cycleWorkMs >= 5_400_000}
+              trackingDisabled={!tracker.ready || tracker.busy || restOwed(tracker.state)}
               onTrack={id => void tracker.command({ type: "start", taskId: id })}
               onToggle={toggleTask}
               onEdit={setEditing}

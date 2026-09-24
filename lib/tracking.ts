@@ -27,10 +27,15 @@ export type TrackingState = {
   mode: "idle" | "work" | "rest";
   taskId: string | null;
   controllerId: string | null;
+  /**
+   * A break skipped to keep working, with the rest already served on it.
+   * While work continues it waits; once work stops (a pause, or nothing left
+   * to track) it is owed again. The next break to start on its own replaces it.
+   */
+  deferredBreak?: { cycleRestMs: number };
 };
 export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" } | { type: "skip-rest" };
-export const SKIP_REST_HINT = `Skipping starts a fresh ${WORK_CYCLE_MS / 60_000} minutes of work before the next break.`;
-export const SKIPPED_REST_MESSAGE = `Break skipped. The next one comes after another ${WORK_CYCLE_MS / 60_000} minutes of work.`;
+export const SKIPPED_REST_MESSAGE = "Break skipped. Pause any time to come back to it.";
 export type TrackingEvent = {
   id: string;
   at: number;
@@ -110,16 +115,32 @@ export function createTracking(tasks: Task[], endTime: string, timeZone = localT
   };
 }
 
-/** A break is due: being taken, paused part-way, or earned and not yet started. */
+/** A break is due: being taken, paused part-way, earned and not yet started, or skipped and work has since stopped. */
 export function restOwed(state: TrackingState): boolean {
-  return state.mode === "rest" || state.cycleWorkMs + EPSILON >= WORK_CYCLE_MS;
+  return state.mode === "rest" || state.cycleWorkMs + EPSILON >= WORK_CYCLE_MS || (state.mode === "idle" && !!state.deferredBreak);
+}
+/** Rest already served on the break that is due. */
+function restServed(state: TrackingState): number {
+  return state.mode === "idle" && state.deferredBreak ? state.deferredBreak.cycleRestMs : state.cycleRestMs;
+}
+/** Turn a waiting skipped break back into the break itself, where it left off. */
+function resumeDeferredBreak(state: TrackingState): void {
+  if (state.mode === "work" || !state.deferredBreak) return;
+  state.cycleWorkMs = WORK_CYCLE_MS; state.cycleRestMs = state.deferredBreak.cycleRestMs;
+  delete state.deferredBreak;
+}
+/** What skipping the break that is due would mean, for the hint beside the button. */
+export function skipRestHint(state: TrackingState): string {
+  // Skipping the same waiting break again carries on with the stretch already under way.
+  const stretch = state.mode === "idle" && state.deferredBreak ? WORK_CYCLE_MS - state.cycleWorkMs : WORK_CYCLE_MS;
+  return `Pause any time to come back to it. Otherwise the next break starts after ${formatDuration(stretch)} more work.`;
 }
 
 /** Work that can still fit before cutoff, including partial/paused rest debt. */
 export function remainingWorkTime(state: TrackingState, now = state.cursor): number {
   let wall = Math.max(0, dayEnd(state) - now);
   const owesRest = restOwed(state);
-  if (owesRest) wall = Math.max(0, wall - (REST_CYCLE_MS - state.cycleRestMs));
+  if (owesRest) wall = Math.max(0, wall - (REST_CYCLE_MS - restServed(state)));
   const firstWork = Math.min(wall, owesRest ? WORK_CYCLE_MS : WORK_CYCLE_MS - state.cycleWorkMs);
   // After the first work stretch comes a break, then full 90/30 cycles.
   const tail = Math.max(0, wall - firstWork - REST_CYCLE_MS);
@@ -255,6 +276,8 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
     }
     if (state.cycleWorkMs + EPSILON >= WORK_CYCLE_MS) {
       state.mode = "rest"; state.taskId = null;
+      // A fresh break replaces one skipped earlier; breaks never stack up.
+      delete state.deferredBreak;
       emit("rest-start", "Time to rest", "90 minutes of work complete. Now tracking a 30-minute break.");
     } else if (!state.taskId) {
       const next = nextTask(state, progressFor);
@@ -306,17 +329,29 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
   }
   if (action.type === "pause") { state.mode = "idle"; state.taskId = null; return state; }
   if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
-  if (action.type === "skip-rest") {
-    // Skipped, not postponed: the next break comes after another full stretch
-    // of work, and the unserved rest becomes work time for today's targets.
-    // Rest already taken stays in today's total.
-    if (restOwed(state)) { state.cycleWorkMs = 0; state.cycleRestMs = 0; state.mode = "idle"; state.taskId = null; }
+  const skipping = action.type === "skip-rest";
+  if (skipping) {
+    if (restOwed(state)) {
+      // The break waits rather than vanishing: pausing brings it back, with
+      // the rest already served. Meanwhile a fresh stretch of work counts
+      // toward the next break, and the unserved rest counts as work time.
+      // Skipping the same waiting break again keeps the stretch under way.
+      if (!(state.mode === "idle" && state.deferredBreak)) {
+        state.deferredBreak = { cycleRestMs: state.cycleRestMs };
+        state.cycleWorkMs = 0; state.cycleRestMs = 0;
+      }
+      state.mode = "work"; state.taskId = null;
+    }
     // Another device already ended the break: a running task carries on.
     else if (state.mode === "work") return state;
   }
   // Pausing or switching devices cannot bypass a break already earned; only
   // skipping it explicitly can.
-  if (restOwed(state)) { state.mode = "rest"; state.taskId = null; return state; }
+  if (!skipping && restOwed(state)) {
+    resumeDeferredBreak(state);
+    state.mode = "rest"; state.taskId = null;
+    return state;
+  }
   const next = action.type === "start" && action.taskId
     ? taskProgress(state).find(p => p.task.id === action.taskId && p.weight > 0 && !p.doneToday)
     : nextTask(state);
@@ -351,6 +386,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (s.controllerId !== null && typeof s.controllerId !== "string") return null;
   if ([s.workMs, s.restMs, s.cycleWorkMs, s.cycleRestMs, ...Object.values(s.taskMs)].some(v => !Number.isFinite(v) || v < 0 || v > 86_400_000)) return null;
   if (s.cycleWorkMs > WORK_CYCLE_MS || s.cycleRestMs > REST_CYCLE_MS) return null;
+  if (s.deferredBreak !== undefined && (!s.deferredBreak || typeof s.deferredBreak !== "object" || !Number.isFinite(s.deferredBreak.cycleRestMs) || s.deferredBreak.cycleRestMs < 0 || s.deferredBreak.cycleRestMs > REST_CYCLE_MS)) return null;
   // Snapshots from before priorities existed carry none; those weigh as low.
   if (s.tasks.some(t => !t || typeof t.id !== "string" || typeof t.title !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.dueDate) || typeof t.createdAt !== "string" || (t.priority !== undefined && !isPriority(t.priority)))) return null;
   return s;
