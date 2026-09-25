@@ -1,0 +1,39 @@
+# What EAS Build uploads from this repository. When this file exists, eas-cli
+# uses it instead of every .gitignore -- and on Windows that matters: eas-cli
+# never applies .gitignore files below the repo root there (it compares
+# "desktop\release\..." against the prefix "desktop/"), so builds uploaded
+# ~500 MB of Windows installers and would not have skipped mobile's signing
+# keys or generated native folders. Every rule here is relative to the root.
+
+# From .gitignore
+node_modules
+.next
+out
+.test-build
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+.env*.local
+
+# The Windows app is not part of the iOS build.
+desktop/
+
+# From mobile/.gitignore
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/expo-env.d.ts
+mobile/.kotlin/
+mobile/.metro-health-check*
+mobile/ios/
+mobile/android/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+npm-debug.*
+yarn-debug.*
+yarn-error.*
