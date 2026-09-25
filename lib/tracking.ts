@@ -366,7 +366,10 @@ export function upcomingTrackingEvents(state: TrackingState, now: number): Track
   return advanceTracking(current, Math.max(now, dayEnd(current))).events.filter(e => e.at > now).slice(0, 60);
 }
 export function formatDuration(ms: number, seconds = false): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
+  // Allocations are compared with a 1 ms tolerance, so a share that comes to
+  // 30 minutes less a millisecond (clock and floating-point rounding) counts
+  // as 30 minutes. Display it the same way instead of flooring it to 29m.
+  const total = Math.max(0, Math.floor((ms + EPSILON) / 1000));
   const h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60;
   if (seconds) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return h ? `${h}h ${m}m` : `${m}m`;

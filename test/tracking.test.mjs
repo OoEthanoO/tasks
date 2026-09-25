@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
-const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, restOwed, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
+const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, restOwed, formatDuration, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
 const { commandTracking, loadTracking, readAccountTracking, configureAccountTracking, TrackingConflict } = require("../.test-build/tracking-db.js");
 const { saveState, loadState } = require("../.test-build/db.js");
@@ -400,6 +400,16 @@ check("exactly 30 minutes is kept; just under is skipped", () => {
   // Weight 1/8: 450 / 17 = 26.5 minutes, so it goes.
   const gone=taskProgress(fresh([task("a"),task("eight","2026-09-22")]))[1];
   assert.equal(gone.skipped,true);
+});
+check("a share within a millisecond of 30 minutes is kept and reads as 30m", () => {
+  // 40 minutes on "a" plus 2 ms elsewhere: 49:59.998 of work left, and a
+  // 1:2 split of the stretch gives "b" 29:59.99933. The rule keeps it, so
+  // the display must not floor it to 29m.
+  const s={...fresh([task("a"),task("b","2026-09-15")],"09:00"),cycleWorkMs:40*MIN+2,workMs:40*MIN+2,taskMs:{a:40*MIN,other:2}};
+  const b=taskProgress(s)[1];
+  assert.equal(b.skipped,false); assert.ok(b.targetMs<30*MIN&&b.targetMs>30*MIN-1);
+  assert.equal(formatDuration(b.targetMs),"30m"); assert.equal(formatDuration(b.remainingMs),"30m");
+  assert.equal(formatDuration(30*MIN-1000),"29m"); assert.equal(formatDuration(0,true),"0:00:00");
 });
 check("tied tasks drop one at a time, newest first, until the rest reach 30 minutes", () => {
   // 60 minutes over three equal tasks is 20 each. Dropping one gives 30 each.
