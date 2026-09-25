@@ -29,7 +29,7 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
     <Text style={s.label}>{!t.ready ? "LOADING TIMER…" : resting ? "RESTING" : state.mode === "work" ? "WORKING ON" : ended ? "DAY COMPLETE" : "PAUSED"}</Text>
     <Text style={s.title}>{resting ? "Take a breather." : current?.task.title ?? (ended ? "You’re done for today." : "Ready when you are.")}</Text>
     <Text style={s.clock} accessibilityRole="timer">{formatDuration(resting ? REST_CYCLE_MS - state.cycleRestMs : current?.trackedMs ?? state.workMs, true)}</Text>
-    <Text style={s.hint}>{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start with the highest-weight unfinished task, or choose below."}</Text>
+    <Text style={s.hint}>{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start with the first unfinished task in your list, or choose below."}</Text>
     <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (state.mode === "idle" && !canStart)} label={t.busy ? "Syncing…" : state.mode === "idle" ? restOwed(state) ? "Resume rest" : "Start working" : "Pause tracking"} onPress={() => void t.command({ type: state.mode === "idle" ? "start" : "pause" })} />
     {breakDue && <Btn tone="ghost" label="Skip break and keep working" disabled={!t.ready || t.busy} onPress={() => void t.command({ type: "skip-rest" })} style={{ marginTop: -8, marginBottom: 8 }} />}
     {breakDue && <Text style={[s.hint, { marginBottom: 12 }]}>{skipRestHint(state)}</Text>}

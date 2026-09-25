@@ -25,7 +25,7 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange }: 
       <div className="focus-clock" role="timer" aria-label={resting ? "Rest time remaining" : "Time tracked on current task"}>
         {formatDuration(resting ? REST_CYCLE_MS - s.cycleRestMs : current?.trackedMs ?? s.workMs, true)}
       </div>
-      <p className="hint">{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start with your highest-weight unfinished task, or choose one below."}</p>
+      <p className="hint">{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start with the first unfinished task in your list, or choose one below."}</p>
       <button type="button" className="btn btn-primary focus-action" disabled={!t.ready || t.busy || (s.mode === "idle" && !canStart)} onClick={() => void t.command({ type: s.mode === "idle" ? "start" : "pause" })}>
         {t.busy ? "Syncing…" : s.mode === "idle" ? restOwed(s) ? "Resume rest" : "Start working" : "Pause tracking"}
       </button>

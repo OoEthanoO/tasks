@@ -1,5 +1,6 @@
 import { Task } from "./types";
 import { isPriority, taskWeight, WeightedTask } from "./weights";
+import { compareListOrder } from "./grouping";
 
 export const WORK_CYCLE_MS = 90 * 60_000;
 export const REST_CYCLE_MS = 30 * 60_000;
@@ -181,14 +182,14 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
     for (const e of open) if (receives[e.index]) remaining[e.index] = Math.max(0, e.weight * level - e.trackedMs);
   };
   pour(remainingWorkTime(state, now));
-  // Then, least important first (the reverse of the order Start picks in),
-  // skip each task whose day would total under the minimum. Its share goes
+  // Then, least important first (lowest weight; among equal weights, lowest
+  // on the list), skip each task whose day would total under the minimum. Its share goes
   // only to the tasks above it, never sideways to less urgent ones, and the
   // most important task is never skipped: there would be nowhere to send its
   // time. The day's total, not just what is left, decides — so a task is
   // never cut off in its last few minutes, and one with 30 minutes already
   // logged is never skipped.
-  const ascending = [...open].sort((a, b) => a.weight - b.weight || b.task.createdAt.localeCompare(a.task.createdAt) || b.index - a.index);
+  const ascending = [...open].sort((a, b) => a.weight - b.weight || compareListOrder(b.task, a.task) || b.index - a.index);
   for (const e of ascending.slice(0, -1)) {
     receives[e.index] = false;
     const freed = remaining[e.index];
@@ -219,9 +220,14 @@ function legacyTaskProgress(state: TrackingState, now = state.cursor): TaskProgr
     return { ...entry, probability, trackedMs, targetMs, remainingMs: Math.max(0, targetMs - trackedMs), doneToday: trackedMs + EPSILON >= targetMs, skipped: false };
   });
 }
+/**
+ * The task the timer works on next, on Start and after each target or break:
+ * the first unfinished one in list order. Weight decides how much time a task
+ * gets, not when. The sort is stable, so full ties keep saved order, as in the list.
+ */
 function nextTask(state: TrackingState, progressFor = taskProgress): TaskProgress | undefined {
   return progressFor(state).filter(p => p.weight > 0 && !p.doneToday)
-    .sort((a, b) => b.weight - a.weight || a.task.createdAt.localeCompare(b.task.createdAt) || state.tasks.indexOf(a.task) - state.tasks.indexOf(b.task))[0];
+    .sort((a, b) => compareListOrder(a.task, b.task))[0];
 }
 
 /**

@@ -21,6 +21,16 @@ export function dueBucket(task: Task, today: DateKey): DueBucket {
   return "upcoming";
 }
 
+/**
+ * The order tasks appear in the list: nearest due date first, ties broken by
+ * creation order so the list never reshuffles under you (and, past that, by
+ * saved order, since the sort is stable). The timer works through open tasks
+ * in this same order, so the task it picks next is always the next one down.
+ */
+export function compareListOrder(a: Task, b: Task): number {
+  return a.dueDate.localeCompare(b.dueDate) || a.createdAt.localeCompare(b.createdAt);
+}
+
 export type TaskGroup = {
   key: string;
   label: string;
@@ -57,9 +67,7 @@ export function groupTasks(entries: WeightedTask[], today: DateKey): TaskGroup[]
     buckets[dueBucket(entry.task, today)].push(entry);
   }
 
-  const byDue = (a: WeightedTask, b: WeightedTask) =>
-    a.task.dueDate.localeCompare(b.task.dueDate) ||
-    a.task.createdAt.localeCompare(b.task.createdAt);
+  const byDue = (a: WeightedTask, b: WeightedTask) => compareListOrder(a.task, b.task);
 
   overdue.sort(byDue);
   dueToday.sort(byDue);

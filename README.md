@@ -178,9 +178,9 @@ tasks or the cutoff recalculates future targets while preserving earned time.
 **30-minute minimum.** A task whose whole day would come to less than 30
 minutes (time already logged plus its share of what is left) is skipped for the
 day: a few minutes on something due weeks away barely counts. Tasks are
-considered from least to most important, the reverse of the order Start picks
-in, and each skipped share goes only to the tasks above it, never to less urgent
-ones. The most important open task is never skipped, so a short day is not
+considered from least to most important (lowest weight first; among equal
+weights, lowest on the list first), and each skipped share goes only to the
+tasks above it, never to less urgent ones. The most important open task is never skipped, so a short day is not
 wasted, and a task with 30 minutes already logged is never skipped. Skipped
 tasks show a 0% share and cannot be tracked that day. The decision follows the
 day as it changes, so while tracking is paused and the time left shrinks, more
@@ -188,9 +188,10 @@ tasks can drop out.
 
 ## Work and rest tracking
 
-Start chooses the highest-weight unfinished daily target in list order. Each
-task also has a Track button. Reaching a target alerts you and moves to the next
-eligible task. Ninety accumulated work minutes automatically start a 30-minute
+Start takes the first unfinished daily target in list order (nearest due date,
+then creation order); weight decides how much time a task gets, not when. Each
+task also has a Track button. Reaching a target alerts you and moves on to the
+next unfinished task down the list. Ninety accumulated work minutes automatically start a 30-minute
 rest, after which work resumes. Pausing either mode stops its counter and does
 not bypass an unfinished break. Complete cycles are 75% work and 25% rest;
 a shortened final cycle can differ.

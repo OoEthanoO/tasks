@@ -19,9 +19,23 @@ check("task percentages sum to 100% of work, excluding rest", () => {
   const p = taskProgress(fresh()); near(p[0].probability, .4); near(p[1].probability,.4); near(p[2].probability,.2);
   near(p.reduce((sum,p)=>sum+p.probability,0), 1);
 });
-check("default is the highest-weight task, with display-order ties", () => {
+check("Start takes the first unfinished task in list order, not the heaviest", () => {
   assert.equal(actOnTracking(fresh(), {type:"start"}, "device-1", T).taskId, "first");
+  // Nearest due date first; full ties keep saved order, as the list does.
   assert.equal(actOnTracking(fresh([tasks[2],tasks[1],tasks[0]]), {type:"start"}, "device-1", T).taskId, "second");
+  // Medium priority makes tomorrow's task weigh as much as today's, and it was
+  // created first, but today's task is higher on the list.
+  const leading={...task("leading","2026-09-15"),priority:"medium",createdAt:new Date(T-86_400_000).toISOString()};
+  assert.equal(actOnTracking(fresh([leading,task("physics")]),{type:"start"},"device-1",T).taskId,"physics");
+  // Even a heavier task waits its turn in the list.
+  assert.equal(actOnTracking(fresh([{...task("urgent","2026-09-15"),priority:"high"},task("today")]),{type:"start"},"device-1",T).taskId,"today");
+});
+check("after a target is met, the timer moves to the next task down the list", () => {
+  // Shares of a 450-minute day: a 112.5, big 225, c 112.5. "a" finishes at
+  // 142.5 minutes (with a break at 90); "c" is next on the list, not "big".
+  const s=actOnTracking(fresh([task("a"),{...task("big","2026-09-15"),priority:"high"},task("c")]),{type:"start"},"device-1",T);
+  const out=advanceTracking(s,T+145*MIN);
+  assert.equal(out.state.taskId,"c"); assert.ok(out.events.some(e=>e.type==="task-complete"));
 });
 check("manual selection overrides default without changing weights", () => {
   assert.equal(actOnTracking(fresh(), {type:"start",taskId:"later"}, "device-1", T).taskId,"later");
@@ -362,7 +376,8 @@ check("priority multiplies a task's share of work time", () => {
   const p = taskProgress(fresh([task("a"), {...task("b"), priority:"medium"}, {...task("c"), priority:"high"}]));
   near(p[1].probability/p[0].probability, 2); near(p[2].probability/p[0].probability, 4);
   near(p[2].targetMs, 4*p[0].targetMs);
-  assert.equal(actOnTracking(fresh([task("a"), {...task("c"), priority:"high"}]),{type:"start"},"device-1",T).taskId,"c");
+  // Priority changes how long a task gets, not when the timer reaches it.
+  assert.equal(actOnTracking(fresh([task("a"), {...task("c"), priority:"high"}]),{type:"start"},"device-1",T).taskId,"a");
 });
 check("raising a priority rebalances future targets and keeps earned time", () => {
   const s = advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+30*MIN).state;
@@ -411,7 +426,14 @@ check("a share within a millisecond of 30 minutes is kept and reads as 30m", () 
   assert.equal(formatDuration(b.targetMs),"30m"); assert.equal(formatDuration(b.remainingMs),"30m");
   assert.equal(formatDuration(30*MIN-1000),"29m"); assert.equal(formatDuration(0,true),"0:00:00");
 });
-check("tied tasks drop one at a time, newest first, until the rest reach 30 minutes", () => {
+check("among equal weights, the task lowest on the list is skipped first", () => {
+  // Three weight-2 tasks share 60 minutes, 20 each. "tomorrow" is medium
+  // priority, so it ties with the two due today but sits below them.
+  const p=taskProgress(fresh([task("x"),{...task("tomorrow","2026-09-15"),priority:"medium"},task("z")],"09:00"));
+  assert.deepEqual(p.map(p=>p.skipped),[false,true,false]);
+  near(p[0].remainingMs,30*MIN); near(p[2].remainingMs,30*MIN);
+});
+check("tied tasks drop one at a time, lowest on the list first, until the rest reach 30 minutes", () => {
   // 60 minutes over three equal tasks is 20 each. Dropping one gives 30 each.
   const p=taskProgress(fresh([task("a"),task("b"),task("c")],"09:00"));
   assert.deepEqual(p.map(p=>p.skipped),[false,false,true]);
