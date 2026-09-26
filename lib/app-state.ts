@@ -8,6 +8,7 @@ import {
 } from "./types";
 import { DEFAULT_PRIORITY, isPriority, REST_LABEL } from "./weights";
 import { parseTracking } from "./tracking";
+import { DEFAULT_REST, sanitizeRestSettings } from "./rest";
 
 export const DEFAULT_END_TIME = "23:00";
 
@@ -26,6 +27,7 @@ export function emptyState(): AppState {
     recommendation: null,
     schedule: null,
     endTime: DEFAULT_END_TIME,
+    rest: { ...DEFAULT_REST },
   };
 }
 
@@ -199,7 +201,17 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
     recommendation: sanitizeRecommendation(raw.recommendation, nowIso),
     schedule: sanitizeSchedule(raw.schedule, today, nowIso),
     endTime: sanitizeEndTime(raw.endTime),
+    rest: sanitizeRestSettings(raw.rest),
   };
+}
+
+/**
+ * Whether an untrusted payload carries rest settings at all. One without them
+ * comes from a client built before they existed: it has not chosen the
+ * default, it cannot see the field. See `saveState`.
+ */
+export function hasRestSettings(raw: unknown): boolean {
+  return isRecord(raw) && "rest" in raw;
 }
 
 /**

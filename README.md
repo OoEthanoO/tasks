@@ -2,8 +2,8 @@
 
 A task manager that decides what you should work on next. Tasks are weighted by
 how urgent they are and the priority you give them. Start a shared work timer,
-meet proportional daily targets, and take a 30-minute rest after every 90
-minutes of tracked work.
+meet proportional daily targets, and take breaks: 30 minutes of rest after every
+90 minutes of tracked work by default, adjustable or off.
 
 The [Windows desktop app](desktop/README.md) adds native background alerts,
 taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync.
@@ -161,7 +161,7 @@ as a low-priority task due tomorrow. Tasks created before priorities existed
 read as low. Weights display as exact fractions (`2/3`, `4/5`), never rounded.
 
 Open tasks aim for proportional **work time** by weight. Rest is separate.
-The app first reserves all 90/30 breaks that fall before the cutoff, including
+The app first reserves all breaks that fall before the cutoff, including
 any unfinished break. It then balances final task totals by weight while treating
 logged time as a lower bound. Tasks already above that balance receive no extra
 time; all unfinished targets together fit the available work time.
@@ -191,10 +191,19 @@ tasks can drop out.
 Start takes the first unfinished daily target in list order (nearest due date,
 then creation order); weight decides how much time a task gets, not when. Each
 task also has a Track button. Reaching a target alerts you and moves on to the
-next unfinished task down the list. Ninety accumulated work minutes automatically start a 30-minute
-rest, after which work resumes. Pausing either mode stops its counter and does
-not bypass an unfinished break. Complete cycles are 75% work and 25% rest;
-a shortened final cycle can differ.
+next unfinished task down the list. Each stretch of accumulated work (90 minutes
+by default) automatically starts a break (30 minutes by default), after which
+work resumes. Pausing either mode stops its counter and does not bypass an
+unfinished break.
+
+**Breaks** are set beside the work day end time: "Work [90] min per [30] min of
+rest", from 10 to 480 minutes of work and 1 to 120 of rest, or switched off, in
+which case every minute before the cutoff is work time. Like the end time, the
+setting follows your account to every device. Changing it mid-day keeps time
+already worked or rested and moves only the break still to come: a stretch
+already past a shorter length owes its break at once, a break already past a
+shorter length ends at once, and turning breaks off ends any break and goes back
+to work.
 
 The timer stops at the selected same-day cutoff (default 23:00). All daily
 counters reset at midnight; tracking stays paused until you start the new day.

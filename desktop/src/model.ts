@@ -1,4 +1,4 @@
-import { dayEnd, formatDuration, REST_CYCLE_MS, restOwed, taskProgress, WORK_CYCLE_MS } from "../../lib/tracking";
+import { dayEnd, formatDuration, restCycleMs, restOwed, restSettings, taskProgress, workCycleMs } from "../../lib/tracking";
 import type { DesktopState } from "./contract";
 
 export function statusModel(view: DesktopState) {
@@ -8,15 +8,17 @@ export function statusModel(view: DesktopState) {
   const ended = s.cursor >= dayEnd(s);
   const label = !view.ready ? "Connecting" : s.mode === "work" ? "Working" : s.mode === "rest" ? "Resting" : ended ? "Day complete" : "Paused";
   const title = s.mode === "work" ? current?.task.title ?? "Task" : s.mode === "rest" ? "Take a breather" : ended ? "Done for today" : "Ready when you are";
-  const remaining = s.mode === "rest" ? Math.max(0, REST_CYCLE_MS - s.cycleRestMs) : current?.remainingMs ?? 0;
+  const remaining = s.mode === "rest" ? Math.max(0, restCycleMs(s) - s.cycleRestMs) : current?.remainingMs ?? 0;
   const elapsed = s.mode === "rest" ? s.cycleRestMs : current?.trackedMs ?? s.workMs;
-  const progress = s.mode === "rest" ? s.cycleRestMs / REST_CYCLE_MS : current && current.targetMs > 0 ? current.trackedMs / current.targetMs : -1;
+  const progress = s.mode === "rest" ? s.cycleRestMs / restCycleMs(s) : current && current.targetMs > 0 ? current.trackedMs / current.targetMs : -1;
   const canStart = !ended && (restOwed(s) || entries.some(p => p.weight > 0 && !p.doneToday));
-  const restIn = Math.max(0, WORK_CYCLE_MS - s.cycleWorkMs);
+  // Null when breaks are off: there is no next break to count toward.
+  const restIn = restSettings(s).enabled ? Math.max(0, workCycleMs(s) - s.cycleWorkMs) : null;
+  const breakText = restIn === null ? "Breaks are off" : `Break in ${formatDuration(restIn)} tracked work`;
   const canSkipRest = !ended && restOwed(s);
   const caption = s.mode === "idle" ? `Worked ${formatDuration(s.workMs)}` : `${formatDuration(remaining, true)} left`;
-  return { label, title, remaining, elapsed, progress: Math.max(-1, Math.min(1, progress)), canStart, canSkipRest, restIn, entries,
+  return { label, title, remaining, elapsed, progress: Math.max(-1, Math.min(1, progress)), canStart, canSkipRest, restIn, breakText, entries,
     windowTitle: `${label} · ${title} · ${caption} — YanTasks`,
-    tooltip: `${label}: ${title.slice(0, 42)}\n${caption} · Worked ${formatDuration(s.workMs)}\nRested ${formatDuration(s.restMs)} · Break in ${formatDuration(restIn)}`.slice(0, 127),
+    tooltip: `${label}: ${title.slice(0, 42)}\n${caption} · Worked ${formatDuration(s.workMs)}\nRested ${formatDuration(s.restMs)} · ${restIn === null ? "Breaks off" : `Break in ${formatDuration(restIn)}`}`.slice(0, 127),
   };
 }

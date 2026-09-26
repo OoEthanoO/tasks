@@ -9,6 +9,7 @@ const KEYS = {
   recommendation: "yantasks.recommendation.v1",
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
+  rest: "yantasks.rest.v1",
 } as const;
 
 // Retain the retired key only for clearing guest data after migration.
@@ -25,16 +26,17 @@ async function read(key: string): Promise<unknown> {
 
 export const guestStore = {
   async load(): Promise<AppState> {
-    const [tasks, recommendation, schedule, endTime, tracking] = await Promise.all([
+    const [tasks, recommendation, schedule, endTime, rest, tracking] = await Promise.all([
       read(KEYS.tasks),
       read(KEYS.recommendation),
       read(KEYS.schedule),
       read(KEYS.endTime),
+      read(KEYS.rest),
       read("yantasks.tracking.v1"),
     ]);
     // Everything read back off the device goes through the same coercion the
     // server applies, so a half-written key cannot take the app down.
-    return sanitizeState({ tasks, recommendation, schedule, endTime, tracking });
+    return sanitizeState({ tasks, recommendation, schedule, endTime, rest, tracking });
   },
 
   async save(state: AppState): Promise<void> {
@@ -44,6 +46,7 @@ export const guestStore = {
         [KEYS.recommendation, JSON.stringify(state.recommendation)],
         [KEYS.schedule, JSON.stringify(state.schedule)],
         [KEYS.endTime, JSON.stringify(state.endTime)],
+        [KEYS.rest, JSON.stringify(state.rest)],
       ]);
     } catch {
       // Out of space or storage unavailable — the session still works.

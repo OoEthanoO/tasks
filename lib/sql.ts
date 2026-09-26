@@ -61,11 +61,14 @@ const SCHEMA: string[] = [
      end_time       TEXT NOT NULL,
      recommendation TEXT,
      schedule       TEXT,
-     rest_mode      TEXT
+     rest_mode      TEXT,
+     rest_settings  TEXT
    )`,
   // Retired preference column: keep it for compatibility with older server
   // versions during a rollout. Current clients neither read nor write it.
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_mode TEXT`,
+  // The work/rest cycle as JSON; NULL (older rows) reads as the default.
+  `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_settings TEXT`,
 
   // Tracking is deliberately separate from the legacy whole-state save. A
   // stale client can never overwrite the shared timer or its accumulated time.

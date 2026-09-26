@@ -1,14 +1,30 @@
 import { useEffect, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Switch, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, REST_CYCLE_MS, restOwed, skipRestHint, WORK_CYCLE_MS } from "../../../lib/tracking";
+import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, restCycleMs, restOwed, restSettings, skipRestHint, workCycleMs } from "../../../lib/tracking";
+import { clampMinutes, REST_MINUTES, RestSettings, WORK_MINUTES } from "../../../lib/rest";
 import { Tracker } from "../useTracking";
-import { themed, useStyles } from "../theme";
+import { themed, useStyles, useTheme } from "../theme";
 import { Banner, Btn, Card, CardHead } from "./ui";
 import ConfirmSheet from "./ConfirmSheet";
 
-export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: { tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void }) {
+/** A whole-minutes field that commits when editing ends, so typing "25" never saves a passing "2". */
+function MinutesField({ label, value, range, onCommit, style }: { label: string; value: number; range: { min: number; max: number }; onCommit: (value: number) => void; style: StyleProp<TextStyle> }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return <TextInput style={style} value={draft} onChangeText={setDraft} keyboardType="number-pad" maxLength={3} accessibilityLabel={label}
+    onEndEditing={() => {
+      const next = draft.trim() === "" ? value : clampMinutes(Number(draft), range, value);
+      setDraft(String(next));
+      if (next !== value) onCommit(next);
+    }} />;
+}
+
+export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange }: {
+  tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; rest: RestSettings; onRestChange: (value: RestSettings) => void;
+}) {
   const s = useStyles(styles);
+  const { c } = useTheme();
   const state = t.state;
   const [draftEnd, setDraftEnd] = useState(endTime);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -25,15 +41,26 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
       <Text style={s.hint}>Work day ends at</Text>
       <TextInput style={s.input} value={draftEnd} onChangeText={setDraftEnd} onEndEditing={e => { const clean = sanitizeEndTime(e.nativeEvent.text); setDraftEnd(clean); onEndTimeChange(clean); }} accessibilityLabel="Work day end time, 24 hour clock" maxLength={5} keyboardType="numbers-and-punctuation" />
     </View>
+    <View style={s.controls}>
+      <Text style={s.hint}>Breaks</Text>
+      <Switch value={rest.enabled} onValueChange={enabled => onRestChange({ ...rest, enabled })} accessibilityLabel="Take breaks" trackColor={{ true: c.accent, false: c.line }} />
+    </View>
+    {rest.enabled && <View style={[s.controls, s.wrap]}>
+      <Text style={s.hint}>Work</Text>
+      <MinutesField style={[s.input, s.minutes]} label="Minutes of work before each break" value={rest.workMinutes} range={WORK_MINUTES} onCommit={workMinutes => onRestChange({ ...rest, workMinutes })} />
+      <Text style={s.hint}>min per</Text>
+      <MinutesField style={[s.input, s.minutes]} label="Minutes of rest in each break" value={rest.restMinutes} range={REST_MINUTES} onCommit={restMinutes => onRestChange({ ...rest, restMinutes })} />
+      <Text style={s.hint}>min of rest</Text>
+    </View>}
     <Text style={s.hint}>{state.timeZone} · resets at midnight</Text>
     <Text style={s.label}>{!t.ready ? "LOADING TIMER…" : resting ? "RESTING" : state.mode === "work" ? "WORKING ON" : ended ? "DAY COMPLETE" : "PAUSED"}</Text>
     <Text style={s.title}>{resting ? "Take a breather." : current?.task.title ?? (ended ? "You’re done for today." : "Ready when you are.")}</Text>
-    <Text style={s.clock} accessibilityRole="timer">{formatDuration(resting ? REST_CYCLE_MS - state.cycleRestMs : current?.trackedMs ?? state.workMs, true)}</Text>
+    <Text style={s.clock} accessibilityRole="timer">{formatDuration(resting ? restCycleMs(state) - state.cycleRestMs : current?.trackedMs ?? state.workMs, true)}</Text>
     <Text style={s.hint}>{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start with the first unfinished task in your list, or choose below."}</Text>
     <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (state.mode === "idle" && !canStart)} label={t.busy ? "Syncing…" : state.mode === "idle" ? restOwed(state) ? "Resume rest" : "Start working" : "Pause tracking"} onPress={() => void t.command({ type: state.mode === "idle" ? "start" : "pause" })} />
     {breakDue && <Btn tone="ghost" label="Skip break and keep working" disabled={!t.ready || t.busy} onPress={() => void t.command({ type: "skip-rest" })} style={{ marginTop: -8, marginBottom: 8 }} />}
     {breakDue && <Text style={[s.hint, { marginBottom: 12 }]}>{skipRestHint(state)}</Text>}
-    {!restOwed(state) && <Text style={s.hint}>Rest after {formatDuration(WORK_CYCLE_MS - state.cycleWorkMs)} more tracked work · {state.deferredBreak ? "pause to take the break you skipped" : "30-minute breaks"}</Text>}
+    {restSettings(state).enabled && !restOwed(state) && <Text style={s.hint}>Rest after {formatDuration(workCycleMs(state) - state.cycleWorkMs)} more tracked work · {state.deferredBreak ? "pause to take the break you skipped" : `${restSettings(state).restMinutes}-minute breaks`}</Text>}
     {t.error && <Banner tone="danger" action={<Btn label="Refresh timer" onPress={() => void t.refresh()} />}>{t.error}</Banner>}
     {t.message && <Banner tone="ok" action={<Btn label="Dismiss" onPress={t.dismissMessage} />}>{t.message}</Banner>}
     <View style={s.totals}>
@@ -50,6 +77,8 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
 }
 const styles = themed(c => ({
   controls: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
+  wrap: { flexWrap: "wrap", gap: 8 },
+  minutes: { minWidth: 64, textAlign: "center" },
   input: { color: c.text, backgroundColor: c.bg, borderWidth: 1, borderColor: c.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, minWidth: 90, fontSize: 16 },
   label: { color: c.accent, fontSize: 11, fontWeight: "700", letterSpacing: 1.5, marginTop: 26 },
   title: { color: c.text, fontSize: 25, fontWeight: "700", marginTop: 8 },

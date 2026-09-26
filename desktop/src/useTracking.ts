@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createTracking, remainingWorkTime, taskProgress, trackingConfigKey, workBudget, type TrackingAction } from "../../lib/tracking";
 import type { Task } from "../../lib/types";
+import type { RestSettings } from "../../lib/rest";
 import { defaults, type DesktopState } from "./contract";
 
 const initial = (): DesktopState => ({ state: createTracking([], "23:00"), accountId: null, ready: false, busy: false, connected: true, error: null, message: null, settings: defaults });
@@ -21,12 +22,12 @@ export function useDesktopState() {
 
 // Reuses the task UI but not its browser timer. One main-process engine drives
 // both windows, so a hidden/unresponsive renderer cannot stop desktop alerts.
-export function useTracking(tasks: Task[], endTime: string, accountId: string | null, enabled: boolean, beforeCommand?: () => Promise<void>) {
+export function useTracking(tasks: Task[], endTime: string, rest: RestSettings, accountId: string | null, enabled: boolean, beforeCommand?: () => Promise<void>) {
   const view = useDesktopState();
   const [localError, setError] = useState<string | null>(null);
-  const config = useRef({ tasks, endTime, accountId });
-  config.current = { tasks, endTime, accountId };
-  const key = trackingConfigKey(tasks, endTime);
+  const config = useRef({ tasks, endTime, rest, accountId });
+  config.current = { tasks, endTime, rest, accountId };
+  const key = trackingConfigKey(tasks, endTime, rest);
   useEffect(() => {
     if (!enabled) return;
     let live = true;

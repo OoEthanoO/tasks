@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sanitizeState, tasksWithoutPriority } from "@/lib/app-state";
+import { hasRestSettings, sanitizeState, tasksWithoutPriority } from "@/lib/app-state";
 import { loadState, saveState } from "@/lib/db";
 import { currentUser } from "@/lib/server/session";
 import { accountsUnavailable } from "@/lib/server/db-status";
@@ -35,7 +35,7 @@ export async function PUT(req: NextRequest) {
   const state = sanitizeState(raw);
 
   try {
-    await saveState(user.id, state, tasksWithoutPriority(raw));
+    await saveState(user.id, state, { priority: tasksWithoutPriority(raw), rest: !hasRestSettings(raw) });
   } catch (error) {
     // This is the failure the client shows as "the server had a problem", and
     // an uncaught throw here leaves nothing in the logs but a stack. Postgres

@@ -988,7 +988,16 @@ const {
   summarizeState,
   emptyState,
   tasksWithoutPriority,
+  hasRestSettings,
 } = require("../.test-build/app-state.js");
+const { sanitizeRestSettings, DEFAULT_REST } = require("../.test-build/rest.js");
+
+eq(sanitizeRestSettings(null), DEFAULT_REST, "missing rest settings are the 90/30 default");
+eq(sanitizeRestSettings({ enabled: false, workMinutes: 25, restMinutes: 5 }), { enabled: false, workMinutes: 25, restMinutes: 5 }, "valid settings survive, breaks off included");
+eq(sanitizeRestSettings({ enabled: true, workMinutes: 3, restMinutes: 500 }), { enabled: true, workMinutes: 10, restMinutes: 120 }, "lengths are clamped to range");
+eq(sanitizeRestSettings({ enabled: "yes", workMinutes: 52.6, restMinutes: "17" }), { enabled: true, workMinutes: 53, restMinutes: 30 }, "whole minutes; a non-number falls back");
+eq(sanitizeState({ tasks: [] }).rest, DEFAULT_REST, "a state without rest settings gets the default");
+eq([hasRestSettings({ rest: {} }), hasRestSettings({ tasks: [] }), hasRestSettings(null)], [true, false, false], "only a payload with a rest field marks a current client");
 
 eq(sanitizeState(null), emptyState(), "null becomes an empty state");
 eq(sanitizeState("nope"), emptyState(), "a string becomes an empty state");
@@ -1365,19 +1374,41 @@ eq(restored.endTime, "22:00", "the end time round-trips");
     withoutPriority(chosen[1]),
     withoutPriority({ ...goodTask, id: "c3", title: "Added on an old phone" }),
   ];
-  await db.saveState(carol.id, { ...emptyState(), tasks: oldClient }, tasksWithoutPriority({ tasks: oldClient }));
+  await db.saveState(carol.id, { ...emptyState(), tasks: oldClient }, { priority: tasksWithoutPriority({ tasks: oldClient }) });
   const afterOld = (await db.loadState(carol.id)).tasks;
   eq(afterOld.map((t) => t.priority), ["high", "medium", "low"], "an old client's save keeps stored priorities; its new task is low");
   eq(afterOld[0].title, "Renamed on an old phone", "while its other edits still apply");
 
   const lowered = [{ ...chosen[0], priority: "low" }, withoutPriority(chosen[1])];
-  await db.saveState(carol.id, { ...emptyState(), tasks: lowered }, tasksWithoutPriority({ tasks: lowered }));
+  await db.saveState(carol.id, { ...emptyState(), tasks: lowered }, { priority: tasksWithoutPriority({ tasks: lowered }) });
   eq(
     (await db.loadState(carol.id)).tasks.map((t) => t.priority),
     ["low", "medium"],
     "an explicit low still lowers a task; only a missing field is preserved",
   );
   await db.deleteUser(carol.id);
+}
+
+// Rest settings round-trip, and a client built before them cannot reset them.
+{
+  const dana = await db.createUser({
+    id: "u-dana",
+    username: "Dana",
+    usernameLower: "dana",
+    passwordHash: hashPassword("danadana1234"),
+  });
+  eq((await db.loadState(dana.id)).rest, DEFAULT_REST, "a new account starts with 90/30 breaks");
+  const pomodoro = { enabled: true, workMinutes: 25, restMinutes: 5 };
+  await db.saveState(dana.id, { ...emptyState(), rest: pomodoro });
+  eq((await db.loadState(dana.id)).rest, pomodoro, "rest settings round-trip");
+  const oldClient = { tasks: [goodTask], recommendation: null, schedule: null, endTime: "22:00" };
+  await db.saveState(dana.id, sanitizeState(oldClient), { rest: !hasRestSettings(oldClient) });
+  const afterOld = await db.loadState(dana.id);
+  eq(afterOld.rest, pomodoro, "an old client's save keeps the stored rest settings");
+  eq(afterOld.endTime, "22:00", "while its other edits still apply");
+  await db.saveState(dana.id, { ...emptyState(), rest: { ...DEFAULT_REST, enabled: false } });
+  eq((await db.loadState(dana.id)).rest.enabled, false, "a current client can turn breaks off");
+  await db.deleteUser(dana.id);
 }
 // Simulate a prefs row written before the feature was removed. Existing
 // schedules load with plain Rest; the retired column can stay in the database.

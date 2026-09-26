@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "../lib/app-state";
+import { DEFAULT_REST, RestSettings } from "../lib/rest";
 import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
 import { shouldAdoptRemote } from "../lib/sync";
@@ -49,6 +50,7 @@ function YanTasks() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
+  const [rest, setRest] = useState<RestSettings>({ ...DEFAULT_REST });
 
   const [account, setAccount] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -72,6 +74,7 @@ function YanTasks() {
     setRecommendation(state.recommendation);
     setSchedule(state.schedule);
     setEndTime(state.endTime);
+    setRest(state.rest);
     loadedForRef.current = key;
     lastSavedRef.current = JSON.stringify(state);
     setReady(true);
@@ -165,7 +168,7 @@ function YanTasks() {
     // Ignore the render in between swapping stores.
     if (loadedForRef.current !== key) return;
 
-    const state: AppState = { tasks, recommendation, schedule, endTime };
+    const state: AppState = { tasks, recommendation, schedule, endTime, rest };
     const serialized = JSON.stringify(state);
     if (serialized === lastSavedRef.current) return;
 
@@ -178,7 +181,7 @@ function YanTasks() {
     pendingRef.current = state;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
-  }, [tasks, recommendation, schedule, endTime, ready, account, flushRemote]);
+  }, [tasks, recommendation, schedule, endTime, rest, ready, account, flushRemote]);
 
   /**
    * Pull the account's copy back down, so edits made on the website (or another
@@ -262,7 +265,7 @@ function YanTasks() {
   /* ---------- accounts ---------- */
 
   const stateRef = useRef<AppState>(emptyState());
-  stateRef.current = { tasks, recommendation, schedule, endTime };
+  stateRef.current = { tasks, recommendation, schedule, endTime, rest };
 
   const [guestSnapshot, setGuestSnapshot] = useState<AppState>(emptyState());
   useEffect(() => {
@@ -372,9 +375,9 @@ function YanTasks() {
     await flushRemote();
     if (pendingRef.current || syncingRef.current) throw new Error("Wait for your task changes to sync, then try again.");
   }, [account, flushRemote]);
-  const tracker = useTracking(tasks, endTime, account?.id ?? null, ready && !authLoading, beforeTrack);
+  const tracker = useTracking(tasks, endTime, rest, account?.id ?? null, ready && !authLoading, beforeTrack);
   const today = tracker.state.dayKey;
-  const entries = taskProgress({ ...tracker.state, tasks, endTime });
+  const entries = taskProgress({ ...tracker.state, tasks, endTime, rest });
   const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
   const maxProbability = Math.max(0, ...entries.map(e => e.probability));
   useEffect(() => {
@@ -497,7 +500,7 @@ function YanTasks() {
           </Banner>
         )}
 
-        <TrackingCard tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} />
+        <TrackingCard tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} rest={rest} onRestChange={setRest} />
 
         <Card>
           <CardHead

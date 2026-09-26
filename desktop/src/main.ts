@@ -39,6 +39,7 @@ let lastShellUpdate = "";
 let suspended = false;
 let onBattery = false;
 const notifications = new Set<Notification>();
+const stats = { publishes: 0, sends: 0 };
 let icons: Record<string, NativeImage>;
 let settings: Settings = { ...defaults };
 let controllerId = "";
@@ -115,6 +116,7 @@ function nativeAlert(event: Pick<TrackingEvent, "title" | "body">) {
 
 function publish(view: DesktopState) {
   lastView = view;
+  stats.publishes++;
   if (!main || !tray) return;
   const m = statusModel(view);
   // Shell IPC is batched to five-second buckets (thirty seconds when hidden).
@@ -140,7 +142,7 @@ function publish(view: DesktopState) {
       { tooltip: "Open tasks", icon: icons.app, click: showMain },
     ]);
   }
-  for (const w of [main, mini]) if (isVisible(w)) w.webContents.send("state", view);
+  for (const w of [main, mini]) if (isVisible(w)) { w.webContents.send("state", view); stats.sends++; }
   schedule(view);
 }
 
@@ -169,7 +171,7 @@ function trayMenu() {
   const menu = Menu.buildFromTemplate([
     { label: `${m.label}: ${m.title.slice(0, 65)}`, enabled: false },
     { label: `Worked ${formatDuration(v.state.workMs)} · Rested ${formatDuration(v.state.restMs)}`, enabled: false },
-    { label: v.connected ? `Break in ${formatDuration(m.restIn)} tracked work` : "Offline — reconnect to sync", enabled: false },
+    { label: v.connected ? m.breakText : "Offline — reconnect to sync", enabled: false },
     { type: "separator" },
     { label: v.state.mode === "idle" ? "Start / resume tracking" : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode !== "idle" || m.canStart), click: () => void toggle() },
     ...(m.canSkipRest ? [{ label: "Skip break and keep working", enabled: v.ready && !v.busy, click: () => void engine.command({ type: "skip-rest" }).catch(() => {}) }] : []),
@@ -302,10 +304,10 @@ async function start() {
     mini = createMini();
     await runSmoke({ main, mini, engine, icons, request, tray });
     if (powerCheck) {
-      mini.destroy(); mini = undefined; main.hide(); engine.tick();
-      app.getAppMetrics();
-      await new Promise(resolve => setTimeout(resolve, 20_000));
-      console.log("HIDDEN_IDLE_SAMPLE " + JSON.stringify(app.getAppMetrics().map(m => ({ type: m.type, cpuPercent: m.cpu.percentCPUUsage, workingSetKB: m.memory.workingSetSize }))));
+      const { runPowerCheck } = await import("./power-check");
+      mini.destroy(); mini = undefined;
+      const seconds = Number(process.argv.find(a => a.startsWith("--power-seconds="))?.split("=")[1]) || 20;
+      await runPowerCheck({ main, engine, mini: () => mini, setMini: on => changeSettings({ mini: on }), stats, seconds });
     }
     quitting = true;
     app.exit(0);

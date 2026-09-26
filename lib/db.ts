@@ -6,6 +6,7 @@ import {
 } from "./app-state";
 import { Statement, ensureSchema, getSql } from "./sql";
 import { DEFAULT_PRIORITY, isPriority } from "./weights";
+import { sanitizeRestSettings } from "./rest";
 import { configureAccountTracking, importAccountTracking } from "./tracking-db";
 import { AppState, Recommendation, Task, User } from "./types";
 
@@ -220,8 +221,9 @@ export async function loadState(userId: string): Promise<AppState> {
       end_time: string;
       recommendation: string | null;
       schedule: string | null;
+      rest_settings: string | null;
     }>(
-      `SELECT end_time, recommendation, schedule FROM prefs WHERE user_id = $1`,
+      `SELECT end_time, recommendation, schedule, rest_settings FROM prefs WHERE user_id = $1`,
       [userId],
     )
   )[0];
@@ -231,6 +233,7 @@ export async function loadState(userId: string): Promise<AppState> {
     recommendation: parseJson<Recommendation>(prefs?.recommendation),
     schedule: sanitizeSchedule(parseJson<unknown>(prefs?.schedule)),
     endTime: sanitizeEndTime(prefs?.end_time),
+    rest: sanitizeRestSettings(parseJson<unknown>(prefs?.rest_settings)),
   };
 }
 
@@ -247,17 +250,28 @@ function parseJson<T>(raw: string | null | undefined): T | null {
  * Replace a user's whole state in one transaction. The client owns the task
  * list wholesale, so a full swap is both simpler and safer than diffing.
  *
- * `keepPriority` names tasks that arrived with no priority at all: the sender
- * predates priorities, so it has not chosen low — it simply cannot see the
- * field. Those tasks keep whatever priority the account already stores, or an
- * older phone would reset every priority the next time it saved.
+ * `preserve` covers fields a client built before them cannot see, and so has
+ * not chosen — it simply sends none. Without it an older phone would reset
+ * them the next time it saved:
+ * - `priority` names tasks that arrived with no priority field; they keep the
+ *   priority the account already stores.
+ * - `rest` means the payload had no rest settings; the stored ones stay.
  */
 export async function saveState(
   userId: string,
   incoming: AppState,
-  keepPriority: ReadonlySet<string> = new Set(),
+  preserve: { priority?: ReadonlySet<string>; rest?: boolean } = {},
 ): Promise<void> {
   const state = sanitizeState(incoming);
+  const keepPriority = preserve.priority ?? new Set<string>();
+
+  if (preserve.rest) {
+    const [row] = await query<{ rest_settings: string | null }>(
+      `SELECT rest_settings FROM prefs WHERE user_id = $1`,
+      [userId],
+    );
+    state.rest = sanitizeRestSettings(parseJson<unknown>(row?.rest_settings));
+  }
 
   if (keepPriority.size > 0) {
     const stored = new Map(
@@ -301,22 +315,24 @@ export async function saveState(
   });
 
   statements.push({
-    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule)
-                VALUES ($1, $2, $3, $4)
+    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings)
+                VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (user_id) DO UPDATE SET
                 end_time = excluded.end_time,
                 recommendation = excluded.recommendation,
-                schedule = excluded.schedule`,
+                schedule = excluded.schedule,
+                rest_settings = excluded.rest_settings`,
     params: [
       userId,
       state.endTime,
       state.recommendation ? JSON.stringify(state.recommendation) : null,
       state.schedule ? JSON.stringify(state.schedule) : null,
+      JSON.stringify(state.rest),
     ],
   });
 
   await ensureSchema();
   await getSql().transaction(statements);
-  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime);
-  await configureAccountTracking(userId, state.tasks, state.endTime);
+  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest);
+  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest);
 }

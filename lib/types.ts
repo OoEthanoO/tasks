@@ -1,5 +1,6 @@
 import { DateKey } from "./dates";
 import type { TrackingState } from "./tracking";
+import type { RestSettings } from "./rest";
 
 /** Scales a task's due-date weight: low ×1, medium ×2, high ×4. */
 export type Priority = "low" | "medium" | "high";
@@ -57,4 +58,6 @@ export type AppState = {
   recommendation: Recommendation | null;
   schedule: Schedule | null;
   endTime: string;
+  /** Work/rest cycle, or breaks off. A preference, like the end time. */
+  rest: RestSettings;
 };

@@ -31,7 +31,7 @@ function Mini() {
     <div className="mini-state"><i className="status-dot" />{m.label}<span>{!view.connected ? "OFFLINE" : view.accountId ? "SYNCED" : "THIS PC"}</span></div>
     <h1 title={m.title}>{m.title}</h1>
     <div className="mini-clock">{formatDuration(view.state.mode === "rest" ? m.remaining : m.elapsed, true)}</div>
-    <p className="mini-sub">{view.state.mode === "rest" ? "Rest remaining · work resumes automatically" : view.state.mode === "work" ? `${formatDuration(m.remaining)} left on task · break in ${formatDuration(m.restIn)}` : "Choose a task or resume your daily targets."}</p>
+    <p className="mini-sub">{view.state.mode === "rest" ? "Rest remaining · work resumes automatically" : view.state.mode === "work" ? `${formatDuration(m.remaining)} left on task${m.restIn === null ? "" : ` · break in ${formatDuration(m.restIn)}`}` : "Choose a task or resume your daily targets."}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current target progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>
     <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>RESTED</span><strong>{formatDuration(view.state.restMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(remainingWorkTime(view.state))}</strong></div></div>
     <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || view.state.mode === "idle" && !m.canStart} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start / resume" : "Pause tracking"}</button>{m.canSkipRest

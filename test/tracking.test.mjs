@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
-const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, restOwed, formatDuration, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
+const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, restSettings, upcomingTrackingEvents, restOwed, formatDuration, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
+const { DEFAULT_REST } = require("../.test-build/rest.js");
 const { commandTracking, loadTracking, readAccountTracking, configureAccountTracking, TrackingConflict } = require("../.test-build/tracking-db.js");
 const { saveState, loadState } = require("../.test-build/db.js");
 const MIN = 60_000;
@@ -98,6 +99,74 @@ check("skipping a break goes straight back to work and restarts the 90-minute st
   const upcoming=upcomingTrackingEvents(s,T+100*MIN);
   assert.ok(!upcoming.some(e=>e.type==="rest-complete"&&e.at===T+120*MIN));
   assert.ok(upcoming.some(e=>e.type==="rest-start"&&e.at===T+190*MIN));
+});
+const custom=(rest,list=tasks,end="18:00")=>createTracking(list,end,"UTC",T,rest);
+check("custom work and rest lengths drive breaks, alerts and capacity", () => {
+  const s=custom({enabled:true,workMinutes:25,restMinutes:5},tasks,"10:00");
+  // 120 wall minutes: 25 of work, a 5-minute break, then three more 25/5 cycles.
+  near(remainingWorkTime(s),100*MIN);
+  const out=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),T+31*MIN);
+  near(out.state.workMs,26*MIN); near(out.state.restMs,5*MIN); assert.equal(out.state.mode,"work");
+  const soon=out.events.find(e=>e.type==="rest-soon"), rest=out.events.find(e=>e.type==="rest-start");
+  assert.equal(soon.at,T+20*MIN); assert.equal(soon.body,"Five more minutes of tracked work, then a 5-minute break.");
+  assert.equal(rest.at,T+25*MIN); assert.equal(rest.body,"25 minutes of work complete. Now tracking a 5-minute break.");
+  assert.ok(out.events.some(e=>e.type==="rest-complete"&&e.at===T+30*MIN));
+});
+check("with breaks off, the whole day is work and no break ever starts", () => {
+  const s=custom({enabled:false,workMinutes:90,restMinutes:30},[task("a")]);
+  near(remainingWorkTime(s),600*MIN);
+  const out=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),T+200*MIN);
+  near(out.state.workMs,200*MIN); near(out.state.restMs,0); near(out.state.cycleWorkMs,0); assert.equal(out.state.mode,"work");
+  assert.ok(!out.events.some(e=>e.type.startsWith("rest")));
+  assert.equal(restOwed(out.state),false);
+  // There is no break to skip, so a running task carries on.
+  assert.equal(actOnTracking(out.state,{type:"skip-rest"},"device-1",T+200*MIN).taskId,"a");
+});
+check("changing the lengths mid-day keeps earned time and moves only the break to come", () => {
+  const s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+60*MIN).state;
+  // Shortening the stretch below what is already done makes the break due now.
+  const shorter=configureTracking(s,tasks,"18:00",T+60*MIN,{enabled:true,workMinutes:45,restMinutes:15});
+  near(shorter.workMs,60*MIN); near(shorter.cycleWorkMs,45*MIN); assert.equal(restOwed(shorter),true);
+  const next=advanceTracking(shorter,T+61*MIN);
+  assert.equal(next.state.mode,"rest"); assert.ok(next.events.some(e=>e.type==="rest-start"&&e.at===T+60*MIN));
+  // A break already past a shorter length ends straight away; rest taken stays.
+  const resting=advanceTracking(next.state,T+70*MIN).state;
+  const shortRest=configureTracking(resting,tasks,"18:00",T+70*MIN,{enabled:true,workMinutes:45,restMinutes:5});
+  const after=advanceTracking(shortRest,T+71*MIN);
+  assert.equal(after.state.mode,"work"); near(after.state.restMs,10*MIN);
+  assert.ok(after.events.some(e=>e.type==="rest-complete"&&e.at===T+70*MIN));
+});
+check("turning breaks off mid-break goes back to work; turning them on starts a fresh stretch", () => {
+  const resting=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
+  const off=configureTracking(resting,tasks,"18:00",T+100*MIN,{...DEFAULT_REST,enabled:false});
+  assert.equal(off.mode,"work"); assert.equal(off.taskId,"first"); near(off.restMs,10*MIN); near(off.cycleWorkMs,0);
+  // A skipped break that was waiting goes too.
+  const skipped=actOnTracking(resting,{type:"skip-rest"},"device-1",T+100*MIN);
+  assert.ok(skipped.deferredBreak);
+  assert.equal(configureTracking(skipped,tasks,"18:00",T+100*MIN,{...DEFAULT_REST,enabled:false}).deferredBreak,undefined);
+  const on=configureTracking(advanceTracking(off,T+130*MIN).state,tasks,"18:00",T+130*MIN,DEFAULT_REST);
+  near(on.cycleWorkMs,0); assert.equal(restOwed(on),false);
+  assert.equal(advanceTracking(on,T+219*MIN).state.mode,"work");
+  assert.equal(advanceTracking(on,T+221*MIN).state.mode,"rest");
+});
+check("short cycles integrate a whole day without running out of loop passes", () => {
+  // 10/1 over 600 minutes: 54 full cycles, then 6 more minutes of work.
+  const s=custom({enabled:true,workMinutes:10,restMinutes:1},[task("a")]);
+  near(remainingWorkTime(s),546*MIN);
+  const end=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),dayEnd(s)).state;
+  near(end.workMs,546*MIN); near(end.restMs,54*MIN);
+});
+check("rest settings are part of the timer's configuration and are validated", () => {
+  assert.notEqual(trackingConfigKey(tasks,"18:00",DEFAULT_REST),trackingConfigKey(tasks,"18:00",{...DEFAULT_REST,restMinutes:20}));
+  assert.equal(trackingConfigKey(tasks,"18:00"),trackingConfigKey(tasks,"18:00",DEFAULT_REST));
+  const pomodoro=custom({enabled:true,workMinutes:25,restMinutes:5});
+  assert.ok(parseTracking(JSON.parse(JSON.stringify(pomodoro))));
+  assert.equal(parseTracking({...pomodoro,cycleWorkMs:26*MIN}),null);
+  assert.equal(parseTracking({...fresh(),rest:{enabled:true,workMinutes:3,restMinutes:5}}),null);
+  assert.equal(parseTracking({...fresh(),rest:"pomodoro"}),null);
+  // Timers from before the setting existed run 90/30.
+  const legacy=fresh(); delete legacy.rest;
+  assert.ok(parseTracking(legacy)); near(remainingWorkTime(legacy),450*MIN);
 });
 check("pausing after a skip brings the skipped break back, where it left off", () => {
   let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
@@ -493,11 +562,11 @@ const pg=new PGlite();
 setSql({ query:async(text,params=[]) => (await pg.query(text,params)).rows, transaction:async statements=>pg.transaction(async tx=>{ for(const s of statements) await tx.query(s.text,s.params??[]); }) });
 await ensureSchema();
 for (const id of ["timer-alice","timer-bob"]) await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)",[id,new Date(T).toISOString()]);
-let shared=await commandTracking("timer-alice",0,{type:"start"},"device-1","UTC",tasks,"18:00",T);
+let shared=await commandTracking("timer-alice",0,{type:"start"},"device-1","UTC",tasks,"18:00",DEFAULT_REST,T);
 assert.equal(shared.revision,1); count++;
 const races=await Promise.allSettled([
-  commandTracking("timer-alice",1,{type:"start",taskId:"second"},"device-2","UTC",tasks,"18:00",T+10*MIN),
-  commandTracking("timer-alice",1,{type:"pause"},"device-3","UTC",tasks,"18:00",T+10*MIN),
+  commandTracking("timer-alice",1,{type:"start",taskId:"second"},"device-2","UTC",tasks,"18:00",DEFAULT_REST,T+10*MIN),
+  commandTracking("timer-alice",1,{type:"pause"},"device-3","UTC",tasks,"18:00",DEFAULT_REST,T+10*MIN),
 ]);
 assert.equal(races.filter(r=>r.status==="fulfilled").length,1); assert.ok(races.find(r=>r.status==="rejected").reason instanceof TrackingConflict); count++;
 shared=await loadTracking("timer-alice"); near(shared.workMs,10*MIN); assert.equal(shared.revision,2); count++;
@@ -505,33 +574,36 @@ assert.equal(await loadTracking("timer-bob"),null); count++;
 // Old clients still send whole-state PUTs. They cannot overwrite any timer fields.
 await saveState("timer-alice",{tasks,recommendation:null,schedule:null,endTime:"18:00"});
 assert.deepEqual(await loadTracking("timer-alice"),shared); count++;
-await configureAccountTracking("timer-alice",tasks.slice(1),"18:00",T+20*MIN);
+await configureAccountTracking("timer-alice",tasks.slice(1),"18:00",DEFAULT_REST,T+20*MIN);
 const changed=await loadTracking("timer-alice"); assert.ok(changed.revision>shared.revision); assert.deepEqual(changed.tasks,tasks.slice(1)); count++;
 assert.ok((await loadState("timer-alice")).tasks.length===3); count++;
 // A reset uses the same revision-checked command path as every other client.
 const accountBeforeReset=await loadState("timer-alice");
-const reset=await commandTracking("timer-alice",changed.revision,{type:"reset"},"device-reset","America/Toronto",tasks,"18:00",T+25*MIN);
+const reset=await commandTracking("timer-alice",changed.revision,{type:"reset"},"device-reset","America/Toronto",tasks,"18:00",DEFAULT_REST,T+25*MIN);
 assert.equal(reset.revision,changed.revision+1); assert.equal(reset.timeZone,"UTC");
 assert.equal(reset.mode,"idle"); assert.equal(reset.controllerId,"device-reset");
 assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0); near(reset.restMs,0); near(reset.cycleWorkMs,0); near(reset.cycleRestMs,0);
 assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
 for(const type of ["start","pause","reset"]) {
-  await assert.rejects(commandTracking("timer-alice",changed.revision,{type},"stale-device","UTC",tasks,"18:00",T+26*MIN),TrackingConflict);
+  await assert.rejects(commandTracking("timer-alice",changed.revision,{type},"stale-device","UTC",tasks,"18:00",DEFAULT_REST,T+26*MIN),TrackingConflict);
 }
 assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
 assert.deepEqual(await loadState("timer-alice"),accountBeforeReset);
 assert.equal(await loadTracking("timer-bob"),null); count++;
 await saveState("timer-alice",accountBeforeReset);
 assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
-const resumed=await commandTracking("timer-alice",reset.revision,{type:"start"},"device-3","UTC",tasks,"18:00",T+30*MIN);
+const resumed=await commandTracking("timer-alice",reset.revision,{type:"start"},"device-3","UTC",tasks,"18:00",DEFAULT_REST,T+30*MIN);
 near(advanceTracking(resumed,T+40*MIN).state.workMs,10*MIN);
 assert.equal(resumed.taskId,"first"); count++;
 // A priority change saved from any client reconfigures the shared timer.
 await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)",["timer-carol",new Date(T).toISOString()]);
-const carolTimer=await commandTracking("timer-carol",0,{type:"start"},"device-1","UTC",tasks,"18:00",T);
+const carolTimer=await commandTracking("timer-carol",0,{type:"start"},"device-1","UTC",tasks,"18:00",DEFAULT_REST,T);
 await saveState("timer-carol",{tasks:tasks.map(t=>t.id==="later"?{...t,priority:"high"}:t),recommendation:null,schedule:null,endTime:"18:00"});
 const carolAfter=await loadTracking("timer-carol");
 assert.ok(carolAfter.revision>carolTimer.revision); assert.equal(carolAfter.tasks.find(t=>t.id==="later").priority,"high"); count++;
+// A rest change saved from any client reaches the shared timer too.
+await saveState("timer-carol",{tasks,recommendation:null,schedule:null,endTime:"18:00",rest:{enabled:true,workMinutes:50,restMinutes:10}});
+assert.deepEqual(restSettings(await loadTracking("timer-carol")),{enabled:true,workMinutes:50,restMinutes:10}); count++;
 await pg.query("DELETE FROM users WHERE id = $1",["timer-carol"]);
 // Upgrading on GET is revision-checked and persisted once, so other clients
 // inherit the same checkpoint rather than reinterpreting old elapsed work.

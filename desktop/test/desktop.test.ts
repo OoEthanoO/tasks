@@ -6,6 +6,7 @@ import { syncDelay, wakeDelay } from "../src/power";
 import { trustedPage, validateAction, validateApi } from "../src/security";
 import { actOnTracking, createTracking, dayEnd, WORK_CYCLE_MS, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import type { Task } from "../../lib/types";
+import { DEFAULT_REST } from "../../lib/rest";
 import type { ApiReply } from "../src/contract";
 
 const T = Date.parse("2026-09-15T10:00:00Z");
@@ -19,7 +20,7 @@ function setup(saved?: TrackingState) {
   const engine = new TrackerEngine({ now: () => now, notify: e => notifications.push(e), saveGuest: s => { written = structuredClone(s); }, publish: () => {}, request: async (path, method, body) => { requests.push({ path, method, body }); return respond(path, method, body); } }, "windows_test", saved);
   return { engine, notifications, requests, set now(value: number) { now = value; }, get now() { return now; }, get written() { return written; }, response(fn: typeof respond) { respond = fn; } };
 }
-function configure(x: ReturnType<typeof setup>) { x.engine.configure({ tasks: [task], endTime: "23:00", accountId: null }); }
+function configure(x: ReturnType<typeof setup>) { x.engine.configure({ tasks: [task], endTime: "23:00", rest: { ...DEFAULT_REST }, accountId: null }); }
 
 test("guest start, elapsed work, pause and reset use the shared model", async () => {
   const x = setup(); configure(x);
@@ -96,7 +97,7 @@ test("old in-flight account replies cannot overwrite the guest/account scope", a
   resolve({ status: 200, body: { tracking: createTracking([], "20:00", "UTC", T), serverNow: T } });
   await pending;
   assert.equal(x.engine.view().accountId, null); assert.equal(x.engine.view().state.taskId, "a");
-  assert.throws(() => x.engine.configure({ tasks: [], endTime: "20:00", accountId: "forged" }));
+  assert.throws(() => x.engine.configure({ tasks: [], endTime: "20:00", rest: { ...DEFAULT_REST }, accountId: "forged" }));
 });
 test("revision conflicts refresh and report instead of overwriting", async () => {
   const x = setup(); const remote = createTracking([task], "23:00", "UTC", T);

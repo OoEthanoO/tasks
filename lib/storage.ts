@@ -1,4 +1,5 @@
 import { sanitizeEndTime, sanitizeSchedule, sanitizeState } from "./app-state";
+import { sanitizeRestSettings } from "./rest";
 import { AppState, Recommendation, Task } from "./types";
 import { parseTracking } from "./tracking";
 
@@ -9,6 +10,7 @@ const KEYS = {
   recommendation: "yantasks.recommendation.v1",
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
+  rest: "yantasks.rest.v1",
 } as const;
 
 // Retain the retired key only for clearing guest data after migration.
@@ -47,6 +49,7 @@ export const localStore = {
       recommendation: read<Recommendation | null>(KEYS.recommendation, null),
       schedule: sanitizeSchedule(read<unknown>(KEYS.schedule, null)),
       endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),
+      rest: sanitizeRestSettings(read<unknown>(KEYS.rest, null)),
     };
   },
 
@@ -55,6 +58,7 @@ export const localStore = {
     write(KEYS.recommendation, state.recommendation);
     write(KEYS.schedule, state.schedule);
     write(KEYS.endTime, state.endTime);
+    write(KEYS.rest, state.rest);
   },
 
   /** Called after a successful migration — the data now lives in the account. */

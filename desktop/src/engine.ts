@@ -1,4 +1,4 @@
-import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, SKIPPED_REST_MESSAGE, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, restSettings, SKIPPED_REST_MESSAGE, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import { sanitizeState } from "../../lib/app-state";
 import type { ApiReply, DesktopState, GuestConfig, Settings } from "./contract";
 import { defaults } from "./contract";
@@ -66,8 +66,8 @@ export class TrackerEngine {
     if (input.accountId !== this.accountId) throw new Error("Account changed. Reopen the task list to reconnect.");
     if (this.accountId) return;
     const clean = sanitizeState(input);
-    if (trackingConfigKey(clean.tasks, clean.endTime) !== trackingConfigKey(this.snapshot.tasks, this.snapshot.endTime)) {
-      this.snapshot = configureTracking(this.snapshot, clean.tasks, clean.endTime, this.d.now());
+    if (trackingConfigKey(clean.tasks, clean.endTime, clean.rest) !== trackingConfigKey(this.snapshot.tasks, this.snapshot.endTime, restSettings(this.snapshot))) {
+      this.snapshot = configureTracking(this.snapshot, clean.tasks, clean.endTime, this.d.now(), clean.rest);
       this.snapshot.revision++;
       this.persist();
     }
@@ -105,7 +105,7 @@ export class TrackerEngine {
           if (epoch !== this.epoch) return;
           if (data.status !== 200) throw new Error("Cannot load your tasks.");
           const state = sanitizeState((data.body as { state: unknown }).state);
-          body.tracking = createTracking(state.tasks, state.endTime, localTimeZone(), body.serverNow);
+          body.tracking = createTracking(state.tasks, state.endTime, localTimeZone(), body.serverNow, state.rest);
         }
         this.adopt(body.tracking, body.serverNow);
       } catch (e) {

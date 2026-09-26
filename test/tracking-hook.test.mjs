@@ -6,7 +6,7 @@ const { createTracking } = require("../.test-build/tracking.js");
 
 // Exercise the shared hook through its injected hook/adapter boundary without
 // adding another React renderer (web and mobile use separate React versions).
-function mount(adapter, { tasks = [], endTime = "23:00" } = {}) {
+function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 } } = {}) {
   const slots = [];
   let index = 0, dirty = true, effects = [], result;
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -41,7 +41,7 @@ function mount(adapter, { tasks = [], endTime = "23:00" } = {}) {
       for (let i = 0; i < 12; i++) {
         if (dirty) {
           dirty = false; index = 0; effects = [];
-          result = useTracking(tasks, endTime, null, true, beforeCommand);
+          result = useTracking(tasks, endTime, rest, null, true, beforeCommand);
           for (const effect of effects) effect();
         }
         await new Promise(resolve => setImmediate(resolve));

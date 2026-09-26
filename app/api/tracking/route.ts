@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   try {
     const state = await loadState(user.id);
     const tracking = await commandTracking(user.id, body.revision, body.action as TrackingAction, body.controllerId,
-      validTimeZone(body.timeZone), state.tasks, state.endTime);
+      validTimeZone(body.timeZone), state.tasks, state.endTime, state.rest);
     return NextResponse.json({ tracking, serverNow: Date.now() });
   } catch (error) {
     if (error instanceof TrackingConflict) return NextResponse.json({ error: error.message }, { status: 409 });
