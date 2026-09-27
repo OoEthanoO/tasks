@@ -1201,3 +1201,53 @@ select {
     flex-wrap: wrap;
   }
 }
+
+/* Focus first; optional day settings stay out of the timer's way. */
+.focus-column { grid-column: 2; grid-row: 1; }
+.focus-column + .card { grid-column: 1; grid-row: 1; }
+@media (max-width: 900px) {
+  .focus-column, .focus-column + .card { grid-column: 1; grid-row: auto; }
+}
+.tracking-card .card-head { margin-bottom: 20px; gap: 12px; }
+.focus-cutoff { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.tracking-card .focus-label { margin-top: 0; }
+.tracking-card .focus-title { line-height: 1.3; margin: 10px 0 14px; }
+.tracking-card .focus-clock { font-size: clamp(42px, 5vw, 60px); line-height: 1.15; }
+.tracking-card .focus-action { min-height: 48px; margin: 18px 0 12px; }
+.break-preview { color: var(--text-dim); font-size: 12px; line-height: 1.6; padding: 10px 12px; background: var(--bg-elev-2); border-radius: 8px; margin: 0 0 14px; }
+.tracking-card .tracking-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 18px 0; margin: 8px 0; border-top: 1px solid var(--line-soft); }
+.tracking-card .tracking-totals strong { font-size: clamp(15px, 2vw, 18px); }
+.day-settings { border-top: 1px solid var(--line-soft); }
+.day-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 17px 0 2px; cursor: pointer; list-style: none; }
+.day-settings > summary::-webkit-details-marker { display: none; }
+.day-settings > summary::after { content: "+"; color: var(--text-dim); font-size: 22px; }
+.day-settings[open] > summary::after { content: "−"; }
+.day-settings > summary strong { font-size: 13px; font-weight: 600; }
+.day-settings > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.settings-summary { display: block; color: var(--text-dim); font-size: 11px; line-height: 1.6; margin-top: 4px; }
+.settings-body { padding-top: 16px; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; }
+.setting-row label { flex: 1; min-width: 0; cursor: pointer; }
+.setting-row strong { display: block; font-size: 13px; font-weight: 500; }
+.setting-help { display: block; color: var(--text-dim); font-size: 12px; line-height: 1.6; margin-top: 4px; }
+.setting-section { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 12px; }
+.setting-check { flex: 0 0 auto; width: 19px; height: 19px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.tracking-card .setting-row .time-input { width: 132px; min-width: 0; flex: 0 0 auto; }
+.tracking-card .minutes-input { width: 80px; min-width: 0; text-align: center; padding: 9px 8px; }
+.setting-duration, .duration-field { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-dim); font-size: 12px; }
+.setting-duration { padding-top: 8px; }
+.setting-note { flex-basis: 100%; font-size: 11px; line-height: 1.6; }
+.break-durations { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 10px 0 2px; }
+.break-durations > label { font-size: 12px; color: var(--text-dim); display: grid; gap: 6px; }
+.settings-save-note { color: var(--text-faint); font-size: 11px; margin: 12px 0 0; }
+.tracking-card .reset-progress { margin: 0; color: var(--danger); }
+.task.is-active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.task-progress progress { appearance: none; border-radius: 4px; overflow: hidden; background: var(--line-soft); }
+.task-progress progress::-webkit-progress-bar { background: var(--line-soft); border-radius: 4px; }
+.task-progress progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
+.task-progress progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
+@media (max-width: 420px) {
+  .tracking-card .setting-row .time-input { width: 114px; }
+  .tracking-card .tracking-totals { gap: 8px; }
+  .tracking-card .tracking-totals span { font-size: 11px; }
+}

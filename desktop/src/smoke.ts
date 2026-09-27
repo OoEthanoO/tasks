@@ -32,16 +32,34 @@ export async function runSmoke({ main, mini, engine, icons, request, tray }: { m
     throw new Error(`Renderer condition not met: ${expression}`);
   };
   await waitFor(`!!${minimumControl}`);
+  assert.equal(await main.webContents.executeJavaScript("document.querySelector('.day-settings').open"), false, "settings start collapsed so the timer stays prominent");
+  await main.webContents.executeJavaScript("document.querySelector('.day-settings > summary').click()");
+  await waitFor("document.querySelector('.day-settings').open");
   assert.equal(await main.webContents.executeJavaScript(`${minimumControl}.checked`), true);
+  const minutesControl = "document.querySelector('input[aria-label=\"Minimum daily target in minutes\"]')";
+  await main.webContents.executeJavaScript(`{
+    const input = ${minutesControl}; input.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '15');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }`);
+  // The smoke window is hidden, so DOM focus/blur are not guaranteed to fire.
+  // Let React commit the input draft, then deliver its normal bubbling blur event.
+  await new Promise(resolve => setTimeout(resolve, 50));
+  await main.webContents.executeJavaScript(`${minutesControl}.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))`);
+  await waitFor("localStorage.getItem('yantasks.minimumMinutes.v1') === '15'");
+  await waitFor("window.desktop.snapshot().then(v => v.state.minimumMinutes === 15)");
   await main.webContents.executeJavaScript(`${minimumControl}.click()`);
   await waitFor("localStorage.getItem('yantasks.minimumEnabled.v1') === 'false'");
   await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === false)");
   main.webContents.reload();
   await ready(main);
   await waitFor(`!!${minimumControl} && !${minimumControl}.checked`);
+  await main.webContents.executeJavaScript("document.querySelector('.day-settings > summary').click()");
+  await waitFor(`${minutesControl}?.value === '15'`);
   await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === false)");
   await main.webContents.executeJavaScript(`${minimumControl}.click()`);
   await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === true)");
+  await waitFor("window.desktop.snapshot().then(v => v.state.minimumMinutes === 15)");
   await assert.rejects(main.webContents.executeJavaScript("window.desktop.api({path:'https://example.com', method:'GET'})"));
   assert.equal((await request("/api/state")).status, 503);
   // Check Electron's real session transport preserves httpOnly cookies. This

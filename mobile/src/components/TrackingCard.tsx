@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Switch, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
+import { Pressable, Switch, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
 import { sanitizeEndTime } from "../../../lib/app-state";
 import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, restCycleMs, restOwed, restSettings, skipRestHint, workCycleMs } from "../../../lib/tracking";
 import { clampMinutes, REST_MINUTES, RestSettings, WORK_MINUTES } from "../../../lib/rest";
+import { MINIMUM_MINUTES } from "../../../lib/minimum";
 import { Tracker } from "../useTracking";
 import { themed, useStyles, useTheme } from "../theme";
 import { Banner, Btn, Card, CardHead } from "./ui";
@@ -12,7 +13,7 @@ import ConfirmSheet from "./ConfirmSheet";
 function MinutesField({ label, value, range, onCommit, style }: { label: string; value: number; range: { min: number; max: number }; onCommit: (value: number) => void; style: StyleProp<TextStyle> }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
-  return <TextInput style={style} value={draft} onChangeText={setDraft} keyboardType="number-pad" maxLength={3} accessibilityLabel={label}
+  return <TextInput style={style} value={draft} onChangeText={setDraft} keyboardType="number-pad" maxLength={String(range.max).length} accessibilityLabel={label}
     onEndEditing={() => {
       const next = draft.trim() === "" ? value : clampMinutes(Number(draft), range, value);
       setDraft(String(next));
@@ -20,16 +21,18 @@ function MinutesField({ label, value, range, onCommit, style }: { label: string;
     }} />;
 }
 
-export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange }: {
+export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
   tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; rest: RestSettings; onRestChange: (value: RestSettings) => void;
   unweighted: boolean; onUnweightedChange: (value: boolean) => void;
   minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
+  minimumMinutes: number; onMinimumMinutesChange: (value: number) => void;
 }) {
   const s = useStyles(styles);
   const { c } = useTheme();
   const state = t.state;
   const [draftEnd, setDraftEnd] = useState(endTime);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
   useEffect(() => setDraftEnd(endTime), [endTime]);
   const current = t.progress.find(p => p.task.id === state.taskId);
@@ -39,36 +42,11 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, res
   const breakDue = !ended && restOwed(state);
   return <Card>
     <CardHead title="Today’s focus" />
-    <View style={s.controls}>
-      <Text style={s.hint}>Work day ends at</Text>
-      <TextInput style={s.input} value={draftEnd} onChangeText={setDraftEnd} onEndEditing={e => { const clean = sanitizeEndTime(e.nativeEvent.text); setDraftEnd(clean); onEndTimeChange(clean); }} accessibilityLabel="Work day end time, 24 hour clock" maxLength={5} keyboardType="numbers-and-punctuation" />
-    </View>
-    <View style={s.controls}>
-      <Text style={s.hint}>Unweighted</Text>
-      <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Every open task has weight 1. Turn off to restore due-date and priority weights." trackColor={{ true: c.accent, false: c.line }} />
-    </View>
-    <Text style={s.hint}>When enabled, every open task has weight 1. Turn off to restore due-date and priority weights.</Text>
-    <View style={s.controls}>
-      <Text style={s.hint}>30-minute minimum</Text>
-      <Switch value={minimumEnabled} onValueChange={onMinimumChange} accessibilityLabel="30-minute minimum" accessibilityHint="Skip tasks whose daily target is under 30 minutes. Turn off to allow smaller shares in either weighting mode. The first eligible task is always kept." trackColor={{ true: c.accent, false: c.line }} />
-    </View>
-    <Text style={s.hint}>Skip tasks whose daily target is under 30 minutes. Turn off to allow smaller shares in either weighting mode. The first eligible task is always kept.</Text>
-    <View style={s.controls}>
-      <Text style={s.hint}>Breaks</Text>
-      <Switch value={rest.enabled} onValueChange={enabled => onRestChange({ ...rest, enabled })} accessibilityLabel="Take breaks" trackColor={{ true: c.accent, false: c.line }} />
-    </View>
-    {rest.enabled && <View style={[s.controls, s.wrap]}>
-      <Text style={s.hint}>Work</Text>
-      <MinutesField style={[s.input, s.minutes]} label="Minutes of work before each break" value={rest.workMinutes} range={WORK_MINUTES} onCommit={workMinutes => onRestChange({ ...rest, workMinutes })} />
-      <Text style={s.hint}>min per</Text>
-      <MinutesField style={[s.input, s.minutes]} label="Minutes of rest in each break" value={rest.restMinutes} range={REST_MINUTES} onCommit={restMinutes => onRestChange({ ...rest, restMinutes })} />
-      <Text style={s.hint}>min of rest</Text>
-    </View>}
-    <Text style={s.hint}>{state.timeZone} · resets at midnight</Text>
+    <Text style={s.hint}>Work day ends at {endTime}</Text>
     <Text style={s.label}>{!t.ready ? "LOADING TIMER…" : resting ? "RESTING" : state.mode === "work" ? "WORKING ON" : ended ? "DAY COMPLETE" : "PAUSED"}</Text>
     <Text style={s.title}>{resting ? "Take a breather." : current?.task.title ?? (ended ? "You’re done for today." : "Ready when you are.")}</Text>
     <Text style={s.clock} accessibilityRole="timer">{formatDuration(resting ? restCycleMs(state) - state.cycleRestMs : current?.trackedMs ?? state.workMs, true)}</Text>
-    <Text style={s.hint}>{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start with the first unfinished task in your list, or choose below."}</Text>
+    <Text style={s.hint}>{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start the first unfinished task, or choose one from your list."}</Text>
     <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (state.mode === "idle" && !canStart)} label={t.busy ? "Syncing…" : state.mode === "idle" ? restOwed(state) ? "Resume rest" : "Start working" : "Pause tracking"} onPress={() => void t.command({ type: state.mode === "idle" ? "start" : "pause" })} />
     {breakDue && <Btn tone="ghost" label="Skip break and keep working" disabled={!t.ready || t.busy} onPress={() => void t.command({ type: "skip-rest" })} style={{ marginTop: -8, marginBottom: 8 }} />}
     {breakDue && <Text style={[s.hint, { marginBottom: 12 }]}>{skipRestHint(state)}</Text>}
@@ -80,19 +58,63 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, res
       <View><Text style={s.hint}>Rested today</Text><Text style={s.total}>{formatDuration(state.restMs, true)}</Text></View>
       <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(t.remainingWorkMs)}</Text></View>
     </View>
-    <Btn tone="danger" label="Reset today’s progress" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} style={{ marginBottom: 12 }} />
-    <Text style={s.explainer}>Remaining targets fit the work time left after reserving breaks. Logged time stays fixed; unfinished targets balance by weight.</Text>
-    <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
-    <Text style={s.hint}>Alerts follow the device that last started or switched tracking. Open this app to refresh alerts after changing the timer elsewhere.</Text>
+    <Pressable style={s.settingsHeader} accessibilityRole="button" accessibilityLabel="Day settings" accessibilityState={{ expanded: settingsOpen }} onPress={() => setSettingsOpen(!settingsOpen)}>
+      <View style={{ flex: 1 }}><Text style={s.settingsTitle}>Day settings</Text><Text style={s.hint}>{unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"} · {rest.enabled ? `${rest.workMinutes}/${rest.restMinutes} breaks` : "No breaks"}</Text></View>
+      <Text style={s.settingsTitle}>{settingsOpen ? "−" : "+"}</Text>
+    </Pressable>
+    {settingsOpen && <View style={s.settingsBody}>
+    <View style={s.controls}>
+      <Text style={s.hint}>Work day ends at</Text>
+      <TextInput style={s.input} value={draftEnd} onChangeText={setDraftEnd} onEndEditing={e => { const clean = sanitizeEndTime(e.nativeEvent.text); setDraftEnd(clean); onEndTimeChange(clean); }} accessibilityLabel="Work day end time, 24 hour clock" maxLength={5} keyboardType="numbers-and-punctuation" />
+    </View>
+    <View style={s.controls}>
+      <Text style={s.hint}>Unweighted</Text>
+      <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Give every open task equal weight." trackColor={{ true: c.accent, false: c.line }} />
+    </View>
+    <Text style={s.hint}>Give every open task equal weight.</Text>
+    <View style={s.controls}>
+      <Text style={s.hint}>Daily minimum</Text>
+      <Switch value={minimumEnabled} onValueChange={onMinimumChange} accessibilityLabel="Daily minimum" accessibilityHint={`Skip tasks whose daily target is under ${minimumMinutes} minutes. The first eligible task is always kept.`} trackColor={{ true: c.accent, false: c.line }} />
+    </View>
+    <View style={s.controls}>
+      <MinutesField style={[s.input, s.minutes]} label="Minimum daily target in minutes" value={minimumMinutes} range={MINIMUM_MINUTES} onCommit={onMinimumMinutesChange} />
+      <Text style={s.hint}>min per task</Text>
+    </View>
+    <Text style={s.hint}>Skip daily targets below {minimumMinutes} minutes. The first eligible task is always kept.</Text>
+    <View style={s.controls}>
+      <Text style={s.hint}>Breaks</Text>
+      <Switch value={rest.enabled} onValueChange={enabled => onRestChange({ ...rest, enabled })} accessibilityLabel="Take breaks" trackColor={{ true: c.accent, false: c.line }} />
+    </View>
+    {rest.enabled && <View style={[s.controls, s.wrap]}>
+      <Text style={s.hint}>Work</Text>
+      <MinutesField style={[s.input, s.minutes]} label="Minutes of work before each break" value={rest.workMinutes} range={WORK_MINUTES} onCommit={workMinutes => onRestChange({ ...rest, workMinutes })} />
+      <Text style={s.hint}>min per</Text>
+      <MinutesField style={[s.input, s.minutes]} label="Minutes of rest in each break" value={rest.restMinutes} range={REST_MINUTES} onCommit={restMinutes => onRestChange({ ...rest, restMinutes })} />
+      <Text style={s.hint}>min of rest</Text>
+    </View>}
+    <Text style={s.hint}>{state.timeZone} · settings save automatically</Text>
+    <View style={s.settingsSection}>
+      <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
+      <Text style={s.hint}>Alerts follow the device that last started or switched tracking. Open this app to refresh alerts after changing the timer elsewhere.</Text>
+    </View>
+    <View style={s.settingsSection}>
+      <Text style={s.explainer}>Targets fit the work time left after breaks. Settings change future targets, never time already logged. Progress resets at midnight.</Text>
+      <Btn tone="ghost" label="Reset today’s progress…" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} />
+    </View>
+    </View>}
     {confirmReset && <ConfirmSheet title="Reset today’s progress?" body={RESET_PROGRESS_CONFIRMATION} confirmLabel="Reset progress" cancelLabel="Keep progress" onCancel={() => setConfirmReset(false)} onConfirm={() => { setConfirmReset(false); void t.command({ type: "reset" }); }} />}
   </Card>;
 }
 const styles = themed(c => ({
-  controls: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
+  settingsHeader: { flexDirection: "row", alignItems: "center", gap: 12, borderTopWidth: 1, borderColor: c.line, paddingTop: 16, minHeight: 60 },
+  settingsTitle: { color: c.text, fontSize: 14, fontWeight: "600", marginBottom: 4 },
+  settingsBody: { paddingTop: 20, gap: 10 },
+  settingsSection: { borderTopWidth: 1, borderColor: c.line, paddingTop: 14, marginTop: 8 },
+  controls: { flexWrap: "wrap", flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
   wrap: { flexWrap: "wrap", gap: 8 },
-  minutes: { minWidth: 64, textAlign: "center" },
+  minutes: { width: 80, minWidth: 0, textAlign: "center" },
   input: { color: c.text, backgroundColor: c.bg, borderWidth: 1, borderColor: c.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, minWidth: 90, fontSize: 16 },
-  label: { color: c.accent, fontSize: 11, fontWeight: "700", letterSpacing: 1.5, marginTop: 26 },
+  label: { color: c.accent, fontSize: 11, fontWeight: "700", letterSpacing: 1.5, marginTop: 18 },
   title: { color: c.text, fontSize: 25, fontWeight: "700", marginTop: 8 },
   clock: { color: c.text, fontSize: 46, fontWeight: "600", fontVariant: ["tabular-nums"], marginVertical: 8 },
   hint: { color: c.dim, fontSize: 12, lineHeight: 18 },

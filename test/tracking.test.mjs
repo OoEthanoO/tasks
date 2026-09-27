@@ -149,6 +149,47 @@ check("minimum off persists through reset, rollover and task edits; legacy defau
   assert.equal(trackingConfigKey(tasks, "08:20"), trackingConfigKey(tasks, "08:20", DEFAULT_REST, false, true));
   assert.notEqual(trackingConfigKey(tasks, "08:20"), trackingConfigKey(tasks, "08:20", DEFAULT_REST, false, false));
 });
+check("custom minimums control allocation and labels in either weighting mode", () => {
+  const list = [task("a"), task("b"), task("c")];
+  for (const unweighted of [false, true]) for (const minimum of [1, 5, 15, 30, 45, 120, 1440]) {
+    const s = createTracking(list, "09:30", "UTC", T, DEFAULT_REST, unweighted, true, minimum);
+    const p = taskProgress(s), kept = Math.max(1, Math.min(3, Math.floor(90 / minimum)));
+    assert.equal(p.filter(p => !p.skipped).length, kept);
+    for (const [i, entry] of p.entries()) {
+      near(entry.targetMs, i < kept ? 90 * MIN / kept : 0);
+      assert.equal(entry.minimumMs, minimum * MIN);
+    }
+    const running = actOnTracking(s, { type: "start" }, "device-1", T);
+    const projected = advanceTracking(running, dayEnd(s));
+    assert.deepEqual(upcomingTrackingEvents(running, T), projected.events);
+    for (const entry of p) near(projected.state.taskMs[entry.task.id] ?? 0, entry.targetMs);
+  }
+  const weighted = createTracking([task("a"), task("b", "2026-09-15")], "08:15", "UTC", T, DEFAULT_REST, false, true, 5);
+  near(taskProgress(weighted)[0].targetMs, 10 * MIN); near(taskProgress(weighted)[1].targetMs, 5 * MIN);
+});
+check("editing custom minimums keeps earned work, breaks and the setting through reset and rollover", () => {
+  const list = [task("a"), task("b")];
+  const running = actOnTracking(createTracking(list, "08:20", "UTC", T), { type: "start" }, "device-1", T);
+  const shorter = configureTracking(running, list, "08:20", T + 8 * MIN, DEFAULT_REST, false, true, 5);
+  near(shorter.workMs, 8 * MIN); near(shorter.taskMs.a, 8 * MIN);
+  near(taskProgress(shorter)[1].remainingMs, 10 * MIN);
+  const longer = configureTracking(shorter, list, "08:20", shorter.cursor, DEFAULT_REST, false, true, 15);
+  assert.equal(taskProgress(longer)[1].skipped, true);
+  assert.deepEqual(longer.taskMs, shorter.taskMs); near(longer.cycleWorkMs, shorter.cycleWorkMs);
+  assert.equal(longer.controllerId, shorter.controllerId);
+  const off = configureTracking(longer, list, longer.endTime, longer.cursor, DEFAULT_REST, false, false);
+  assert.equal(off.minimumMinutes, 15); assert.ok(taskProgress(off).every(p => !p.skipped));
+  assert.equal(actOnTracking(off, { type: "reset" }, "device-1", off.cursor).minimumMinutes, 15);
+  assert.equal(advanceTracking(off, T + 24 * 60 * MIN).state.minimumMinutes, 15);
+  const onBreak = advanceTracking(actOnTracking(fresh(list), { type: "start" }, "device-1", T), T + 100 * MIN).state;
+  const changed = configureTracking(onBreak, list, onBreak.endTime, onBreak.cursor, DEFAULT_REST, false, true, 120);
+  for (const key of ["taskMs", "workMs", "restMs", "cycleWorkMs", "cycleRestMs", "controllerId", "taskId", "mode"]) assert.deepEqual(changed[key], onBreak[key]);
+  assert.equal(parseTracking(JSON.parse(JSON.stringify(changed))).minimumMinutes, 120);
+  for (const invalid of [0, 1441, 1.5, "15", null, NaN, Infinity]) assert.equal(parseTracking({ ...changed, minimumMinutes: invalid }), null);
+  const { minimumMinutes, ...legacy } = changed;
+  assert.ok(parseTracking(legacy)); assert.equal(taskProgress(legacy)[0].minimumMs, 30 * MIN);
+  assert.notEqual(trackingConfigKey(list, "08:20", DEFAULT_REST, false, true, 5), trackingConfigKey(list, "08:20", DEFAULT_REST, false, true, 15));
+});
 check("Start takes the first unfinished task in list order, not the heaviest", () => {
   assert.equal(actOnTracking(fresh(), {type:"start"}, "device-1", T).taskId, "first");
   // Nearest due date first; full ties keep saved order, as the list does.
@@ -792,6 +833,16 @@ try {
   const restored = await loadTracking("timer-minimum");
   assert.equal(restored.minimumEnabled, true); assert.equal(restored.unweighted, true);
   assert.deepEqual(restored.taskMs, synced.taskMs); assert.equal(taskProgress(restored)[1].skipped, true); count++;
+  await saveState("timer-minimum", { ...prefs, minimumEnabled: true, minimumMinutes: 5 });
+  const custom = await loadTracking("timer-minimum");
+  assert.equal((await loadState("timer-minimum")).minimumMinutes, 5);
+  assert.equal(custom.minimumMinutes, 5); assert.ok(taskProgress(custom).every(p => !p.skipped));
+  assert.deepEqual(custom.taskMs, synced.taskMs); count++;
+  await saveState("timer-minimum", { ...prefs, minimumEnabled: true }, { minimumMinutes: true });
+  assert.equal((await loadState("timer-minimum")).minimumMinutes, 5);
+  assert.deepEqual(await loadTracking("timer-minimum"), custom); count++;
+  const paused = await commandTracking("timer-minimum", custom.revision, { type: "pause" }, "device-1", "UTC", list, "08:20", DEFAULT_REST, Date.now(), true, true, 5);
+  assert.equal(paused.minimumMinutes, 5); assert.deepEqual(paused.taskMs, custom.taskMs); count++;
 } finally { Date.now = oldNow; }
 await pg.query("DELETE FROM users WHERE id = $1", ["timer-minimum"]);
 // Upgrading on GET is revision-checked and persisted once, so other clients

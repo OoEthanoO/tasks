@@ -7,6 +7,7 @@ import {
 import { Statement, ensureSchema, getSql } from "./sql";
 import { DEFAULT_PRIORITY, isPriority } from "./weights";
 import { sanitizeRestSettings } from "./rest";
+import { sanitizeMinimumMinutes } from "./minimum";
 import { configureAccountTracking, importAccountTracking } from "./tracking-db";
 import { AppState, Recommendation, Task, User } from "./types";
 
@@ -224,8 +225,9 @@ export async function loadState(userId: string): Promise<AppState> {
       rest_settings: string | null;
       unweighted: boolean;
       minimum_enabled: boolean;
+      minimum_minutes: number;
     }>(
-      `SELECT end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled FROM prefs WHERE user_id = $1`,
+      `SELECT end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled, minimum_minutes FROM prefs WHERE user_id = $1`,
       [userId],
     )
   )[0];
@@ -238,6 +240,7 @@ export async function loadState(userId: string): Promise<AppState> {
     rest: sanitizeRestSettings(parseJson<unknown>(prefs?.rest_settings)),
     unweighted: prefs?.unweighted === true,
     minimumEnabled: prefs?.minimum_enabled !== false,
+    minimumMinutes: sanitizeMinimumMinutes(prefs?.minimum_minutes),
   };
 }
 
@@ -262,11 +265,12 @@ function parseJson<T>(raw: string | null | undefined): T | null {
  * - `rest` means the payload had no rest settings; the stored ones stay.
  * - `unweighted` keeps the stored weighting mode when a legacy payload omits it.
  * - `minimumEnabled` keeps the stored minimum toggle when a legacy payload omits it.
+ * - `minimumMinutes` keeps the chosen duration when a legacy payload omits it.
  */
 export async function saveState(
   userId: string,
   incoming: AppState,
-  preserve: { priority?: ReadonlySet<string>; rest?: boolean; unweighted?: boolean; minimumEnabled?: boolean } = {},
+  preserve: { priority?: ReadonlySet<string>; rest?: boolean; unweighted?: boolean; minimumEnabled?: boolean; minimumMinutes?: boolean } = {},
 ): Promise<void> {
   const state = sanitizeState(incoming);
   const keepPriority = preserve.priority ?? new Set<string>();
@@ -321,15 +325,16 @@ export async function saveState(
   });
 
   statements.push({
-    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled, minimum_minutes)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (user_id) DO UPDATE SET
                 end_time = excluded.end_time,
                 recommendation = excluded.recommendation,
                 schedule = excluded.schedule,
                 rest_settings = excluded.rest_settings,
-                unweighted = CASE WHEN $8 THEN prefs.unweighted ELSE excluded.unweighted END,
-                minimum_enabled = CASE WHEN $9 THEN prefs.minimum_enabled ELSE excluded.minimum_enabled END`,
+                unweighted = CASE WHEN $9 THEN prefs.unweighted ELSE excluded.unweighted END,
+                minimum_enabled = CASE WHEN $10 THEN prefs.minimum_enabled ELSE excluded.minimum_enabled END,
+                minimum_minutes = CASE WHEN $11 THEN prefs.minimum_minutes ELSE excluded.minimum_minutes END`,
     params: [
       userId,
       state.endTime,
@@ -338,18 +343,21 @@ export async function saveState(
       JSON.stringify(state.rest),
       state.unweighted,
       state.minimumEnabled,
+      state.minimumMinutes,
       preserve.unweighted === true,
       preserve.minimumEnabled === true,
+      preserve.minimumMinutes === true,
     ],
   });
 
   await ensureSchema();
   await getSql().transaction(statements);
-  if (preserve.unweighted || preserve.minimumEnabled) {
-    const [prefs] = await query<{ unweighted: boolean; minimum_enabled: boolean }>("SELECT unweighted, minimum_enabled FROM prefs WHERE user_id = $1", [userId]);
+  if (preserve.unweighted || preserve.minimumEnabled || preserve.minimumMinutes) {
+    const [prefs] = await query<{ unweighted: boolean; minimum_enabled: boolean; minimum_minutes: number }>("SELECT unweighted, minimum_enabled, minimum_minutes FROM prefs WHERE user_id = $1", [userId]);
     if (preserve.unweighted) state.unweighted = prefs?.unweighted === true;
     if (preserve.minimumEnabled) state.minimumEnabled = prefs?.minimum_enabled !== false;
+    if (preserve.minimumMinutes) state.minimumMinutes = sanitizeMinimumMinutes(prefs?.minimum_minutes);
   }
-  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled);
-  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled);
+  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled, state.minimumMinutes);
+  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled, state.minimumMinutes);
 }

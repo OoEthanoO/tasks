@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from "react-native";
 import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
 import { dueBucket } from "../../../lib/grouping";
-import { MIN_DAILY_TARGET_MS, SKIPPED_EXPLANATION, TaskProgress, formatDuration } from "../../../lib/tracking";
+import { skippedExplanation, TaskProgress, formatDuration } from "../../../lib/tracking";
 import { Btn } from "./ui";
 import {
   DEFAULT_PRIORITY,
@@ -47,7 +47,7 @@ export default function TaskRow({
       onPress={onEdit}
       accessibilityRole="button"
       accessibilityLabel={`Edit ${task.title}`}
-      style={({ pressed }) => [s.row, pressed && { backgroundColor: c.elev2 }]}
+      style={({ pressed }) => [s.row, active && !task.completed && { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, backgroundColor: c.elev2 }, pressed && { backgroundColor: c.elev2 }]}
     >
       <Pressable
         onPress={onToggle}
@@ -77,7 +77,7 @@ export default function TaskRow({
         {progress && !task.completed && <>
           {progress.skipped ? <>
             <Text style={s.metaText}>{formatDuration(progress.trackedMs)} today</Text>
-            <Text style={s.metaText} accessibilityHint={SKIPPED_EXPLANATION}>Skipped today: under {formatDuration(MIN_DAILY_TARGET_MS)}</Text>
+            <Text style={s.metaText} accessibilityHint={skippedExplanation(progress.minimumMs)}>Skipped today: under {formatDuration(progress.minimumMs)}</Text>
           </> : <>
             <Text style={s.metaText}>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</Text>
             <Text style={[s.metaText, { color: progress.doneToday ? c.ok : c.accent }]}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</Text>

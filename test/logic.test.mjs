@@ -938,8 +938,9 @@ console.log("== plain Rest and legacy schedules ==");
   try {
     const loaded = localStore.load();
     eq(loaded.minimumEnabled, true, "guest minimum defaults on");
-    localStore.save({ ...loaded, minimumEnabled: false });
+    localStore.save({ ...loaded, minimumEnabled: false, minimumMinutes: 45 });
     eq(localStore.load().minimumEnabled, false, "guest minimum off survives refresh");
+    eq(localStore.load().minimumMinutes, 45, "custom guest minimum survives refresh while off");
     eq(loaded.schedule, generated, "the web guest store loads old schedules as plain Rest");
     eq("restMode" in loaded, false, "the web guest store ignores the retired preference key");
     localStore.save(loaded);
@@ -994,6 +995,7 @@ const {
   hasRestSettings,
   hasUnweightedSetting,
   hasMinimumSetting,
+  hasMinimumMinutes,
 } = require("../.test-build/app-state.js");
 const { sanitizeRestSettings, DEFAULT_REST } = require("../.test-build/rest.js");
 
@@ -1004,6 +1006,13 @@ eq(sanitizeRestSettings({ enabled: "yes", workMinutes: 52.6, restMinutes: "17" }
 eq(sanitizeState({ tasks: [] }).rest, DEFAULT_REST, "a state without rest settings gets the default");
 eq(sanitizeState({ tasks: [] }).unweighted, false, "legacy states use weighted mode");
 eq(sanitizeState({ tasks: [] }).minimumEnabled, true, "legacy states keep the minimum");
+eq(sanitizeState({ tasks: [] }).minimumMinutes, 30, "legacy states keep 30 minutes");
+eq(sanitizeState({ minimumMinutes: 45 }).minimumMinutes, 45, "custom minimum survives sanitization");
+eq(sanitizeState({ minimumMinutes: "45" }).minimumMinutes, 30, "minimum duration must be a number");
+eq(sanitizeState({ minimumMinutes: 0 }).minimumMinutes, 1, "minimum duration is at least one minute");
+eq(sanitizeState({ minimumMinutes: 10000 }).minimumMinutes, 1440, "minimum duration is bounded by a full day");
+eq(sanitizeState({ minimumMinutes: 14.7 }).minimumMinutes, 15, "minimum duration uses whole minutes");
+eq([hasMinimumMinutes({ minimumMinutes: 30 }), hasMinimumMinutes({}), hasMinimumMinutes(null)], [true, false, false], "legacy omission preserves the chosen duration");
 eq(sanitizeState({ minimumEnabled: false }).minimumEnabled, false, "minimum off survives sanitization");
 eq(sanitizeState({ minimumEnabled: "false" }).minimumEnabled, true, "minimum requires an explicit boolean false");
 eq([hasMinimumSetting({ minimumEnabled: false }), hasMinimumSetting({}), hasMinimumSetting(null)], [true, false, false], "legacy omission differs from explicitly turning off the minimum");

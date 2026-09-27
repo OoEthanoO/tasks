@@ -1,3 +1,4 @@
+import { DEFAULT_MINIMUM_MINUTES } from "./minimum";
 import { ensureSchema, getSql } from "./sql";
 import { actOnTracking, advanceTracking, configureTracking, createTracking, parseTracking, restSettings, trackingConfigKey, trackingDay, TrackingAction, TrackingState } from "./tracking";
 import { Task } from "./types";
@@ -23,22 +24,22 @@ async function replace(userId: string, previous: TrackingState, next: TrackingSt
   if (!rows.length) throw new TrackingConflict();
   return next;
 }
-export async function commandTracking(userId: string, revision: number, action: TrackingAction, controllerId: string, timeZone: string, tasks: Task[], endTime: string, rest: RestSettings, now = Date.now(), unweighted = false, minimumEnabled = true): Promise<TrackingState> {
+export async function commandTracking(userId: string, revision: number, action: TrackingAction, controllerId: string, timeZone: string, tasks: Task[], endTime: string, rest: RestSettings, now = Date.now(), unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): Promise<TrackingState> {
   await ensureSchema();
-  const initial = createTracking(tasks, endTime, timeZone, now, rest, unweighted, minimumEnabled);
+  const initial = createTracking(tasks, endTime, timeZone, now, rest, unweighted, minimumEnabled, minimumMinutes);
   await getSql().query("INSERT INTO tracking (user_id, state) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING", [userId, JSON.stringify(initial)]);
   const previous = (await loadTracking(userId))!;
   if (revision !== previous.revision) throw new TrackingConflict();
-  const configured = configureTracking(previous, tasks, endTime, now, rest, unweighted, minimumEnabled);
+  const configured = configureTracking(previous, tasks, endTime, now, rest, unweighted, minimumEnabled, minimumMinutes);
   return replace(userId, previous, actOnTracking(configured, action, controllerId, now));
 }
 /** Task edits checkpoint the old policy first; never reallocate already earned time. */
-export async function configureAccountTracking(userId: string, tasks: Task[], endTime: string, rest: RestSettings, now = Date.now(), unweighted = false, minimumEnabled = true): Promise<void> {
+export async function configureAccountTracking(userId: string, tasks: Task[], endTime: string, rest: RestSettings, now = Date.now(), unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): Promise<void> {
   for (let attempt = 0; attempt < 8; attempt++) {
     const previous = await loadTracking(userId);
-    if (!previous || trackingConfigKey(previous.tasks, previous.endTime, restSettings(previous), previous.unweighted, previous.minimumEnabled) === trackingConfigKey(tasks, endTime, rest, unweighted, minimumEnabled)) return;
+    if (!previous || trackingConfigKey(previous.tasks, previous.endTime, restSettings(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes)) return;
     try {
-      await replace(userId, previous, configureTracking(previous, tasks, endTime, now, rest, unweighted, minimumEnabled));
+      await replace(userId, previous, configureTracking(previous, tasks, endTime, now, rest, unweighted, minimumEnabled, minimumMinutes));
       return;
     } catch (error) { if (!(error instanceof TrackingConflict)) throw error; }
   }
@@ -57,9 +58,9 @@ export async function readAccountTracking(userId: string, now = Date.now()): Pro
 }
 
 /** Migration may seed an empty account, never replace its existing timer. */
-export async function importAccountTracking(userId: string, incoming: TrackingState, tasks: Task[], endTime: string, rest: RestSettings, now = Date.now(), unweighted = false, minimumEnabled = true): Promise<void> {
+export async function importAccountTracking(userId: string, incoming: TrackingState, tasks: Task[], endTime: string, rest: RestSettings, now = Date.now(), unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): Promise<void> {
   await ensureSchema();
-  const state = configureTracking(incoming, tasks, endTime, now, rest, unweighted, minimumEnabled);
+  const state = configureTracking(incoming, tasks, endTime, now, rest, unweighted, minimumEnabled, minimumMinutes);
   state.mode = "idle"; state.taskId = null; state.controllerId = null; state.revision = 0;
   await getSql().query("INSERT INTO tracking (user_id, state) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING", [userId, JSON.stringify(state)]);
 }

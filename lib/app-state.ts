@@ -9,6 +9,7 @@ import {
 import { DEFAULT_PRIORITY, isPriority, REST_LABEL } from "./weights";
 import { parseTracking } from "./tracking";
 import { DEFAULT_REST, sanitizeRestSettings } from "./rest";
+import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 
 export const DEFAULT_END_TIME = "23:00";
 
@@ -30,6 +31,7 @@ export function emptyState(): AppState {
     rest: { ...DEFAULT_REST },
     unweighted: false,
     minimumEnabled: true,
+    minimumMinutes: DEFAULT_MINIMUM_MINUTES,
   };
 }
 
@@ -206,6 +208,7 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
     rest: sanitizeRestSettings(raw.rest),
     unweighted: raw.unweighted === true,
     minimumEnabled: raw.minimumEnabled !== false,
+    minimumMinutes: sanitizeMinimumMinutes(raw.minimumMinutes),
   };
 }
 
@@ -225,6 +228,10 @@ export function hasUnweightedSetting(raw: unknown): boolean {
 
 export function hasMinimumSetting(raw: unknown): boolean {
   return isRecord(raw) && "minimumEnabled" in raw;
+}
+
+export function hasMinimumMinutes(raw: unknown): boolean {
+  return isRecord(raw) && "minimumMinutes" in raw;
 }
 
 /**

@@ -63,4 +63,5 @@ export type AppState = {
   /** Ignore due-date and priority multipliers without changing the tasks. */
   unweighted: boolean;
   minimumEnabled: boolean;
+  minimumMinutes: number;
 };

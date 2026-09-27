@@ -6,7 +6,7 @@ const { createTracking } = require("../.test-build/tracking.js");
 
 // Exercise the shared hook through its injected hook/adapter boundary without
 // adding another React renderer (web and mobile use separate React versions).
-function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 }, unweighted = false, minimumEnabled = true } = {}) {
+function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 }, unweighted = false, minimumEnabled = true, minimumMinutes = 30 } = {}) {
   const slots = [];
   let index = 0, dirty = true, effects = [], result;
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -39,11 +39,12 @@ function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true,
     get value() { return result; },
     setUnweighted(value) { unweighted = value; dirty = true; },
     setMinimumEnabled(value) { minimumEnabled = value; dirty = true; },
+    setMinimumMinutes(value) { minimumMinutes = value; dirty = true; },
     async flush() {
       for (let i = 0; i < 12; i++) {
         if (dirty) {
           dirty = false; index = 0; effects = [];
-          result = useTracking(tasks, endTime, rest, null, true, beforeCommand, unweighted, minimumEnabled);
+          result = useTracking(tasks, endTime, rest, null, true, beforeCommand, unweighted, minimumEnabled, minimumMinutes);
           for (const effect of effects) effect();
         }
         await new Promise(resolve => setImmediate(resolve));
@@ -137,15 +138,21 @@ tracker = mount(persistentAdapter, { tasks, endTime: "08:20" });
 try {
   await tracker.flush();
   assert.equal(tracker.value.progress[1].skipped, true);
+  tracker.setMinimumMinutes(5); await tracker.flush();
+  assert.equal(JSON.parse(saved).minimumMinutes, 5);
+  assert.equal(tracker.value.progress[1].skipped, false);
   tracker.setMinimumEnabled(false); await tracker.flush();
   assert.equal(JSON.parse(saved).minimumEnabled, false);
   assert.ok(tracker.value.progress.every(p => !p.skipped));
   tracker.unmount();
-  tracker = mount(persistentAdapter, { tasks, endTime: "08:20", minimumEnabled: false });
+  tracker = mount(persistentAdapter, { tasks, endTime: "08:20", minimumEnabled: false, minimumMinutes: 5 });
   await tracker.flush(); await tracker.value.command({ type: "start" }); await tracker.flush();
   assert.equal(tracker.value.state.minimumEnabled, false);
+  assert.equal(tracker.value.state.minimumMinutes, 5);
   Date.now = () => start + minute;
   tracker.setMinimumEnabled(true); await tracker.flush();
+  assert.equal(tracker.value.progress[1].skipped, false);
+  tracker.setMinimumMinutes(15); await tracker.flush();
   assert.equal(JSON.parse(saved).minimumEnabled, true);
   assert.equal(tracker.value.state.workMs, minute);
   assert.equal(tracker.value.progress[1].skipped, true);

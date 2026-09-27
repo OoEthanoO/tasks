@@ -13,7 +13,7 @@ import {
   formatWeight,
 } from "@/lib/weights";
 import PriorityPicker from "./PriorityPicker";
-import { MIN_DAILY_TARGET_MS, SKIPPED_EXPLANATION, TaskProgress, formatDuration } from "@/lib/tracking";
+import { skippedExplanation, TaskProgress, formatDuration } from "@/lib/tracking";
 
 type Props = {
   entries: WeightedTask[];
@@ -130,7 +130,7 @@ function TaskRow({
     maxProbability > 0 ? Math.max(3, (probability / maxProbability) * 100) : 0;
 
   return (
-    <div className={`task${task.completed ? " is-done" : ""}`}>
+    <div className={`task${task.completed ? " is-done" : ""}${active && !task.completed ? " is-active" : ""}`}>
       <input
         type="checkbox"
         className="check"
@@ -144,7 +144,7 @@ function TaskRow({
         {task.description && <p className="task-desc">{task.description}</p>}
         {progress && !task.completed && progress.skipped && <div className="task-progress">
           <span>{formatDuration(progress.trackedMs)} today</span>
-          <span className="daily-skipped" title={SKIPPED_EXPLANATION}>Skipped today: under {formatDuration(MIN_DAILY_TARGET_MS)}</span>
+          <span className="daily-skipped" title={skippedExplanation(progress.minimumMs)}>Skipped today: under {formatDuration(progress.minimumMs)}</span>
         </div>}
         {progress && !task.completed && !progress.skipped && <div className="task-progress">
           <span>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</span>
@@ -181,7 +181,7 @@ function TaskRow({
         task.completed
           ? "Completed tasks have weight 0 and are never picked"
           : progress?.skipped
-            ? SKIPPED_EXPLANATION
+            ? skippedExplanation(progress.minimumMs)
             : `${formatProbability(probability)} share of work time`
       }>
         <span className={`prob-value${probability <= 0 ? " is-zero" : ""}`}>

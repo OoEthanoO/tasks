@@ -71,6 +71,7 @@ const SCHEMA: string[] = [
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_settings TEXT`,
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS unweighted BOOLEAN NOT NULL DEFAULT FALSE`,
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS minimum_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
+  `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS minimum_minutes INTEGER NOT NULL DEFAULT 30`,
 
   // Tracking is deliberately separate from the legacy whole-state save. A
   // stale client can never overwrite the shared timer or its accumulated time.

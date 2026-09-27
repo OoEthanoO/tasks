@@ -1,3 +1,4 @@
+import { DEFAULT_MINIMUM_MINUTES } from "./minimum";
 import type * as React from "react";
 import { api, ApiError } from "./remote";
 import { Task } from "./types";
@@ -21,7 +22,7 @@ type Hooks = Pick<typeof React, "useState" | "useRef" | "useCallback" | "useMemo
 
 /** Inject React so Metro never resolves the web app's separate React copy. */
 export function createTrackingHook({ useState, useRef, useEffect, useCallback, useMemo }: Hooks, adapter: TrackingAdapter) {
-  return function useTracking(tasks: Task[], endTime: string, rest: RestSettings, accountId: string | null, enabled: boolean, beforeCommand: () => Promise<void>, unweighted = false, minimumEnabled = true) {
+  return function useTracking(tasks: Task[], endTime: string, rest: RestSettings, accountId: string | null, enabled: boolean, beforeCommand: () => Promise<void>, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES) {
     const [snapshot, setSnapshot] = useState<TrackingState | null>(null);
     const [clock, setClock] = useState(Date.now());
     const [ready, setReady] = useState(false);
@@ -31,7 +32,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     const [permission, setPermission] = useState("Checking alerts…");
     const [controller, setController] = useState("");
     const snapshotRef = useRef(snapshot); snapshotRef.current = snapshot;
-    const config = useRef({ tasks, endTime, rest, unweighted, minimumEnabled }); config.current = { tasks, endTime, rest, unweighted, minimumEnabled };
+    const config = useRef({ tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes }); config.current = { tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes };
     const scope = useRef(0);
     const offset = useRef(0);
     const fetching = useRef(false);
@@ -58,7 +59,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
 
     const adopt = useCallback((value: TrackingState | null, serverNow?: number) => {
       if (serverNow !== undefined) offset.current = serverNow - Date.now();
-      const next = value ?? createTracking(config.current.tasks, config.current.endTime, localTimeZone(), Date.now() + offset.current, config.current.rest, config.current.unweighted, config.current.minimumEnabled);
+      const next = value ?? createTracking(config.current.tasks, config.current.endTime, localTimeZone(), Date.now() + offset.current, config.current.rest, config.current.unweighted, config.current.minimumEnabled, config.current.minimumMinutes);
       // A slow poll must never replace a more recent command response.
       if (snapshotRef.current && next.revision < snapshotRef.current.revision) return;
       if (JSON.stringify(snapshotRef.current) !== JSON.stringify(next)) {
@@ -116,15 +117,15 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     useEffect(() => {
       const previous = snapshotRef.current;
       if (accountId || !ready || !previous) return;
-      if (trackingConfigKey(previous.tasks, previous.endTime, restSettings(previous), previous.unweighted, previous.minimumEnabled) === trackingConfigKey(tasks, endTime, rest, unweighted, minimumEnabled)) return;
-      const next = configureTracking(previous, tasks, endTime, Date.now(), rest, unweighted, minimumEnabled);
+      if (trackingConfigKey(previous.tasks, previous.endTime, restSettings(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes)) return;
+      const next = configureTracking(previous, tasks, endTime, Date.now(), rest, unweighted, minimumEnabled, minimumMinutes);
       next.revision++;
       adopt(next);
       void adapter.write(JSON.stringify(next)).catch(() => setError("Timer changes could not be saved on this device."));
-    }, [tasks, endTime, rest, unweighted, minimumEnabled, accountId, ready, adopt]);
+    }, [tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes, accountId, ready, adopt]);
 
     const projected = useMemo(() => snapshot ? advanceTracking(snapshot, clock) : null, [snapshot, clock]);
-    const state = projected?.state ?? createTracking(tasks, endTime, localTimeZone(), clock, rest, unweighted, minimumEnabled);
+    const state = projected?.state ?? createTracking(tasks, endTime, localTimeZone(), clock, rest, unweighted, minimumEnabled, minimumMinutes);
     const progress = useMemo(() => taskProgress(state), [state]);
 
     useEffect(() => {
@@ -161,7 +162,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
         } else {
           const raw = await adapter.read();
           const previous = (raw && parseTracking(JSON.parse(raw))) || snapshotRef.current!;
-          const configured = configureTracking(previous, config.current.tasks, config.current.endTime, Date.now(), config.current.rest, config.current.unweighted, config.current.minimumEnabled);
+          const configured = configureTracking(previous, config.current.tasks, config.current.endTime, Date.now(), config.current.rest, config.current.unweighted, config.current.minimumEnabled, config.current.minimumMinutes);
           const next = actOnTracking(configured, action, controller, Date.now());
           next.revision++;
           await adapter.write(JSON.stringify(next));

@@ -1,5 +1,6 @@
 import { sanitizeEndTime, sanitizeSchedule, sanitizeState } from "./app-state";
 import { sanitizeRestSettings } from "./rest";
+import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 import { AppState, Recommendation, Task } from "./types";
 import { parseTracking } from "./tracking";
 
@@ -13,6 +14,7 @@ const KEYS = {
   rest: "yantasks.rest.v1",
   unweighted: "yantasks.unweighted.v1",
   minimumEnabled: "yantasks.minimumEnabled.v1",
+  minimumMinutes: "yantasks.minimumMinutes.v1",
 } as const;
 
 // Retain the retired key only for clearing guest data after migration.
@@ -54,6 +56,7 @@ export const localStore = {
       rest: sanitizeRestSettings(read<unknown>(KEYS.rest, null)),
       unweighted: read<unknown>(KEYS.unweighted, false) === true,
       minimumEnabled: read<unknown>(KEYS.minimumEnabled, true) !== false,
+      minimumMinutes: sanitizeMinimumMinutes(read<unknown>(KEYS.minimumMinutes, DEFAULT_MINIMUM_MINUTES)),
     };
   },
 
@@ -65,6 +68,7 @@ export const localStore = {
     write(KEYS.rest, state.rest);
     write(KEYS.unweighted, state.unweighted);
     write(KEYS.minimumEnabled, state.minimumEnabled);
+    write(KEYS.minimumMinutes, state.minimumMinutes);
   },
 
   /** Called after a successful migration — the data now lives in the account. */

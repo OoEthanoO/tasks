@@ -2,6 +2,7 @@ import { Task } from "./types";
 import { isPriority, taskWeight, WeightedTask } from "./weights";
 import { compareListOrder } from "./grouping";
 import { DEFAULT_REST, RestSettings, sameRest, sanitizeRestSettings } from "./rest";
+import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 
 /** The default stretch and break. A timer's own settings (restSettings) override them. */
 export const WORK_CYCLE_MS = DEFAULT_REST.workMinutes * 60_000;
@@ -45,6 +46,8 @@ export type TrackingState = {
   unweighted?: boolean;
   /** Missing on older snapshots, which keep the 30-minute minimum enabled. */
   minimumEnabled?: boolean;
+  /** Missing on older snapshots, which use 30 minutes. */
+  minimumMinutes?: number;
 };
 export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" } | { type: "skip-rest" };
 export const SKIPPED_REST_MESSAGE = "Break skipped. Pause any time to come back to it.";
@@ -60,11 +63,15 @@ export type TrackingEvent = {
  * minutes on something due weeks away barely counts; that time does more
  * good on the tasks that are more urgent.
  */
-export const MIN_DAILY_TARGET_MS = 30 * 60_000;
-export const SKIPPED_EXPLANATION = `Its share of today’s work would come to under ${MIN_DAILY_TARGET_MS / 60_000} minutes, so that time goes to more urgent tasks instead.`;
+export const MIN_DAILY_TARGET_MS = DEFAULT_MINIMUM_MINUTES * 60_000;
+export function skippedExplanation(minimumMs: number): string {
+  return `Its share of today’s work would come to under ${minimumMs / 60_000} minutes, so that time goes to higher-weight or earlier tasks instead.`;
+}
 export type TaskProgress = WeightedTask & {
   trackedMs: number; targetMs: number; remainingMs: number; doneToday: boolean;
-  /** Its day would total under MIN_DAILY_TARGET_MS, so its share went to more urgent tasks. */
+  /** The configured threshold, for labels explaining skipped tasks. */
+  minimumMs: number;
+  /** Its day would total under the enabled minimum, so its share went to other tasks. */
   skipped: boolean;
 };
 
@@ -115,15 +122,15 @@ export function dayEnd(state: Pick<TrackingState, "dayKey" | "endTime" | "timeZo
 }
 
 /** Fingerprint of everything that shapes the timer; any change means reconfiguring it. */
-export function trackingConfigKey(tasks: Task[], endTime: string, rest: RestSettings = DEFAULT_REST, unweighted = false, minimumEnabled = true): string {
-  return JSON.stringify([endTime, unweighted, minimumEnabled, [rest.enabled, rest.workMinutes, rest.restMinutes], tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt])]);
+export function trackingConfigKey(tasks: Task[], endTime: string, rest: RestSettings = DEFAULT_REST, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): string {
+  return JSON.stringify([endTime, unweighted, minimumEnabled, sanitizeMinimumMinutes(minimumMinutes), [rest.enabled, rest.workMinutes, rest.restMinutes], tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt])]);
 }
 
-export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), rest: RestSettings = DEFAULT_REST, unweighted = false, minimumEnabled = true): TrackingState {
+export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), rest: RestSettings = DEFAULT_REST, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): TrackingState {
   timeZone = validTimeZone(timeZone);
   return {
     version: 1, allocationVersion: 2, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
-    endTime, unweighted, minimumEnabled, cursor: now, tasks, taskMs: {}, workMs: 0, restMs: 0,
+    endTime, unweighted, minimumEnabled, minimumMinutes: sanitizeMinimumMinutes(minimumMinutes), cursor: now, tasks, taskMs: {}, workMs: 0, restMs: 0,
     cycleWorkMs: 0, cycleRestMs: 0, mode: "idle", taskId: null, controllerId: null, rest: { ...rest },
   };
 }
@@ -199,6 +206,7 @@ function waterLevel(open: { weight: number; trackedMs: number }[], available: nu
 }
 
 export function taskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
+  const minimumMs = sanitizeMinimumMinutes(state.minimumMinutes) * 60_000;
   const entries = state.tasks.map((task, index) => ({
     task, index, weight: taskWeight(task, state.dayKey, state.unweighted),
     trackedMs: Object.hasOwn(state.taskMs, task.id) ? state.taskMs[task.id] : 0,
@@ -218,7 +226,7 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
   // only to the tasks above it, never sideways to less urgent ones, and the
   // most important task is never skipped: there would be nowhere to send its
   // time. The day's total, not just what is left, decides — so a task is
-  // never cut off in its last few minutes, and one with 30 minutes already
+  // never cut off in its last few minutes, and one with the minimum already
   // logged is never skipped.
   if (state.minimumEnabled !== false) {
     const ascending = [...open].sort((a, b) => a.weight - b.weight || compareListOrder(b.task, a.task) || b.index - a.index);
@@ -226,7 +234,7 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
       receives[e.index] = false;
       const freed = remaining[e.index];
       // Nothing left to give (the day is over, or it is past its share): done, not skipped.
-      if (freed <= EPSILON || e.trackedMs + freed + EPSILON >= MIN_DAILY_TARGET_MS) continue;
+      if (freed <= EPSILON || e.trackedMs + freed + EPSILON >= minimumMs) continue;
       skipped[e.index] = true;
       remaining[e.index] = 0;
       pour(freed + open.reduce((sum, o) => sum + (receives[o.index] ? remaining[o.index] : 0), 0));
@@ -234,7 +242,7 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
   }
   const keptWeight = open.reduce((sum, e) => sum + (skipped[e.index] ? 0 : e.weight), 0);
   return entries.map(({ task, index, weight, trackedMs }) => ({
-    task, weight, trackedMs,
+    task, weight, trackedMs, minimumMs,
     probability: skipped[index] || keptWeight <= 0 ? 0 : weight / keptWeight,
     targetMs: trackedMs + remaining[index], remainingMs: remaining[index],
     doneToday: remaining[index] <= EPSILON, skipped: skipped[index],
@@ -250,7 +258,7 @@ function legacyTaskProgress(state: TrackingState, now = state.cursor): TaskProgr
     const probability = total > 0 ? entry.weight / total : 0;
     const trackedMs = Object.hasOwn(state.taskMs, entry.task.id) ? state.taskMs[entry.task.id] : 0;
     const targetMs = probability * budget;
-    return { ...entry, probability, trackedMs, targetMs, remainingMs: Math.max(0, targetMs - trackedMs), doneToday: trackedMs + EPSILON >= targetMs, skipped: false };
+    return { ...entry, probability, trackedMs, targetMs, minimumMs: MIN_DAILY_TARGET_MS, remainingMs: Math.max(0, targetMs - trackedMs), doneToday: trackedMs + EPSILON >= targetMs, skipped: false };
   });
 }
 /**
@@ -279,7 +287,7 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
   if (!Number.isFinite(now) || now < state.cursor) return { state, events };
   // Never restart automatically on a new day, even if a client slept overnight.
   if (trackingDay(now, state.timeZone) !== state.dayKey) {
-    return { state: { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted, state.minimumEnabled), revision: state.revision, controllerId: state.controllerId }, events };
+    return { state: { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId: state.controllerId }, events };
   }
   const end = dayEnd(state);
   const until = Math.min(now, end);
@@ -386,9 +394,9 @@ function applyRest(state: TrackingState, rest: RestSettings): void {
 }
 
 /** Preferences default to the timer's own, so task/end-time edits keep them. */
-export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number, rest: RestSettings = restSettings(original), unweighted = original.unweighted ?? false, minimumEnabled = original.minimumEnabled ?? true): TrackingState {
+export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number, rest: RestSettings = restSettings(original), unweighted = original.unweighted ?? false, minimumEnabled = original.minimumEnabled ?? true, minimumMinutes = original.minimumMinutes ?? DEFAULT_MINIMUM_MINUTES): TrackingState {
   const state = advanceTracking(original, now).state;
-  state.tasks = tasks; state.endTime = endTime; state.unweighted = unweighted; state.minimumEnabled = minimumEnabled;
+  state.tasks = tasks; state.endTime = endTime; state.unweighted = unweighted; state.minimumEnabled = minimumEnabled; state.minimumMinutes = sanitizeMinimumMinutes(minimumMinutes);
   applyRest(state, rest);
   if (now >= dayEnd(state)) { state.mode = "idle"; state.taskId = null; }
   if (state.mode === "work") {
@@ -405,7 +413,7 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
   if (action.type === "reset") {
     // A new checkpoint prevents any pre-reset elapsed time from being replayed.
     // The persistence layer increments the revision, just as for start/pause.
-    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted, state.minimumEnabled), revision: state.revision, controllerId };
+    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId };
   }
   if (action.type === "pause") { state.mode = "idle"; state.taskId = null; return state; }
   if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
@@ -463,6 +471,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (s.allocationVersion !== undefined && s.allocationVersion !== 2) return null;
   if (s.unweighted !== undefined && typeof s.unweighted !== "boolean") return null;
   if (s.minimumEnabled !== undefined && typeof s.minimumEnabled !== "boolean") return null;
+  if (s.minimumMinutes !== undefined && (typeof s.minimumMinutes !== "number" || sanitizeMinimumMinutes(s.minimumMinutes) !== s.minimumMinutes)) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.dayKey) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.endTime)) return null;
   if (typeof s.timeZone !== "string" || validTimeZone(s.timeZone) !== s.timeZone || !Array.isArray(s.tasks) || s.tasks.length > 2000) return null;
   if (!s.taskMs || typeof s.taskMs !== "object" || Array.isArray(s.taskMs)) return null;

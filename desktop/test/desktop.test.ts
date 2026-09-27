@@ -42,7 +42,7 @@ test("unweighted IPC settings persist across engine restarts without losing trac
 
 test("minimum IPC setting survives restart and preserves tracked time when toggled", async () => {
   const tasks = [task, { ...task, id: "b" }];
-  const config = { tasks, endTime: "10:20", rest: { ...DEFAULT_REST }, accountId: null, minimumEnabled: false };
+  const config = { tasks, endTime: "10:20", rest: { ...DEFAULT_REST }, accountId: null, minimumEnabled: false, minimumMinutes: 45 };
   const x = setup(createTracking(tasks, "10:20", "UTC", T));
   x.engine.configure(config); await x.engine.command({ type: "start" });
   x.now += 60_000;
@@ -53,16 +53,22 @@ test("minimum IPC setting survives restart and preserves tracked time when toggl
   assert.equal(x.written?.workMs, 60_000); assert.equal(x.written?.minimumEnabled, false);
   const reopened = setup(x.written); reopened.now = x.now; await reopened.engine.identity(null);
   assert.equal(reopened.engine.view().state.minimumEnabled, false);
+  assert.equal(reopened.engine.view().state.minimumMinutes, 45);
+  assert.ok(taskProgress(reopened.engine.view().state).every(p => !p.skipped));
+  reopened.engine.configure({ ...config, minimumEnabled: true, minimumMinutes: 5 });
+  assert.equal(reopened.engine.view().state.workMs, 60_000);
+  assert.equal(reopened.engine.view().state.minimumMinutes, 5);
   assert.ok(taskProgress(reopened.engine.view().state).every(p => !p.skipped));
 });
 test("an account without a timer inherits both allocation preferences", async () => {
   const x = setup();
   x.response(async path => ({ status: 200, body: path === "/api/tracking"
     ? { tracking: null, serverNow: x.now }
-    : { state: { tasks: [task], endTime: "23:00", unweighted: true, minimumEnabled: false } } }));
+    : { state: { tasks: [task], endTime: "23:00", unweighted: true, minimumEnabled: false, minimumMinutes: 15 } } }));
   await x.engine.identity("user");
   assert.equal(x.engine.view().state.unweighted, true);
   assert.equal(x.engine.view().state.minimumEnabled, false);
+  assert.equal(x.engine.view().state.minimumMinutes, 15);
 });
 test("a minimum-toggle checkpoint does not swallow an elapsed completion alert", async () => {
   const { x } = await accountBeforeBoundary();
