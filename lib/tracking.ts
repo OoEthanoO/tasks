@@ -41,6 +41,8 @@ export type TrackingState = {
    * Absent on timers from before it was adjustable, which use the default.
    */
   rest?: RestSettings;
+  /** Missing on older snapshots, which retain due-date/priority weighting. */
+  unweighted?: boolean;
 };
 export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" } | { type: "skip-rest" };
 export const SKIPPED_REST_MESSAGE = "Break skipped. Pause any time to come back to it.";
@@ -52,7 +54,7 @@ export type TrackingEvent = {
   body: string;
 };
 /**
- * A task whose whole day would come to less than this is skipped. A few
+ * In weighted mode, a task whose whole day would come to less than this is skipped. A few
  * minutes on something due weeks away barely counts; that time does more
  * good on the tasks that are more urgent.
  */
@@ -111,15 +113,15 @@ export function dayEnd(state: Pick<TrackingState, "dayKey" | "endTime" | "timeZo
 }
 
 /** Fingerprint of everything that shapes the timer; any change means reconfiguring it. */
-export function trackingConfigKey(tasks: Task[], endTime: string, rest: RestSettings = DEFAULT_REST): string {
-  return JSON.stringify([endTime, [rest.enabled, rest.workMinutes, rest.restMinutes], tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt])]);
+export function trackingConfigKey(tasks: Task[], endTime: string, rest: RestSettings = DEFAULT_REST, unweighted = false): string {
+  return JSON.stringify([endTime, unweighted, [rest.enabled, rest.workMinutes, rest.restMinutes], tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt])]);
 }
 
-export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), rest: RestSettings = DEFAULT_REST): TrackingState {
+export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), rest: RestSettings = DEFAULT_REST, unweighted = false): TrackingState {
   timeZone = validTimeZone(timeZone);
   return {
     version: 1, allocationVersion: 2, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
-    endTime, cursor: now, tasks, taskMs: {}, workMs: 0, restMs: 0,
+    endTime, unweighted, cursor: now, tasks, taskMs: {}, workMs: 0, restMs: 0,
     cycleWorkMs: 0, cycleRestMs: 0, mode: "idle", taskId: null, controllerId: null, rest: { ...rest },
   };
 }
@@ -196,7 +198,7 @@ function waterLevel(open: { weight: number; trackedMs: number }[], available: nu
 
 export function taskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
   const entries = state.tasks.map((task, index) => ({
-    task, index, weight: taskWeight(task, state.dayKey),
+    task, index, weight: taskWeight(task, state.dayKey, state.unweighted),
     trackedMs: Object.hasOwn(state.taskMs, task.id) ? state.taskMs[task.id] : 0,
   }));
   const open = entries.filter(e => e.weight > 0);
@@ -209,22 +211,25 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
     for (const e of open) if (receives[e.index]) remaining[e.index] = Math.max(0, e.weight * level - e.trackedMs);
   };
   pour(remainingWorkTime(state, now));
-  // Then, least important first (lowest weight; among equal weights, lowest
+  // In weighted mode only, least important first (lowest weight; among equal weights, lowest
   // on the list), skip each task whose day would total under the minimum. Its share goes
   // only to the tasks above it, never sideways to less urgent ones, and the
   // most important task is never skipped: there would be nowhere to send its
   // time. The day's total, not just what is left, decides — so a task is
   // never cut off in its last few minutes, and one with 30 minutes already
   // logged is never skipped.
-  const ascending = [...open].sort((a, b) => a.weight - b.weight || compareListOrder(b.task, a.task) || b.index - a.index);
-  for (const e of ascending.slice(0, -1)) {
-    receives[e.index] = false;
-    const freed = remaining[e.index];
-    // Nothing left to give (the day is over, or it is past its share): done, not skipped.
-    if (freed <= EPSILON || e.trackedMs + freed + EPSILON >= MIN_DAILY_TARGET_MS) continue;
-    skipped[e.index] = true;
-    remaining[e.index] = 0;
-    pour(freed + open.reduce((sum, o) => sum + (receives[o.index] ? remaining[o.index] : 0), 0));
+  // Unweighted mode keeps even short shares so all open tasks can catch up equally.
+  if (!state.unweighted) {
+    const ascending = [...open].sort((a, b) => a.weight - b.weight || compareListOrder(b.task, a.task) || b.index - a.index);
+    for (const e of ascending.slice(0, -1)) {
+      receives[e.index] = false;
+      const freed = remaining[e.index];
+      // Nothing left to give (the day is over, or it is past its share): done, not skipped.
+      if (freed <= EPSILON || e.trackedMs + freed + EPSILON >= MIN_DAILY_TARGET_MS) continue;
+      skipped[e.index] = true;
+      remaining[e.index] = 0;
+      pour(freed + open.reduce((sum, o) => sum + (receives[o.index] ? remaining[o.index] : 0), 0));
+    }
   }
   const keptWeight = open.reduce((sum, e) => sum + (skipped[e.index] ? 0 : e.weight), 0);
   return entries.map(({ task, index, weight, trackedMs }) => ({
@@ -266,12 +271,14 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
   const state: TrackingState = { ...original, taskMs: { ...original.taskMs } };
   const events: TrackingEvent[] = [];
   const emit = (type: TrackingEvent["type"], title: string, body: string, taskId = "") => {
-    events.push({ id: `${state.dayKey}:${Math.round(state.cursor)}:${type}:${taskId}`, at: state.cursor, type, title, body });
+    const event = { id: `${state.dayKey}:${Math.round(state.cursor)}:${type}:${taskId}`, at: state.cursor, type, title, body };
+    events.push(event);
+    return event;
   };
   if (!Number.isFinite(now) || now < state.cursor) return { state, events };
   // Never restart automatically on a new day, even if a client slept overnight.
   if (trackingDay(now, state.timeZone) !== state.dayKey) {
-    return { state: { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state)), revision: state.revision, controllerId: state.controllerId }, events };
+    return { state: { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted), revision: state.revision, controllerId: state.controllerId }, events };
   }
   const end = dayEnd(state);
   const until = Math.min(now, end);
@@ -310,8 +317,9 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
       const warningAt = state.cursor - (state.cycleWorkMs - warnAt);
       events.push({ id: `${state.dayKey}:${Math.round(warningAt)}:rest-soon`, at: warningAt, type: "rest-soon", title: "Rest in 5 minutes", body: `Five more minutes of tracked work, then a ${restSettings(state).restMinutes}-minute break.` });
     }
+    let completion: TrackingEvent | undefined;
     if (elapsed + EPSILON >= current.remainingMs) {
-      emit("task-complete", "Daily target reached", `${current.task.title} is complete for today.`, current.task.id);
+      completion = emit("task-complete", "Daily target reached", `${current.task.title} is complete for today.`, current.task.id);
       state.taskId = null;
     }
     if (breaks && state.cycleWorkMs + EPSILON >= work) {
@@ -323,6 +331,14 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
     } else if (!state.taskId) {
       const next = nextTask(state, progressFor);
       state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
+    }
+    if (completion) {
+      // Describe the actual next step in the existing completion alert. A
+      // coincident break or cutoff must not tell the user to start a task.
+      const next = state.tasks.find(t => t.id === state.taskId);
+      completion.body += state.cursor >= end ? " Tracking has stopped for today."
+        : state.mode === "rest" ? ` Now tracking a ${restSettings(state).restMinutes}-minute break.`
+        : next ? ` Now tracking ${next.title}.` : " All daily targets are met.";
     }
   }
   if (now >= end && state.mode !== "idle") {
@@ -368,10 +384,10 @@ function applyRest(state: TrackingState, rest: RestSettings): void {
   if (state.deferredBreak) state.deferredBreak = { cycleRestMs: Math.min(state.deferredBreak.cycleRestMs, restCycleMs(state)) };
 }
 
-/** Rest settings default to the timer's own, so callers that change only tasks or the end time keep them. */
-export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number, rest: RestSettings = restSettings(original)): TrackingState {
+/** Preferences default to the timer's own, so task/end-time edits keep them. */
+export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number, rest: RestSettings = restSettings(original), unweighted = original.unweighted ?? false): TrackingState {
   const state = advanceTracking(original, now).state;
-  state.tasks = tasks; state.endTime = endTime;
+  state.tasks = tasks; state.endTime = endTime; state.unweighted = unweighted;
   applyRest(state, rest);
   if (now >= dayEnd(state)) { state.mode = "idle"; state.taskId = null; }
   if (state.mode === "work") {
@@ -388,7 +404,7 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
   if (action.type === "reset") {
     // A new checkpoint prevents any pre-reset elapsed time from being replayed.
     // The persistence layer increments the revision, just as for start/pause.
-    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state)), revision: state.revision, controllerId };
+    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted), revision: state.revision, controllerId };
   }
   if (action.type === "pause") { state.mode = "idle"; state.taskId = null; return state; }
   if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
@@ -444,6 +460,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   const s = value as TrackingState;
   if (s.version !== 1 || !Number.isSafeInteger(s.revision) || s.revision < 0 || !Number.isFinite(s.cursor) || s.cursor < 0 || s.cursor > 8.64e15) return null;
   if (s.allocationVersion !== undefined && s.allocationVersion !== 2) return null;
+  if (s.unweighted !== undefined && typeof s.unweighted !== "boolean") return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.dayKey) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.endTime)) return null;
   if (typeof s.timeZone !== "string" || validTimeZone(s.timeZone) !== s.timeZone || !Array.isArray(s.tasks) || s.tasks.length > 2000) return null;
   if (!s.taskMs || typeof s.taskMs !== "object" || Array.isArray(s.taskMs)) return null;

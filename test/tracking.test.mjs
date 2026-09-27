@@ -20,6 +20,88 @@ check("task percentages sum to 100% of work, excluding rest", () => {
   const p = taskProgress(fresh()); near(p[0].probability, .4); near(p[1].probability,.4); near(p[2].probability,.2);
   near(p.reduce((sum,p)=>sum+p.probability,0), 1);
 });
+check("unweighted gives every open task weight 1 regardless of due date or priority", () => {
+  const list = [{ ...task("urgent", "2026-09-10"), priority: "high" }, task("later", "2026-10-14"), { ...task("done"), completed: true }];
+  const s = createTracking(list, "12:00", "UTC", T, DEFAULT_REST, true);
+  const p = taskProgress(s);
+  assert.deepEqual(p.map(p => p.weight), [1, 1, 0]);
+  assert.deepEqual(p.map(p => p.probability), [.5, .5, 0]);
+  near(p[0].targetMs, 90 * MIN); near(p[1].targetMs, 90 * MIN);
+  const running = actOnTracking(s, { type: "start" }, "device-1", T);
+  const projected = advanceTracking(running, dayEnd(s));
+  near(projected.state.taskMs.urgent, 90 * MIN); near(projected.state.taskMs.later, 90 * MIN);
+  assert.deepEqual(upcomingTrackingEvents(running, T), projected.events);
+});
+check("unweighted retains equal short shares and tracks each through completion", () => {
+  for (const minutes of [1, 20, 59]) {
+    const list = [task("a"), task("b"), task("c")];
+    const s = createTracking(list, `08:${String(minutes).padStart(2, "0")}`, "UTC", T, DEFAULT_REST, true);
+    const p = taskProgress(s);
+    for (const entry of p) {
+      near(entry.targetMs, minutes * MIN / list.length);
+      assert.equal(entry.skipped, false); assert.equal(entry.doneToday, false);
+    }
+    near(p.reduce((sum, entry) => sum + entry.remainingMs, 0), remainingWorkTime(s));
+    const running = actOnTracking(s, { type: "start" }, "device-1", T);
+    const end = advanceTracking(running, dayEnd(s));
+    for (const entry of p) near(end.state.taskMs[entry.task.id], entry.targetMs);
+    assert.equal(end.events.filter(e => e.type === "task-complete").length, list.length);
+    assert.deepEqual(upcomingTrackingEvents(running, T), end.events);
+    assert.equal(end.state.mode, "idle");
+  }
+});
+check("unweighted short shares respect break capacity and already tracked time", () => {
+  const s = createTracking([task("a"), task("b"), task("c")], "08:20", "UTC", T, DEFAULT_REST, true);
+  s.cycleWorkMs = s.workMs = 85 * MIN; s.taskMs.a = 85 * MIN;
+  const p = taskProgress(s);
+  near(remainingWorkTime(s), 5 * MIN);
+  near(p[0].remainingMs, 0); near(p[0].targetMs, 85 * MIN);
+  near(p[1].remainingMs, 2.5 * MIN); near(p[2].remainingMs, 2.5 * MIN);
+  assert.ok(p.every(entry => !entry.skipped));
+  const running = actOnTracking(s, { type: "start" }, "device-1", T);
+  const end = advanceTracking(running, dayEnd(s)).state;
+  near(end.workMs, 90 * MIN); near(end.restMs, 15 * MIN);
+});
+check("turning weighted mode back on restores the minimum without losing progress", () => {
+  const list = [task("a"), task("b")];
+  const weighted = createTracking(list, "08:20", "UTC", T);
+  assert.equal(taskProgress(weighted)[1].skipped, true);
+  const running = actOnTracking(weighted, { type: "start" }, "device-1", T);
+  const flat = configureTracking(running, list, "08:20", T + 8 * MIN, DEFAULT_REST, true);
+  const p = taskProgress(flat);
+  near(flat.workMs, 8 * MIN); near(p[0].remainingMs, 2 * MIN); near(p[1].remainingMs, 10 * MIN);
+  assert.ok(p.every(entry => !entry.skipped));
+  const restored = configureTracking(flat, list, "08:20", flat.cursor, DEFAULT_REST, false);
+  assert.equal(taskProgress(restored)[1].skipped, true);
+  near(taskProgress(restored)[0].remainingMs, 12 * MIN);
+  assert.deepEqual(restored.taskMs, flat.taskMs); near(restored.cycleWorkMs, flat.cycleWorkMs);
+});
+check("toggling weights checkpoints elapsed work and preserves task metadata and rest progress", () => {
+  const list = [{ ...task("a"), priority: "high" }, task("b", "2026-09-16")];
+  const original = actOnTracking(fresh(list), { type: "start" }, "device-1", T);
+  const checkpoint = advanceTracking(original, T + 20 * MIN).state;
+  const flat = configureTracking(original, list, "18:00", T + 20 * MIN, DEFAULT_REST, true);
+  for (const key of ["taskMs", "workMs", "restMs", "cycleWorkMs", "cycleRestMs", "taskId", "mode", "controllerId", "tasks"]) assert.deepEqual(flat[key], checkpoint[key]);
+  const p = taskProgress(flat); near(p[0].targetMs, p[1].targetMs);
+  near(p.reduce((sum, p) => sum + p.remainingMs, 0), remainingWorkTime(flat));
+  const restored = configureTracking(flat, list, "18:00", flat.cursor, DEFAULT_REST, false);
+  assert.deepEqual(restored.taskMs, flat.taskMs);
+  assert.deepEqual(taskProgress(restored).map(p => p.weight), [8, .5]);
+  const onBreak = advanceTracking(original, T + 100 * MIN).state;
+  const reweightedBreak = configureTracking(onBreak, list, "18:00", onBreak.cursor, DEFAULT_REST, true);
+  assert.equal(reweightedBreak.mode, "rest"); near(reweightedBreak.cycleRestMs, onBreak.cycleRestMs);
+});
+check("unweighted persists through reset, rollover, parsing and task-only edits", () => {
+  const s = createTracking(tasks, "18:00", "UTC", T, DEFAULT_REST, true);
+  assert.equal(actOnTracking(s, { type: "reset" }, "device-1", T).unweighted, true);
+  assert.equal(advanceTracking(s, T + 24 * 60 * MIN).state.unweighted, true);
+  assert.equal(configureTracking(s, tasks.slice(1), "19:00", T).unweighted, true);
+  assert.equal(parseTracking(JSON.parse(JSON.stringify(s))).unweighted, true);
+  assert.equal(parseTracking({ ...s, unweighted: "true" }), null);
+  const { unweighted, ...legacy } = s;
+  assert.ok(parseTracking(legacy)); assert.equal(taskProgress(legacy)[0].weight, 2);
+  assert.notEqual(trackingConfigKey(tasks, "18:00", DEFAULT_REST, true), trackingConfigKey(tasks, "18:00", DEFAULT_REST, false));
+});
 check("Start takes the first unfinished task in list order, not the heaviest", () => {
   assert.equal(actOnTracking(fresh(), {type:"start"}, "device-1", T).taskId, "first");
   // Nearest due date first; full ties keep saved order, as the list does.
@@ -37,6 +119,21 @@ check("after a target is met, the timer moves to the next task down the list", (
   const s=actOnTracking(fresh([task("a"),{...task("big","2026-09-15"),priority:"high"},task("c")]),{type:"start"},"device-1",T);
   const out=advanceTracking(s,T+145*MIN);
   assert.equal(out.state.taskId,"c"); assert.ok(out.events.some(e=>e.type==="task-complete"));
+  assert.equal(out.events.find(e=>e.type==="task-complete").body,"a is complete for today. Now tracking c.");
+});
+check("completion alert describes a coincident break, not another task", () => {
+  const s=actOnTracking(fresh([task("a"),task("b")],"12:00"),{type:"start"},"device-1",T);
+  const out=advanceTracking(s,T+90*MIN);
+  assert.equal(out.state.mode,"rest");
+  assert.equal(out.events.find(e=>e.type==="task-complete").body,"a is complete for today. Now tracking a 30-minute break.");
+  assert.deepEqual(out.events.map(e=>e.type),["rest-soon","task-complete","rest-start"]);
+});
+check("completion at cutoff says tracking stopped and never suggests a next task", () => {
+  const s=actOnTracking(fresh([task("a")],"08:30"),{type:"start"},"device-1",T);
+  const out=advanceTracking(s,T+30*MIN);
+  assert.equal(out.state.mode,"idle");
+  assert.equal(out.events.find(e=>e.type==="task-complete").body,"a is complete for today. Tracking has stopped for today.");
+  assert.equal(out.events.length,1);
 });
 check("manual selection overrides default without changing weights", () => {
   assert.equal(actOnTracking(fresh(), {type:"start",taskId:"later"}, "device-1", T).taskId,"later");
@@ -605,6 +702,27 @@ assert.ok(carolAfter.revision>carolTimer.revision); assert.equal(carolAfter.task
 await saveState("timer-carol",{tasks,recommendation:null,schedule:null,endTime:"18:00",rest:{enabled:true,workMinutes:50,restMinutes:10}});
 assert.deepEqual(restSettings(await loadTracking("timer-carol")),{enabled:true,workMinutes:50,restMinutes:10}); count++;
 await pg.query("DELETE FROM users WHERE id = $1",["timer-carol"]);
+// A synced toggle changes the shared policy, and legacy saves cannot turn it off.
+await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)", ["timer-unweighted", new Date(T).toISOString()]);
+const oldNow = Date.now;
+try {
+  Date.now = () => T + 10 * MIN;
+  const initial = await commandTracking("timer-unweighted", 0, { type: "start" }, "device-1", "UTC", tasks, "18:00", DEFAULT_REST, T);
+  const prefs = { tasks, recommendation: null, schedule: null, endTime: "18:00", rest: DEFAULT_REST, unweighted: true };
+  await saveState("timer-unweighted", prefs);
+  const synced = await loadTracking("timer-unweighted");
+  assert.equal((await loadState("timer-unweighted")).unweighted, true);
+  assert.equal(synced.unweighted, true); assert.ok(synced.revision > initial.revision);
+  near(synced.workMs, 10 * MIN); assert.equal(synced.controllerId, "device-1"); count++;
+  const { unweighted, ...legacyPrefs } = prefs;
+  await saveState("timer-unweighted", legacyPrefs, { unweighted: true });
+  assert.equal((await loadState("timer-unweighted")).unweighted, true);
+  assert.deepEqual(await loadTracking("timer-unweighted"), synced); count++;
+  await saveState("timer-unweighted", { ...prefs, unweighted: false });
+  assert.equal((await loadTracking("timer-unweighted")).unweighted, false);
+  assert.equal((await loadState("timer-unweighted")).unweighted, false); count++;
+} finally { Date.now = oldNow; }
+await pg.query("DELETE FROM users WHERE id = $1", ["timer-unweighted"]);
 // Upgrading on GET is revision-checked and persisted once, so other clients
 // inherit the same checkpoint rather than reinterpreting old elapsed work.
 const legacy={...fresh([task("a"),task("b")],"10:00"),revision:resumed.revision,mode:"work",taskId:"a",controllerId:"old-device"};

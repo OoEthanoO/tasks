@@ -37,8 +37,9 @@ export function isPriority(value: unknown): value is Priority {
 }
 
 /** A task's pull on the recommender. Completed tasks weigh 0 and never win. */
-export function taskWeight(task: Task, today: DateKey = todayKey()): number {
+export function taskWeight(task: Task, today: DateKey = todayKey(), unweighted = false): number {
   if (task.completed) return 0;
+  if (unweighted) return 1;
   // Tasks copied into a timer snapshot before priorities existed carry none.
   const multiplier = isPriority(task.priority) ? PRIORITY_MULTIPLIER[task.priority] : 1;
   return multiplier * weightForDaysOut(diffDays(task.dueDate, today));

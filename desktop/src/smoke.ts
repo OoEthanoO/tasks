@@ -5,6 +5,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import type { TrackerEngine } from "./engine";
 import type { ApiReply } from "./contract";
+import { DIAGNOSTIC_FILE } from "./diagnostics";
 
 export async function runSmoke({ main, mini, engine, icons, request, tray }: { main: BrowserWindow; mini: BrowserWindow; engine: TrackerEngine; icons: Record<string, NativeImage>; request: (path: string) => Promise<ApiReply>; tray: Tray }) {
   const ready = async (w: BrowserWindow) => {
@@ -51,6 +52,22 @@ export async function runSmoke({ main, mini, engine, icons, request, tray }: { m
   await main.webContents.executeJavaScript("window.desktop.command({type:'reset'})");
   assert.equal(engine.view().state.workMs, 0);
   await assert.rejects(mini.webContents.executeJavaScript("window.desktop.api({path:'/api/auth/me',method:'GET'})"));
+  // Opt-in native delivery probe. The normal smoke run remains silent. Only
+  // this disposable profile is touched; no real account timer is changed.
+  if (process.argv.includes("--alert-check")) {
+    await main.webContents.executeJavaScript("window.desktop.window('test-alert')");
+    const logFile = path.join(app.getPath("userData"), DIAGNOSTIC_FILE);
+    let shown = false;
+    for (let i = 0; i < 50; i++) {
+      const records = fs.readFileSync(logFile, "utf8").trim().split("\n").map(line => JSON.parse(line));
+      assert.ok(!records.some(r => r.kind === "native-failed"), "Windows accepted the native test alert");
+      shown = records.some(r => r.kind === "native-shown" && r.eventType === "test");
+      if (shown) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.ok(shown, "Windows reported the test notification shown");
+    console.log(`ALERT CHECK PASS: native request and show callback recorded in ${logFile}`);
+  }
   const image = await mini.webContents.capturePage();
   const imagePath = path.join(app.getPath("userData"), "mini.png");
   fs.writeFileSync(imagePath, image.toPNG());

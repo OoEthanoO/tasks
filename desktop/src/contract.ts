@@ -10,7 +10,7 @@ export type DesktopState = {
 };
 export type ApiRequest = { path: string; method: string; body?: string };
 export type ApiReply = { status: number; body: unknown };
-export type GuestConfig = { tasks: Task[]; endTime: string; rest: RestSettings; accountId: string | null };
+export type GuestConfig = { tasks: Task[]; endTime: string; rest: RestSettings; unweighted?: boolean; accountId: string | null };
 export interface DesktopBridge {
   api(request: ApiRequest): Promise<ApiReply>;
   snapshot(): Promise<DesktopState>;

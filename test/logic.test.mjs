@@ -989,6 +989,7 @@ const {
   emptyState,
   tasksWithoutPriority,
   hasRestSettings,
+  hasUnweightedSetting,
 } = require("../.test-build/app-state.js");
 const { sanitizeRestSettings, DEFAULT_REST } = require("../.test-build/rest.js");
 
@@ -997,6 +998,10 @@ eq(sanitizeRestSettings({ enabled: false, workMinutes: 25, restMinutes: 5 }), { 
 eq(sanitizeRestSettings({ enabled: true, workMinutes: 3, restMinutes: 500 }), { enabled: true, workMinutes: 10, restMinutes: 120 }, "lengths are clamped to range");
 eq(sanitizeRestSettings({ enabled: "yes", workMinutes: 52.6, restMinutes: "17" }), { enabled: true, workMinutes: 53, restMinutes: 30 }, "whole minutes; a non-number falls back");
 eq(sanitizeState({ tasks: [] }).rest, DEFAULT_REST, "a state without rest settings gets the default");
+eq(sanitizeState({ tasks: [] }).unweighted, false, "legacy states use weighted mode");
+eq(sanitizeState({ unweighted: true }).unweighted, true, "unweighted survives sanitization");
+eq(sanitizeState({ unweighted: "true" }).unweighted, false, "unweighted requires a boolean, not a truthy string");
+eq([hasUnweightedSetting({ unweighted: false }), hasUnweightedSetting({}), hasUnweightedSetting(null)], [true, false, false], "an explicit off differs from a legacy client omitting the preference");
 eq([hasRestSettings({ rest: {} }), hasRestSettings({ tasks: [] }), hasRestSettings(null)], [true, false, false], "only a payload with a rest field marks a current client");
 
 eq(sanitizeState(null), emptyState(), "null becomes an empty state");

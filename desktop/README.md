@@ -47,6 +47,21 @@ than 90 seconds suppress account alerts until state is fresh again; failed
 commands never create an independent offline account timer. Cross-device
 changes can take up to one polling interval to arrive, especially on battery.
 
+### Local alert diagnostics
+
+`%APPDATA%\YanTasks\alert-diagnostics.jsonl` records alert requests, suppression
+reasons, native notification show/failure callbacks, and changes in timer/alert
+ownership or sync health. It distinguishes an alert requested by the engine from
+one reported shown by Windows; neither proves that the user noticed the banner.
+Task edits that reallocate time are reconciled against the updated task list before
+elapsed alerts are delivered, including when a previously finished target reopens.
+
+Diagnostics add no polling, timer, or network traffic. Only events/status changes
+write to disk, not routine ticks. The current and previous logs are capped at
+128 KiB each. Identifiers are hashed; task titles/descriptions, account/controller
+IDs, cookies and credentials are not written. The files remain on this PC and
+are never uploaded automatically. A disk/logging failure cannot stop tracking.
+
 ## Develop and verify
 
 From the repository root, run `npm ci` once for the shared source dependencies.
@@ -73,6 +88,9 @@ sleep, rest transitions and battery scheduling. Run root `npm test` and
 `npm run smoke -- --power-check` adds a short hidden-idle CPU sample (not a
 battery-life benchmark). `--packaged` checks the built executable rather than
 the development Electron runtime.
+`npm run smoke -- --packaged --alert-check` also sends one labelled test
+notification and checks that Windows reports it shown in the isolated profile's
+diagnostic log. It does not start, pause, or edit a real account timer.
 
 Architecture: `src/engine.ts` owns tracking in Electron's main process;
 `src/main.ts` owns native notifications, tray, taskbar, windows and power policy;

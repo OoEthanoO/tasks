@@ -19,8 +19,9 @@ function MinutesInput({ label, value, range, onCommit }: { label: string; value:
     onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} />;
 }
 
-export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, rest, onRestChange }: {
+export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange }: {
   tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; rest: RestSettings; onRestChange: (value: RestSettings) => void;
+  unweighted: boolean; onUnweightedChange: (value: boolean) => void;
 }) {
   const [confirmReset, setConfirmReset] = useState(false);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
@@ -36,6 +37,10 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, re
       <div className="tracking-controls">
         <label htmlFor="end-time">Work day ends at</label>
         <input id="end-time" type="time" className="input time-input" value={endTime} onChange={e => e.target.value && onEndTimeChange(e.target.value)} />
+      </div>
+      <div className="tracking-controls rest-controls">
+        <label className="rest-toggle"><input type="checkbox" checked={unweighted} onChange={e => onUnweightedChange(e.target.checked)} aria-describedby="unweighted-hint" /> Unweighted</label>
+        <span className="hint" id="unweighted-hint">When enabled, every open task has weight 1 with no 30-minute minimum. Turn off to restore normal weights and the minimum.</span>
       </div>
       <div className="tracking-controls rest-controls">
         <label className="rest-toggle"><input type="checkbox" checked={rest.enabled} onChange={e => onRestChange({ ...rest, enabled: e.target.checked })} /> Breaks</label>

@@ -28,6 +28,7 @@ export function emptyState(): AppState {
     schedule: null,
     endTime: DEFAULT_END_TIME,
     rest: { ...DEFAULT_REST },
+    unweighted: false,
   };
 }
 
@@ -202,6 +203,7 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
     schedule: sanitizeSchedule(raw.schedule, today, nowIso),
     endTime: sanitizeEndTime(raw.endTime),
     rest: sanitizeRestSettings(raw.rest),
+    unweighted: raw.unweighted === true,
   };
 }
 
@@ -212,6 +214,11 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
  */
 export function hasRestSettings(raw: unknown): boolean {
   return isRecord(raw) && "rest" in raw;
+}
+
+/** Older clients cannot choose a weighting mode they do not know about. */
+export function hasUnweightedSetting(raw: unknown): boolean {
+  return isRecord(raw) && "unweighted" in raw;
 }
 
 /**

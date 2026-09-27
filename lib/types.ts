@@ -60,4 +60,6 @@ export type AppState = {
   endTime: string;
   /** Work/rest cycle, or breaks off. A preference, like the end time. */
   rest: RestSettings;
+  /** Ignore due-date and priority multipliers without changing the tasks. */
+  unweighted: boolean;
 };

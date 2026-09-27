@@ -20,8 +20,9 @@ function MinutesField({ label, value, range, onCommit, style }: { label: string;
     }} />;
 }
 
-export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange }: {
+export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange }: {
   tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; rest: RestSettings; onRestChange: (value: RestSettings) => void;
+  unweighted: boolean; onUnweightedChange: (value: boolean) => void;
 }) {
   const s = useStyles(styles);
   const { c } = useTheme();
@@ -41,6 +42,11 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, res
       <Text style={s.hint}>Work day ends at</Text>
       <TextInput style={s.input} value={draftEnd} onChangeText={setDraftEnd} onEndEditing={e => { const clean = sanitizeEndTime(e.nativeEvent.text); setDraftEnd(clean); onEndTimeChange(clean); }} accessibilityLabel="Work day end time, 24 hour clock" maxLength={5} keyboardType="numbers-and-punctuation" />
     </View>
+    <View style={s.controls}>
+      <Text style={s.hint}>Unweighted</Text>
+      <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Every open task has weight 1 with no 30-minute minimum. Turn off to restore normal weights and the minimum." trackColor={{ true: c.accent, false: c.line }} />
+    </View>
+    <Text style={s.hint}>When enabled, every open task has weight 1 with no 30-minute minimum. Turn off to restore normal weights and the minimum.</Text>
     <View style={s.controls}>
       <Text style={s.hint}>Breaks</Text>
       <Switch value={rest.enabled} onValueChange={enabled => onRestChange({ ...rest, enabled })} accessibilityLabel="Take breaks" trackColor={{ true: c.accent, false: c.line }} />

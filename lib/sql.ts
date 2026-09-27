@@ -69,6 +69,7 @@ const SCHEMA: string[] = [
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_mode TEXT`,
   // The work/rest cycle as JSON; NULL (older rows) reads as the default.
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_settings TEXT`,
+  `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS unweighted BOOLEAN NOT NULL DEFAULT FALSE`,
 
   // Tracking is deliberately separate from the legacy whole-state save. A
   // stale client can never overwrite the shared timer or its accumulated time.

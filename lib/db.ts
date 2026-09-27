@@ -222,8 +222,9 @@ export async function loadState(userId: string): Promise<AppState> {
       recommendation: string | null;
       schedule: string | null;
       rest_settings: string | null;
+      unweighted: boolean;
     }>(
-      `SELECT end_time, recommendation, schedule, rest_settings FROM prefs WHERE user_id = $1`,
+      `SELECT end_time, recommendation, schedule, rest_settings, unweighted FROM prefs WHERE user_id = $1`,
       [userId],
     )
   )[0];
@@ -234,6 +235,7 @@ export async function loadState(userId: string): Promise<AppState> {
     schedule: sanitizeSchedule(parseJson<unknown>(prefs?.schedule)),
     endTime: sanitizeEndTime(prefs?.end_time),
     rest: sanitizeRestSettings(parseJson<unknown>(prefs?.rest_settings)),
+    unweighted: prefs?.unweighted === true,
   };
 }
 
@@ -256,11 +258,12 @@ function parseJson<T>(raw: string | null | undefined): T | null {
  * - `priority` names tasks that arrived with no priority field; they keep the
  *   priority the account already stores.
  * - `rest` means the payload had no rest settings; the stored ones stay.
+ * - `unweighted` keeps the stored weighting mode when a legacy payload omits it.
  */
 export async function saveState(
   userId: string,
   incoming: AppState,
-  preserve: { priority?: ReadonlySet<string>; rest?: boolean } = {},
+  preserve: { priority?: ReadonlySet<string>; rest?: boolean; unweighted?: boolean } = {},
 ): Promise<void> {
   const state = sanitizeState(incoming);
   const keepPriority = preserve.priority ?? new Set<string>();
@@ -315,24 +318,31 @@ export async function saveState(
   });
 
   statements.push({
-    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings)
-                VALUES ($1, $2, $3, $4, $5)
+    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings, unweighted)
+                VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (user_id) DO UPDATE SET
                 end_time = excluded.end_time,
                 recommendation = excluded.recommendation,
                 schedule = excluded.schedule,
-                rest_settings = excluded.rest_settings`,
+                rest_settings = excluded.rest_settings,
+                unweighted = CASE WHEN $7 THEN prefs.unweighted ELSE excluded.unweighted END`,
     params: [
       userId,
       state.endTime,
       state.recommendation ? JSON.stringify(state.recommendation) : null,
       state.schedule ? JSON.stringify(state.schedule) : null,
       JSON.stringify(state.rest),
+      state.unweighted,
+      preserve.unweighted === true,
     ],
   });
 
   await ensureSchema();
   await getSql().transaction(statements);
-  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest);
-  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest);
+  if (preserve.unweighted) {
+    const [prefs] = await query<{ unweighted: boolean }>("SELECT unweighted FROM prefs WHERE user_id = $1", [userId]);
+    state.unweighted = prefs?.unweighted === true;
+  }
+  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted);
+  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted);
 }

@@ -9,6 +9,7 @@ import { trustedPage, validateAction, validateApi } from "./security";
 import { statusModel } from "./model";
 import { formatDuration, upcomingTrackingEvents, type TrackingEvent } from "../../lib/tracking";
 import { syncDelay, wakeDelay } from "./power";
+import { AlertLog, type AlertDiagnostic } from "./diagnostics";
 
 const APP_ID = "com.ethanyanxu.yantasks";
 const API = "https://tasks.ethanyanxu.com";
@@ -26,6 +27,7 @@ let mini: BrowserWindow | undefined;
 let createMini: () => BrowserWindow;
 let tray: Tray;
 let engine: TrackerEngine;
+let alertLog: AlertLog;
 let quitting = false;
 let lastTrayMode = "";
 let lastButtons = "";
@@ -103,15 +105,30 @@ function schedule(view: DesktopState) {
     }, Math.max(0, due - Date.now()));
   }
 }
-function nativeAlert(event: Pick<TrackingEvent, "title" | "body">) {
-  if (!Notification.isSupported()) { engine.report("Windows notifications are unavailable. Use the mini tracker."); return; }
-  const n = new Notification({ title: event.title, body: event.body, icon: icons.app, silent: !settings.sound, timeoutType: "never" });
-  notifications.add(n);
-  n.on("click", () => { showMain(); notifications.delete(n); });
-  n.on("close", () => notifications.delete(n));
-  n.on("failed", () => { notifications.delete(n); engine.report("Windows could not show an alert. Install YanTasks and check Windows notification settings."); });
-  n.show();
-  if (!main.isFocused()) main.flashFrame(true);
+function nativeAlert(event: Pick<TrackingEvent, "title" | "body"> & Partial<TrackingEvent>) {
+  const diagnostic = { eventType: event.type ?? "test" as const, eventId: event.id ?? `test:${Date.now()}`, eventAt: event.at };
+  const record = (kind: AlertDiagnostic["kind"], reason?: AlertDiagnostic["reason"]) => alertLog.record({ ...diagnostic, kind, reason });
+  if (!Notification.isSupported()) {
+    record("native-failed", "unsupported");
+    engine.report("Windows notifications are unavailable. Use the mini tracker."); return;
+  }
+  try {
+    const n = new Notification({ title: event.title, body: event.body, icon: icons.app, silent: !settings.sound, timeoutType: "never" });
+    notifications.add(n);
+    n.on("show", () => record("native-shown"));
+    n.on("click", () => { showMain(); notifications.delete(n); });
+    n.on("close", () => notifications.delete(n));
+    n.on("failed", () => {
+      notifications.delete(n); record("native-failed", "os-rejected");
+      engine.report("Windows could not show an alert. Install YanTasks and check Windows notification settings.");
+    });
+    record("native-requested");
+    n.show();
+    if (!main.isFocused()) main.flashFrame(true);
+  } catch {
+    record("native-failed", "exception");
+    engine.report("Windows could not create an alert. Your timer is still running.");
+  }
 }
 
 function publish(view: DesktopState) {
@@ -197,6 +214,8 @@ function allowed(event: IpcMainInvokeEvent, mainOnly = false) {
 }
 
 async function start() {
+  alertLog = new AlertLog(app.getPath("userData"));
+  alertLog.record({ kind: "app-start" });
   try {
     const data = JSON.parse(fs.readFileSync(file(), "utf8"));
     if (typeof data.controllerId === "string" && /^[a-zA-Z0-9_-]{8,100}$/.test(data.controllerId)) controllerId = data.controllerId;
@@ -207,7 +226,7 @@ async function start() {
   controllerId ||= `windows_${randomUUID()}`;
   save();
   icons = Object.fromEntries(["app", "work", "rest", "idle", "open"].map(name => [name, nativeImage.createFromPath(path.join(__dirname, "../resources", name === "app" ? "icon.png" : `${name}.png`)).resize({ width: 32, height: 32 })]));
-  engine = new TrackerEngine({ now: Date.now, request, publish, notify: nativeAlert, saveGuest: state => { guest = state; try { save(); } catch { engine.report("Cannot save progress on this PC. Check available disk space."); } } }, controllerId, guest);
+  engine = new TrackerEngine({ now: Date.now, request, publish, notify: nativeAlert, diagnostic: record => alertLog.record(record), saveGuest: state => { guest = state; try { save(); } catch { engine.report("Cannot save progress on this PC. Check available disk space."); } } }, controllerId, guest);
   engine.settings = settings;
 
   const ui = session.fromPartition("persist:yantasks-ui");
@@ -260,12 +279,12 @@ async function start() {
   tray.on("right-click", trayMenu);
   app.on("second-instance", showMain);
   app.on("activate", showMain);
-  app.on("before-quit", () => { quitting = true; engine.tick(); save(); });
+  app.on("before-quit", () => { quitting = true; alertLog.record({ kind: "app-stop" }); engine.tick(); save(); });
   onBattery = powerMonitor.isOnBatteryPower();
   powerMonitor.on("on-battery", () => { onBattery = true; clearTimeout(syncTimer); syncTimer = undefined; engine.publish(); });
   powerMonitor.on("on-ac", () => { onBattery = false; engine.publish(); });
-  powerMonitor.on("suspend", () => { suspended = true; clearTimeout(wakeTimer); clearTimeout(syncTimer); syncTimer = undefined; });
-  powerMonitor.on("resume", () => { suspended = false; void engine.resume(); });
+  powerMonitor.on("suspend", () => { alertLog.record({ kind: "suspend" }); suspended = true; clearTimeout(wakeTimer); clearTimeout(syncTimer); syncTimer = undefined; });
+  powerMonitor.on("resume", () => { alertLog.record({ kind: "resume" }); suspended = false; void engine.resume(); });
   powerMonitor.on("unlock-screen", () => void engine.resume());
 
   ipcMain.handle("api", async (event, raw) => {

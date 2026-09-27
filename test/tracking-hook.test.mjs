@@ -6,7 +6,7 @@ const { createTracking } = require("../.test-build/tracking.js");
 
 // Exercise the shared hook through its injected hook/adapter boundary without
 // adding another React renderer (web and mobile use separate React versions).
-function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 } } = {}) {
+function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 }, unweighted = false } = {}) {
   const slots = [];
   let index = 0, dirty = true, effects = [], result;
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -37,11 +37,12 @@ function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true,
   const beforeCommand = async () => {};
   return {
     get value() { return result; },
+    setUnweighted(value) { unweighted = value; dirty = true; },
     async flush() {
       for (let i = 0; i < 12; i++) {
         if (dirty) {
           dirty = false; index = 0; effects = [];
-          result = useTracking(tasks, endTime, rest, null, true, beforeCommand);
+          result = useTracking(tasks, endTime, rest, null, true, beforeCommand, unweighted);
           for (const effect of effects) effect();
         }
         await new Promise(resolve => setImmediate(resolve));
@@ -109,3 +110,22 @@ try {
   assert.equal(JSON.parse(saved).revision,1);
 } finally { tracker.unmount(); Date.now=realNow; }
 console.log("1 guest allocation upgrade scenario passed");
+
+Date.now = () => start;
+saved = JSON.stringify(createTracking(tasks, "18:00", "UTC", start));
+const persistentAdapter = { ...adapter, read: async () => saved, write: async value => { saved = value; } };
+tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
+try {
+  await tracker.flush(); tracker.setUnweighted(true); await tracker.flush();
+  assert.equal(tracker.value.state.unweighted, true);
+  assert.equal(JSON.parse(saved).unweighted, true);
+  assert.ok(tracker.value.progress.every(p => p.weight === 1));
+  tracker.unmount();
+  tracker = mount(persistentAdapter, { tasks, endTime: "18:00", unweighted: true });
+  await tracker.flush(); await tracker.value.command({ type: "start" }); await tracker.flush();
+  assert.equal(tracker.value.state.unweighted, true, "refresh and commands preserve the preference");
+  tracker.setUnweighted(false); await tracker.flush();
+  assert.equal(JSON.parse(saved).unweighted, false);
+  assert.ok(tracker.value.progress.every(p => p.weight === 2));
+} finally { tracker.unmount(); Date.now = realNow; }
+console.log("1 guest unweighted persistence scenario passed");

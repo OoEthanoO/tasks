@@ -11,6 +11,7 @@ const KEYS = {
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
   rest: "yantasks.rest.v1",
+  unweighted: "yantasks.unweighted.v1",
 } as const;
 
 // Retain the retired key only for clearing guest data after migration.
@@ -50,6 +51,7 @@ export const localStore = {
       schedule: sanitizeSchedule(read<unknown>(KEYS.schedule, null)),
       endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),
       rest: sanitizeRestSettings(read<unknown>(KEYS.rest, null)),
+      unweighted: read<unknown>(KEYS.unweighted, false) === true,
     };
   },
 
@@ -59,6 +61,7 @@ export const localStore = {
     write(KEYS.schedule, state.schedule);
     write(KEYS.endTime, state.endTime);
     write(KEYS.rest, state.rest);
+    write(KEYS.unweighted, state.unweighted);
   },
 
   /** Called after a successful migration — the data now lives in the account. */
