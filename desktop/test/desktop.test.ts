@@ -40,6 +40,38 @@ test("unweighted IPC settings persist across engine restarts without losing trac
   assert.deepEqual(taskProgress(reopened.engine.view().state).map(p => p.weight), [1, .4]);
 });
 
+test("minimum IPC setting survives restart and preserves tracked time when toggled", async () => {
+  const tasks = [task, { ...task, id: "b" }];
+  const config = { tasks, endTime: "10:20", rest: { ...DEFAULT_REST }, accountId: null, minimumEnabled: false };
+  const x = setup(createTracking(tasks, "10:20", "UTC", T));
+  x.engine.configure(config); await x.engine.command({ type: "start" });
+  x.now += 60_000;
+  x.engine.configure({ ...config, minimumEnabled: true });
+  assert.equal(x.written?.workMs, 60_000); assert.equal(x.written?.minimumEnabled, true);
+  assert.equal(taskProgress(x.engine.view().state)[1].skipped, true);
+  x.engine.configure(config);
+  assert.equal(x.written?.workMs, 60_000); assert.equal(x.written?.minimumEnabled, false);
+  const reopened = setup(x.written); reopened.now = x.now; await reopened.engine.identity(null);
+  assert.equal(reopened.engine.view().state.minimumEnabled, false);
+  assert.ok(taskProgress(reopened.engine.view().state).every(p => !p.skipped));
+});
+test("an account without a timer inherits both allocation preferences", async () => {
+  const x = setup();
+  x.response(async path => ({ status: 200, body: path === "/api/tracking"
+    ? { tracking: null, serverNow: x.now }
+    : { state: { tasks: [task], endTime: "23:00", unweighted: true, minimumEnabled: false } } }));
+  await x.engine.identity("user");
+  assert.equal(x.engine.view().state.unweighted, true);
+  assert.equal(x.engine.view().state.minimumEnabled, false);
+});
+test("a minimum-toggle checkpoint does not swallow an elapsed completion alert", async () => {
+  const { x } = await accountBeforeBoundary();
+  const original = taskBoundary();
+  const remote = { ...configureTracking(original, original.tasks, original.endTime, x.now, original.rest, false, false), revision: 1 };
+  x.response(async () => ({ status: 200, body: { tracking: remote, serverNow: x.now } }));
+  await x.engine.refresh(); x.engine.tick();
+  assert.equal(x.notifications.filter(e => e.type === "task-complete").length, 1);
+});
 test("guest start, elapsed work, pause and reset use the shared model", async () => {
   const x = setup(); configure(x);
   await x.engine.command({ type: "start" }); x.now += 60_000; x.engine.tick();

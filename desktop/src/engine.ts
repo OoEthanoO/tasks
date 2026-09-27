@@ -25,7 +25,7 @@ function checkpointEvents(previous: TrackingState, next: TrackingState): { event
   const rejected = { events: projected.events, confirmed: false };
   if (next.cursor <= previous.cursor || next.dayKey !== previous.dayKey || next.timeZone !== previous.timeZone ||
       next.controllerId !== previous.controllerId || !sameRest(restSettings(previous), restSettings(next))) return rejected;
-  const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, restSettings(next), next.unweighted);
+  const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, restSettings(next), next.unweighted, next.minimumEnabled);
   if (expected.mode !== next.mode || expected.taskId !== next.taskId || expected.allocationVersion !== next.allocationVersion) return rejected;
   const equalTime = (a: number, b: number) => Math.abs(a - b) <= 1;
   for (const key of ["workMs", "restMs", "cycleWorkMs", "cycleRestMs"] as const) {
@@ -118,10 +118,10 @@ export class TrackerEngine {
     if (input.accountId !== this.accountId) throw new Error("Account changed. Reopen the task list to reconnect.");
     if (this.accountId) return;
     const clean = sanitizeState(input);
-    if (trackingConfigKey(clean.tasks, clean.endTime, clean.rest, clean.unweighted) !== trackingConfigKey(this.snapshot.tasks, this.snapshot.endTime, restSettings(this.snapshot), this.snapshot.unweighted)) {
+    if (trackingConfigKey(clean.tasks, clean.endTime, clean.rest, clean.unweighted, clean.minimumEnabled) !== trackingConfigKey(this.snapshot.tasks, this.snapshot.endTime, restSettings(this.snapshot), this.snapshot.unweighted, this.snapshot.minimumEnabled)) {
       const now = this.d.now(), previousTick = this.lastTick;
       const reason = this.suppression(now, previousTick);
-      const next = configureTracking(this.snapshot, clean.tasks, clean.endTime, now, clean.rest, clean.unweighted);
+      const next = configureTracking(this.snapshot, clean.tasks, clean.endTime, now, clean.rest, clean.unweighted, clean.minimumEnabled);
       const recovered = checkpointEvents(this.snapshot, next);
       this.snapshot = next;
       this.snapshot.revision++;
@@ -198,7 +198,7 @@ export class TrackerEngine {
           if (epoch !== this.epoch) return;
           if (data.status !== 200) throw new Error("Cannot load your tasks.");
           const state = sanitizeState((data.body as { state: unknown }).state);
-          body.tracking = createTracking(state.tasks, state.endTime, localTimeZone(), body.serverNow, state.rest);
+          body.tracking = createTracking(state.tasks, state.endTime, localTimeZone(), body.serverNow, state.rest, state.unweighted, state.minimumEnabled);
         }
         this.adopt(body.tracking, body.serverNow);
       } catch (e) {

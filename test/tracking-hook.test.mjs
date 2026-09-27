@@ -6,7 +6,7 @@ const { createTracking } = require("../.test-build/tracking.js");
 
 // Exercise the shared hook through its injected hook/adapter boundary without
 // adding another React renderer (web and mobile use separate React versions).
-function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 }, unweighted = false } = {}) {
+function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 }, unweighted = false, minimumEnabled = true } = {}) {
   const slots = [];
   let index = 0, dirty = true, effects = [], result;
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -38,11 +38,12 @@ function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true,
   return {
     get value() { return result; },
     setUnweighted(value) { unweighted = value; dirty = true; },
+    setMinimumEnabled(value) { minimumEnabled = value; dirty = true; },
     async flush() {
       for (let i = 0; i < 12; i++) {
         if (dirty) {
           dirty = false; index = 0; effects = [];
-          result = useTracking(tasks, endTime, rest, null, true, beforeCommand, unweighted);
+          result = useTracking(tasks, endTime, rest, null, true, beforeCommand, unweighted, minimumEnabled);
           for (const effect of effects) effect();
         }
         await new Promise(resolve => setImmediate(resolve));
@@ -129,3 +130,24 @@ try {
   assert.ok(tracker.value.progress.every(p => p.weight === 2));
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 guest unweighted persistence scenario passed");
+
+Date.now = () => start;
+saved = JSON.stringify(createTracking(tasks, "08:20", "UTC", start));
+tracker = mount(persistentAdapter, { tasks, endTime: "08:20" });
+try {
+  await tracker.flush();
+  assert.equal(tracker.value.progress[1].skipped, true);
+  tracker.setMinimumEnabled(false); await tracker.flush();
+  assert.equal(JSON.parse(saved).minimumEnabled, false);
+  assert.ok(tracker.value.progress.every(p => !p.skipped));
+  tracker.unmount();
+  tracker = mount(persistentAdapter, { tasks, endTime: "08:20", minimumEnabled: false });
+  await tracker.flush(); await tracker.value.command({ type: "start" }); await tracker.flush();
+  assert.equal(tracker.value.state.minimumEnabled, false);
+  Date.now = () => start + minute;
+  tracker.setMinimumEnabled(true); await tracker.flush();
+  assert.equal(JSON.parse(saved).minimumEnabled, true);
+  assert.equal(tracker.value.state.workMs, minute);
+  assert.equal(tracker.value.progress[1].skipped, true);
+} finally { tracker.unmount(); Date.now = realNow; }
+console.log("1 guest minimum toggle persistence scenario passed");

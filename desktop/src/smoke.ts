@@ -22,6 +22,26 @@ export async function runSmoke({ main, mini, engine, icons, request, tray }: { m
   const state = await main.webContents.executeJavaScript("({text:document.body.innerText, bridge:typeof window.desktop, node:typeof window.require})");
   assert.equal(state.node, "undefined"); assert.equal(state.bridge, "object");
   assert.match(state.text, /YanTasks/);
+  // Test the actual setting control and its saved guest state, not only IPC.
+  const minimumControl = "document.querySelector('input[aria-describedby=\"minimum-hint\"]')";
+  const waitFor = async (expression: string) => {
+    for (let i = 0; i < 50; i++) {
+      if (await main.webContents.executeJavaScript(expression)) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error(`Renderer condition not met: ${expression}`);
+  };
+  await waitFor(`!!${minimumControl}`);
+  assert.equal(await main.webContents.executeJavaScript(`${minimumControl}.checked`), true);
+  await main.webContents.executeJavaScript(`${minimumControl}.click()`);
+  await waitFor("localStorage.getItem('yantasks.minimumEnabled.v1') === 'false'");
+  await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === false)");
+  main.webContents.reload();
+  await ready(main);
+  await waitFor(`!!${minimumControl} && !${minimumControl}.checked`);
+  await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === false)");
+  await main.webContents.executeJavaScript(`${minimumControl}.click()`);
+  await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === true)");
   await assert.rejects(main.webContents.executeJavaScript("window.desktop.api({path:'https://example.com', method:'GET'})"));
   assert.equal((await request("/api/state")).status, 503);
   // Check Electron's real session transport preserves httpOnly cookies. This

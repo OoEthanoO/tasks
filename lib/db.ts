@@ -223,8 +223,9 @@ export async function loadState(userId: string): Promise<AppState> {
       schedule: string | null;
       rest_settings: string | null;
       unweighted: boolean;
+      minimum_enabled: boolean;
     }>(
-      `SELECT end_time, recommendation, schedule, rest_settings, unweighted FROM prefs WHERE user_id = $1`,
+      `SELECT end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled FROM prefs WHERE user_id = $1`,
       [userId],
     )
   )[0];
@@ -236,6 +237,7 @@ export async function loadState(userId: string): Promise<AppState> {
     endTime: sanitizeEndTime(prefs?.end_time),
     rest: sanitizeRestSettings(parseJson<unknown>(prefs?.rest_settings)),
     unweighted: prefs?.unweighted === true,
+    minimumEnabled: prefs?.minimum_enabled !== false,
   };
 }
 
@@ -259,11 +261,12 @@ function parseJson<T>(raw: string | null | undefined): T | null {
  *   priority the account already stores.
  * - `rest` means the payload had no rest settings; the stored ones stay.
  * - `unweighted` keeps the stored weighting mode when a legacy payload omits it.
+ * - `minimumEnabled` keeps the stored minimum toggle when a legacy payload omits it.
  */
 export async function saveState(
   userId: string,
   incoming: AppState,
-  preserve: { priority?: ReadonlySet<string>; rest?: boolean; unweighted?: boolean } = {},
+  preserve: { priority?: ReadonlySet<string>; rest?: boolean; unweighted?: boolean; minimumEnabled?: boolean } = {},
 ): Promise<void> {
   const state = sanitizeState(incoming);
   const keepPriority = preserve.priority ?? new Set<string>();
@@ -318,14 +321,15 @@ export async function saveState(
   });
 
   statements.push({
-    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings, unweighted)
-                VALUES ($1, $2, $3, $4, $5, $6)
+    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (user_id) DO UPDATE SET
                 end_time = excluded.end_time,
                 recommendation = excluded.recommendation,
                 schedule = excluded.schedule,
                 rest_settings = excluded.rest_settings,
-                unweighted = CASE WHEN $7 THEN prefs.unweighted ELSE excluded.unweighted END`,
+                unweighted = CASE WHEN $8 THEN prefs.unweighted ELSE excluded.unweighted END,
+                minimum_enabled = CASE WHEN $9 THEN prefs.minimum_enabled ELSE excluded.minimum_enabled END`,
     params: [
       userId,
       state.endTime,
@@ -333,16 +337,19 @@ export async function saveState(
       state.schedule ? JSON.stringify(state.schedule) : null,
       JSON.stringify(state.rest),
       state.unweighted,
+      state.minimumEnabled,
       preserve.unweighted === true,
+      preserve.minimumEnabled === true,
     ],
   });
 
   await ensureSchema();
   await getSql().transaction(statements);
-  if (preserve.unweighted) {
-    const [prefs] = await query<{ unweighted: boolean }>("SELECT unweighted FROM prefs WHERE user_id = $1", [userId]);
-    state.unweighted = prefs?.unweighted === true;
+  if (preserve.unweighted || preserve.minimumEnabled) {
+    const [prefs] = await query<{ unweighted: boolean; minimum_enabled: boolean }>("SELECT unweighted, minimum_enabled FROM prefs WHERE user_id = $1", [userId]);
+    if (preserve.unweighted) state.unweighted = prefs?.unweighted === true;
+    if (preserve.minimumEnabled) state.minimumEnabled = prefs?.minimum_enabled !== false;
   }
-  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted);
-  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted);
+  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled);
+  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled);
 }

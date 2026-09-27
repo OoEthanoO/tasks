@@ -937,6 +937,9 @@ console.log("== plain Rest and legacy schedules ==");
   } });
   try {
     const loaded = localStore.load();
+    eq(loaded.minimumEnabled, true, "guest minimum defaults on");
+    localStore.save({ ...loaded, minimumEnabled: false });
+    eq(localStore.load().minimumEnabled, false, "guest minimum off survives refresh");
     eq(loaded.schedule, generated, "the web guest store loads old schedules as plain Rest");
     eq("restMode" in loaded, false, "the web guest store ignores the retired preference key");
     localStore.save(loaded);
@@ -990,6 +993,7 @@ const {
   tasksWithoutPriority,
   hasRestSettings,
   hasUnweightedSetting,
+  hasMinimumSetting,
 } = require("../.test-build/app-state.js");
 const { sanitizeRestSettings, DEFAULT_REST } = require("../.test-build/rest.js");
 
@@ -999,6 +1003,10 @@ eq(sanitizeRestSettings({ enabled: true, workMinutes: 3, restMinutes: 500 }), { 
 eq(sanitizeRestSettings({ enabled: "yes", workMinutes: 52.6, restMinutes: "17" }), { enabled: true, workMinutes: 53, restMinutes: 30 }, "whole minutes; a non-number falls back");
 eq(sanitizeState({ tasks: [] }).rest, DEFAULT_REST, "a state without rest settings gets the default");
 eq(sanitizeState({ tasks: [] }).unweighted, false, "legacy states use weighted mode");
+eq(sanitizeState({ tasks: [] }).minimumEnabled, true, "legacy states keep the minimum");
+eq(sanitizeState({ minimumEnabled: false }).minimumEnabled, false, "minimum off survives sanitization");
+eq(sanitizeState({ minimumEnabled: "false" }).minimumEnabled, true, "minimum requires an explicit boolean false");
+eq([hasMinimumSetting({ minimumEnabled: false }), hasMinimumSetting({}), hasMinimumSetting(null)], [true, false, false], "legacy omission differs from explicitly turning off the minimum");
 eq(sanitizeState({ unweighted: true }).unweighted, true, "unweighted survives sanitization");
 eq(sanitizeState({ unweighted: "true" }).unweighted, false, "unweighted requires a boolean, not a truthy string");
 eq([hasUnweightedSetting({ unweighted: false }), hasUnweightedSetting({}), hasUnweightedSetting(null)], [true, false, false], "an explicit off differs from a legacy client omitting the preference");

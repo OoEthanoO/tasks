@@ -62,4 +62,5 @@ export type AppState = {
   rest: RestSettings;
   /** Ignore due-date and priority multipliers without changing the tasks. */
   unweighted: boolean;
+  minimumEnabled: boolean;
 };

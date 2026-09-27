@@ -22,12 +22,12 @@ export function useDesktopState() {
 
 // Reuses the task UI but not its browser timer. One main-process engine drives
 // both windows, so a hidden/unresponsive renderer cannot stop desktop alerts.
-export function useTracking(tasks: Task[], endTime: string, rest: RestSettings, accountId: string | null, enabled: boolean, beforeCommand?: () => Promise<void>, unweighted = false) {
+export function useTracking(tasks: Task[], endTime: string, rest: RestSettings, accountId: string | null, enabled: boolean, beforeCommand?: () => Promise<void>, unweighted = false, minimumEnabled = true) {
   const view = useDesktopState();
   const [localError, setError] = useState<string | null>(null);
-  const config = useRef({ tasks, endTime, rest, unweighted, accountId });
-  config.current = { tasks, endTime, rest, unweighted, accountId };
-  const key = trackingConfigKey(tasks, endTime, rest, unweighted);
+  const config = useRef({ tasks, endTime, rest, unweighted, minimumEnabled, accountId });
+  config.current = { tasks, endTime, rest, unweighted, minimumEnabled, accountId };
+  const key = trackingConfigKey(tasks, endTime, rest, unweighted, minimumEnabled);
   useEffect(() => {
     if (!enabled) return;
     let live = true;

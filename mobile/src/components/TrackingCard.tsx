@@ -20,9 +20,10 @@ function MinutesField({ label, value, range, onCommit, style }: { label: string;
     }} />;
 }
 
-export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange }: {
+export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange }: {
   tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; rest: RestSettings; onRestChange: (value: RestSettings) => void;
   unweighted: boolean; onUnweightedChange: (value: boolean) => void;
+  minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
 }) {
   const s = useStyles(styles);
   const { c } = useTheme();
@@ -44,9 +45,14 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, res
     </View>
     <View style={s.controls}>
       <Text style={s.hint}>Unweighted</Text>
-      <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Every open task has weight 1 with no 30-minute minimum. Turn off to restore normal weights and the minimum." trackColor={{ true: c.accent, false: c.line }} />
+      <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Every open task has weight 1. Turn off to restore due-date and priority weights." trackColor={{ true: c.accent, false: c.line }} />
     </View>
-    <Text style={s.hint}>When enabled, every open task has weight 1 with no 30-minute minimum. Turn off to restore normal weights and the minimum.</Text>
+    <Text style={s.hint}>When enabled, every open task has weight 1. Turn off to restore due-date and priority weights.</Text>
+    <View style={s.controls}>
+      <Text style={s.hint}>30-minute minimum</Text>
+      <Switch value={minimumEnabled} onValueChange={onMinimumChange} accessibilityLabel="30-minute minimum" accessibilityHint="Skip tasks whose daily target is under 30 minutes. Turn off to allow smaller shares in either weighting mode. The first eligible task is always kept." trackColor={{ true: c.accent, false: c.line }} />
+    </View>
+    <Text style={s.hint}>Skip tasks whose daily target is under 30 minutes. Turn off to allow smaller shares in either weighting mode. The first eligible task is always kept.</Text>
     <View style={s.controls}>
       <Text style={s.hint}>Breaks</Text>
       <Switch value={rest.enabled} onValueChange={enabled => onRestChange({ ...rest, enabled })} accessibilityLabel="Take breaks" trackColor={{ true: c.accent, false: c.line }} />

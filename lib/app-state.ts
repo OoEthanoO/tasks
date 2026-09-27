@@ -29,6 +29,7 @@ export function emptyState(): AppState {
     endTime: DEFAULT_END_TIME,
     rest: { ...DEFAULT_REST },
     unweighted: false,
+    minimumEnabled: true,
   };
 }
 
@@ -204,6 +205,7 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
     endTime: sanitizeEndTime(raw.endTime),
     rest: sanitizeRestSettings(raw.rest),
     unweighted: raw.unweighted === true,
+    minimumEnabled: raw.minimumEnabled !== false,
   };
 }
 
@@ -219,6 +221,10 @@ export function hasRestSettings(raw: unknown): boolean {
 /** Older clients cannot choose a weighting mode they do not know about. */
 export function hasUnweightedSetting(raw: unknown): boolean {
   return isRecord(raw) && "unweighted" in raw;
+}
+
+export function hasMinimumSetting(raw: unknown): boolean {
+  return isRecord(raw) && "minimumEnabled" in raw;
 }
 
 /**

@@ -19,9 +19,10 @@ function MinutesInput({ label, value, range, onCommit }: { label: string; value:
     onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} />;
 }
 
-export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange }: {
+export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange }: {
   tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; rest: RestSettings; onRestChange: (value: RestSettings) => void;
   unweighted: boolean; onUnweightedChange: (value: boolean) => void;
+  minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
 }) {
   const [confirmReset, setConfirmReset] = useState(false);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
@@ -40,7 +41,11 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, re
       </div>
       <div className="tracking-controls rest-controls">
         <label className="rest-toggle"><input type="checkbox" checked={unweighted} onChange={e => onUnweightedChange(e.target.checked)} aria-describedby="unweighted-hint" /> Unweighted</label>
-        <span className="hint" id="unweighted-hint">When enabled, every open task has weight 1 with no 30-minute minimum. Turn off to restore normal weights and the minimum.</span>
+        <span className="hint" id="unweighted-hint">When enabled, every open task has weight 1. Turn off to restore due-date and priority weights.</span>
+      </div>
+      <div className="tracking-controls rest-controls">
+        <label className="rest-toggle"><input type="checkbox" checked={minimumEnabled} onChange={e => onMinimumChange(e.target.checked)} aria-describedby="minimum-hint" /> 30-minute minimum</label>
+        <span className="hint" id="minimum-hint">Skip tasks whose daily target is under 30 minutes. Turn off to allow smaller shares in either weighting mode. The first eligible task is always kept.</span>
       </div>
       <div className="tracking-controls rest-controls">
         <label className="rest-toggle"><input type="checkbox" checked={rest.enabled} onChange={e => onRestChange({ ...rest, enabled: e.target.checked })} /> Breaks</label>
