@@ -19,6 +19,7 @@
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
     "sharp": "0.35.4",
+    "resedit": "1.7.2",
     "typescript": "^5.7.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import type { TrackerEngine } from "./engine";
 import type { ApiReply } from "./contract";
 import { DIAGNOSTIC_FILE } from "./diagnostics";
+import { desktopIdentity } from "./identity";
 
 export async function runSmoke({ main, mini, engine, icons, request, tray }: { main: BrowserWindow; mini: BrowserWindow; engine: TrackerEngine; icons: Record<string, NativeImage>; request: (path: string) => Promise<ApiReply>; tray: Tray }) {
   const ready = async (w: BrowserWindow) => {
@@ -17,6 +18,7 @@ export async function runSmoke({ main, mini, engine, icons, request, tray }: { m
     throw new Error("Renderer did not mount.");
   };
   await Promise.all([ready(main), ready(mini)]);
+  assert.equal(app.getName(), desktopIdentity(app.isPackaged, true).name, "smoke tests have their own Windows identity");
   assert.ok(Object.values(icons).every(i => !i.isEmpty()), "all native icons loaded");
   assert.ok(!tray.isDestroyed());
   const state = await main.webContents.executeJavaScript("({text:document.body.innerText, bridge:typeof window.desktop, node:typeof window.require})");

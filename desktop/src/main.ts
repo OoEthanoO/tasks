@@ -10,14 +10,17 @@ import { statusModel } from "./model";
 import { formatDuration, upcomingTrackingEvents, type TrackingEvent } from "../../lib/tracking";
 import { syncDelay, wakeDelay } from "./power";
 import { AlertLog, type AlertDiagnostic } from "./diagnostics";
+import { desktopIdentity } from "./identity";
 
-const APP_ID = "com.ethanyanxu.yantasks";
 const API = "https://tasks.ethanyanxu.com";
 const smoke = process.argv.includes("--smoke-test");
 const powerCheck = smoke && process.argv.includes("--power-check");
+const identity = desktopIdentity(app.isPackaged, smoke);
+app.setName(identity.name);
 // Smoke tests use a fresh, isolated profile and cannot reach production APIs.
 if (smoke) app.setPath("userData", path.join(app.getPath("temp"), `yantasks-smoke-${process.pid}`));
-app.setAppUserModelId(APP_ID);
+else if (!app.isPackaged) app.setPath("userData", path.join(app.getPath("appData"), identity.name));
+app.setAppUserModelId(identity.appId);
 protocol.registerSchemesAsPrivileged([{ scheme: "yantasks", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (!app.requestSingleInstanceLock()) app.quit();
 else void app.whenReady().then(start).catch(e => { console.error(e); app.exit(1); });
@@ -106,6 +109,11 @@ function schedule(view: DesktopState) {
   }
 }
 function nativeAlert(event: Pick<TrackingEvent, "title" | "body"> & Partial<TrackingEvent>) {
+  // Even Notification.isSupported() initializes Electron's Windows shortcut
+  // registration. Test alerts must run from the isolated executable fixture.
+  if (smoke && process.env.YANTASKS_ALERT_FIXTURE !== process.execPath) {
+    throw new Error("Native smoke alerts require scripts/smoke.mjs --alert-check.");
+  }
   const diagnostic = { eventType: event.type ?? "test" as const, eventId: event.id ?? `test:${Date.now()}`, eventAt: event.at };
   const record = (kind: AlertDiagnostic["kind"], reason?: AlertDiagnostic["reason"]) => alertLog.record({ ...diagnostic, kind, reason });
   if (!Notification.isSupported()) {

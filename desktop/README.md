@@ -88,6 +88,13 @@ sleep, rest transitions and battery scheduling. Run root `npm test` and
 `npm run smoke -- --power-check` adds a short hidden-idle CPU sample (not a
 battery-life benchmark). `--packaged` checks the built executable rather than
 the development Electron runtime.
+Development runs use a separate `YanTasks Development` profile and Windows app
+ID. Smoke runs use `YanTasks Test`; neither shares the installed app's shell
+identity, so an Electron development shortcut cannot replace its taskbar/search
+branding. Notification smoke checks run a temporary executable copy with unique
+Windows product metadata, then remove its shortcut and copy. Electron derives
+shortcut names from that metadata, not `app.setName`. The runner verifies the
+installed YanTasks shortcut stays byte-for-byte unchanged.
 `npm run smoke -- --packaged --alert-check` also sends one labelled test
 notification and checks that Windows reports it shown in the isolated profile's
 diagnostic log. It does not start, pause, or edit a real account timer.

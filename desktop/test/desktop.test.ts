@@ -9,6 +9,18 @@ import type { Task } from "../../lib/types";
 import { DEFAULT_REST } from "../../lib/rest";
 import type { ApiReply } from "../src/contract";
 import type { AlertDiagnostic } from "../src/diagnostics";
+import { APP_ID, desktopIdentity } from "../src/identity";
+import fs from "node:fs";
+
+test("installed Windows identity matches the installer and never aliases development or smoke", () => {
+  const installer = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  assert.deepEqual(desktopIdentity(true, false), { appId: installer.build.appId, name: installer.productName });
+  const development = desktopIdentity(false, false);
+  const smoke = desktopIdentity(false, true);
+  assert.equal(new Set([APP_ID, development.appId, smoke.appId]).size, 3);
+  assert.equal(new Set(["YanTasks", development.name, smoke.name]).size, 3);
+  assert.deepEqual(desktopIdentity(true, true), smoke, "packaged smoke must also stay isolated");
+});
 
 const T = Date.parse("2026-09-15T10:00:00Z");
 const task: Task = { id: "a", title: "Code", description: "", dueDate: "2026-09-16", priority: "low", completed: false, createdAt: new Date(T).toISOString(), completedAt: null };
