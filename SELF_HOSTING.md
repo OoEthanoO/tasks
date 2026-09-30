@@ -56,6 +56,13 @@ Retain the Vercel deployment/domain as a rollback path. Wait for Caddy's public
 certificate and test HTTPS, assets, `/api/auth/me`, and `/api/health` externally.
 The latter must return the expected commit and `hosting: finprint-host`.
 
+At cutover, Vercel reported `DEPLOYMENT_DISABLED` and blocked new DNS records
+because of the team's fair-use limit. Its deployment was retained, but is **not
+a currently working fallback**. Resolvers caching the former Vercel delegation
+or address can still reach that disabled deployment until their caches expire;
+Cloudflare's authoritative record and fresh public resolvers point to the home
+server. No Vercel DNS change was applied.
+
 Enable `install.ps1 -EnableAutoDeploy` only after the first public cutover works.
 It polls `main` every two minutes and on boot; a failed build/readiness check leaves
 the current process serving. Web tasks start on boot and restart on failure. The
@@ -77,7 +84,8 @@ assets are retained; inspect space periodically before manually pruning older
 releases. Never remove the active/previous releases or the entire runtime root.
 Deployment logs and process output remain in the protected runtime directory.
 
-To return to Vercel, remove only the manually added `tasks` CNAME in Cloudflare;
+Only after Vercel hosting is available again, return traffic by removing just
+the manually added `tasks` CNAME in Cloudflare;
 the unchanged wildcard restores the previous route (restore any saved prior
 exact record if the DNS layout changes later). Check Vercel's domain routing and verify public HTTPS before
 stopping the home-server app. The shared Neon database must remain unchanged.
