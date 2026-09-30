@@ -10,6 +10,9 @@ taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync
 Its installer is built independently from `desktop/`; web and iOS keep sharing
 the same tracking calculations and account data.
 
+See [self-hosting](SELF_HOSTING.md) for the finprint-host deployment, keeping the
+existing Neon database and client URLs with staged releases and rollback.
+
 ```bash
 npm install
 npm run dev

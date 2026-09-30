@@ -1,0 +1,10 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { databaseReady } = require("../.test-build/health.js");
+const calls = [];
+assert.equal(await databaseReady({ query: async query => { calls.push(query); return [{ "?column?": 1 }]; } }), true);
+assert.deepEqual(calls, ["SELECT 1 FROM users LIMIT 1"]);
+assert.equal(await databaseReady({ query: async () => [] }), true, "empty existing databases are reachable");
+assert.equal(await databaseReady({ query: async () => { throw new Error("secret connection failure"); } }), false);
+console.log("3 read-only database readiness scenarios passed");
