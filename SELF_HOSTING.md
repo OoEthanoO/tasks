@@ -43,7 +43,15 @@ It never restarts Caddy or edits the other applications' site blocks.
 
 Only after preparation succeeds, update the authoritative DNS record for `tasks`
 to a CNAME of `ai.ethanyanxu.com` (the existing dynamically updated home address),
-TTL 60. Check authoritative nameservers first; do not change zone delegation.
+TTL 60, DNS-only (not proxied). Cloudflare is authoritative, with nameservers
+`christian.ns.cloudflare.com` and `pat.ns.cloudflare.com`; check those before
+editing records, because a local resolver may still cache the former Vercel
+delegation. Do not change zone delegation or the shared dynamic-DNS updater.
+
+The September 30 cutover added an explicit `tasks` CNAME, overriding the existing
+`*.ethanyanxu.com -> cname.vercel-dns-017.com` wildcard without modifying it. The
+prior DNS state and created record are backed up in the protected runtime's
+`logs\dns-before-20260930.json` and `logs\dns-created-20260930.json`.
 Retain the Vercel deployment/domain as a rollback path. Wait for Caddy's public
 certificate and test HTTPS, assets, `/api/auth/me`, and `/api/health` externally.
 The latter must return the expected commit and `hosting: finprint-host`.
@@ -69,8 +77,9 @@ assets are retained; inspect space periodically before manually pruning older
 releases. Never remove the active/previous releases or the entire runtime root.
 Deployment logs and process output remain in the protected runtime directory.
 
-To return to Vercel, remove only the manually added `tasks` CNAME (restore any
-saved prior record), check Vercel's domain routing, and verify public HTTPS before
+To return to Vercel, remove only the manually added `tasks` CNAME in Cloudflare;
+the unchanged wildcard restores the previous route (restore any saved prior
+exact record if the DNS layout changes later). Check Vercel's domain routing and verify public HTTPS before
 stopping the home-server app. The shared Neon database must remain unchanged.
 
 ## Verification
