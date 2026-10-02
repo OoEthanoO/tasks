@@ -28,6 +28,8 @@ export type TrackingState = {
   restMs: number;
   cycleWorkMs: number;
   cycleRestMs: number;
+  /** Work toward the next cycle, preserved while finishing a postponed break. */
+  restWorkCreditMs?: number;
   mode: "idle" | "work" | "rest";
   taskId: string | null;
   controllerId: string | null;
@@ -161,6 +163,7 @@ function restServed(state: TrackingState): number {
 /** Turn a waiting skipped break back into the break itself, where it left off. */
 function resumeDeferredBreak(state: TrackingState): void {
   if (state.mode === "work" || !state.deferredBreak) return;
+  state.restWorkCreditMs = state.cycleWorkMs;
   state.cycleWorkMs = workCycleMs(state); state.cycleRestMs = state.deferredBreak.cycleRestMs;
   delete state.deferredBreak;
 }
@@ -168,7 +171,7 @@ function resumeDeferredBreak(state: TrackingState): void {
 export function skipRestHint(state: TrackingState): string {
   // Skipping the same waiting break again carries on with the stretch already under way.
   const work = workCycleMs(state);
-  const stretch = state.mode === "idle" && state.deferredBreak ? work - state.cycleWorkMs : work;
+  const stretch = work - (state.mode === "idle" && state.deferredBreak ? state.cycleWorkMs : state.restWorkCreditMs ?? 0);
   return `Pause any time to come back to it. Otherwise the next break starts after ${formatDuration(stretch)} more work.`;
 }
 
@@ -180,7 +183,8 @@ export function remainingWorkTime(state: TrackingState, now = state.cursor): num
   const work = workCycleMs(state), rest = restCycleMs(state);
   const owesRest = restOwed(state);
   if (owesRest) wall = Math.max(0, wall - Math.max(0, rest - restServed(state)));
-  const firstWork = Math.min(wall, owesRest ? work : Math.max(0, work - state.cycleWorkMs));
+  const credit = state.mode === "idle" && state.deferredBreak ? state.cycleWorkMs : state.restWorkCreditMs ?? 0;
+  const firstWork = Math.min(wall, Math.max(0, work - (owesRest ? credit : state.cycleWorkMs)));
   // After the first work stretch comes a break, then full work/rest cycles.
   const tail = Math.max(0, wall - firstWork - rest);
   const cycle = work + rest;
@@ -303,7 +307,8 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
       state.cycleRestMs += elapsed;
       state.cursor += elapsed;
       if (state.cycleRestMs + EPSILON >= rest) {
-        state.cycleWorkMs = 0; state.cycleRestMs = 0;
+        state.cycleWorkMs = state.restWorkCreditMs ?? 0; state.cycleRestMs = 0;
+        delete state.restWorkCreditMs;
         state.mode = "idle";
         const next = nextTask(state, progressFor);
         state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
@@ -335,6 +340,7 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
       state.mode = "rest"; state.taskId = null;
       // A fresh break replaces one skipped earlier; breaks never stack up.
       delete state.deferredBreak;
+      delete state.restWorkCreditMs;
       const { workMinutes, restMinutes } = restSettings(state);
       emit("rest-start", "Time to rest", `${workMinutes} minutes of work complete. Now tracking a ${restMinutes}-minute break.`);
     } else if (!state.taskId) {
@@ -386,10 +392,12 @@ function applyRest(state: TrackingState, rest: RestSettings): void {
     if (state.mode === "rest") state.mode = "work";
     state.cycleWorkMs = 0; state.cycleRestMs = 0;
     delete state.deferredBreak;
+    delete state.restWorkCreditMs;
     return;
   }
   state.cycleWorkMs = Math.min(state.cycleWorkMs, workCycleMs(state));
   state.cycleRestMs = Math.min(state.cycleRestMs, restCycleMs(state));
+  if (state.restWorkCreditMs !== undefined) state.restWorkCreditMs = Math.min(state.restWorkCreditMs, workCycleMs(state));
   if (state.deferredBreak) state.deferredBreak = { cycleRestMs: Math.min(state.deferredBreak.cycleRestMs, restCycleMs(state)) };
 }
 
@@ -426,7 +434,8 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
       // Skipping the same waiting break again keeps the stretch under way.
       if (!(state.mode === "idle" && state.deferredBreak)) {
         state.deferredBreak = { cycleRestMs: state.cycleRestMs };
-        state.cycleWorkMs = 0; state.cycleRestMs = 0;
+        state.cycleWorkMs = state.restWorkCreditMs ?? 0; state.cycleRestMs = 0;
+        delete state.restWorkCreditMs;
       }
       state.mode = "work"; state.taskId = null;
     }
@@ -482,6 +491,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (s.rest !== undefined && (!s.rest || typeof s.rest !== "object" || !sameRest(sanitizeRestSettings(s.rest), s.rest))) return null;
   if (s.cycleWorkMs > workCycleMs(s) || s.cycleRestMs > restCycleMs(s)) return null;
   if (s.deferredBreak !== undefined && (!s.deferredBreak || typeof s.deferredBreak !== "object" || !Number.isFinite(s.deferredBreak.cycleRestMs) || s.deferredBreak.cycleRestMs < 0 || s.deferredBreak.cycleRestMs > restCycleMs(s))) return null;
+  if (s.restWorkCreditMs !== undefined && (!Number.isFinite(s.restWorkCreditMs) || s.restWorkCreditMs < 0 || s.restWorkCreditMs > workCycleMs(s) || s.restWorkCreditMs > s.workMs)) return null;
   // Snapshots from before priorities existed carry none; those weigh as low.
   if (s.tasks.some(t => !t || typeof t.id !== "string" || typeof t.title !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.dueDate) || typeof t.createdAt !== "string" || (t.priority !== undefined && !isPriority(t.priority)))) return null;
   return s;

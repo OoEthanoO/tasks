@@ -31,6 +31,7 @@ function checkpointEvents(previous: TrackingState, next: TrackingState): { event
   for (const key of ["workMs", "restMs", "cycleWorkMs", "cycleRestMs"] as const) {
     if (!equalTime(expected[key], next[key])) return rejected;
   }
+  if (!equalTime(expected.restWorkCreditMs ?? 0, next.restWorkCreditMs ?? 0)) return rejected;
   if (!!expected.deferredBreak !== !!next.deferredBreak ||
       !equalTime(expected.deferredBreak?.cycleRestMs ?? 0, next.deferredBreak?.cycleRestMs ?? 0)) return rejected;
   for (const id of new Set([...Object.keys(expected.taskMs), ...Object.keys(next.taskMs)])) {

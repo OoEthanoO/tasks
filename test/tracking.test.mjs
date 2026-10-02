@@ -362,9 +362,73 @@ check("pausing after a skip brings the skipped break back, where it left off", (
   assert.equal(restOwed(paused),true);
   const resumed=actOnTracking(paused,{type:"start"},"device-1",T+130*MIN);
   assert.equal(resumed.mode,"rest"); near(resumed.cycleRestMs,10*MIN); assert.equal(resumed.deferredBreak,undefined);
-  // Only the 20 unserved minutes remain, then a full stretch before the next break.
+  // Only the 20 unserved minutes remain; the extra 30 work minutes still count.
+  near(resumed.restWorkCreditMs,30*MIN);
   const after=advanceTracking(resumed,T+150*MIN).state;
-  assert.equal(after.mode,"work"); near(after.restMs,30*MIN); near(after.cycleWorkMs,0);
+  assert.equal(after.mode,"work"); near(after.restMs,30*MIN); near(after.cycleWorkMs,30*MIN);
+  assert.equal(after.restWorkCreditMs,undefined);
+  const next=advanceTracking(after,T+210*MIN);
+  near(next.state.workMs,180*MIN); assert.equal(next.state.mode,"rest");
+  assert.ok(next.events.some(e=>e.type==="rest-soon"&&e.at===T+205*MIN));
+  assert.ok(next.events.some(e=>e.type==="rest-start"&&e.at===T+210*MIN));
+});
+check("postponed-break credit survives repeated resumes, re-skips, and persistence", () => {
+  let s=advanceTracking(actOnTracking(fresh([task("only")]),{type:"start"},"device-1",T),T+100*MIN).state;
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);
+  s=actOnTracking(s,{type:"pause"},"device-1",T+107*MIN);
+  s=actOnTracking(s,{type:"start"},"device-2",T+107*MIN);
+  near(s.restWorkCreditMs,7*MIN);
+  s=actOnTracking(s,{type:"pause"},"device-2",T+112*MIN);
+  s=parseTracking(JSON.parse(JSON.stringify(s)));
+  assert.ok(s); near(s.restWorkCreditMs,7*MIN);
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+112*MIN);
+  near(s.cycleWorkMs,7*MIN); assert.equal(s.restWorkCreditMs,undefined);
+  s=actOnTracking(s,{type:"pause"},"device-1",T+115*MIN);
+  s=actOnTracking(s,{type:"start"},"device-2",T+115*MIN);
+  near(s.restWorkCreditMs,10*MIN);
+  s=actOnTracking(s,{type:"pause"},"device-2",T+120*MIN);
+  s=actOnTracking(s,{type:"start"},"device-1",T+125*MIN);
+  s=advanceTracking(s,T+135*MIN).state;
+  near(s.workMs,100*MIN); near(s.restMs,30*MIN); near(s.cycleWorkMs,10*MIN);
+  const next=advanceTracking(s,T+215*MIN);
+  near(next.state.workMs,180*MIN); assert.equal(next.state.mode,"rest");
+});
+check("remaining work reserves the next break using postponed work credit", () => {
+  let s=advanceTracking(actOnTracking(fresh([task("only")],"12:00"),{type:"start"},"device-1",T),T+100*MIN).state;
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);
+  s=actOnTracking(s,{type:"pause"},"device-1",T+130*MIN);
+  // 110 wall minutes: finish 20 rest, work 60, then the next 30-minute break.
+  near(remainingWorkTime(s),60*MIN);
+  const resumed=actOnTracking(s,{type:"start"},"device-2",T+130*MIN);
+  near(remainingWorkTime(resumed),60*MIN);
+  near(workBudget(resumed),workBudget(s));
+  const predicted=upcomingTrackingEvents(resumed,resumed.cursor);
+  const end=advanceTracking(resumed,dayEnd(resumed));
+  near(end.state.workMs-resumed.workMs,remainingWorkTime(resumed));
+  assert.deepEqual(end.events,predicted);
+});
+check("the reported seven-minute gap is retained through the postponed break", () => {
+  let s=advanceTracking(actOnTracking(fresh([task("only")]),{type:"start"},"device-1",T),T+100*MIN).state;
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",s.cursor);
+  s=actOnTracking(s,{type:"pause"},"device-1",s.cursor+422244);
+  s=actOnTracking(s,{type:"start"},"device-1",s.cursor);
+  s=advanceTracking(s,s.cursor+20*MIN).state;
+  near(s.workMs,90*MIN+422244); near(s.cycleWorkMs,422244);
+  const restAt=s.cursor+90*MIN-422244;
+  const result=advanceTracking(s,restAt);
+  near(result.state.workMs,180*MIN); assert.equal(result.state.mode,"rest");
+  assert.ok(result.events.some(e=>e.type==="rest-start"&&e.at===restAt));
+});
+check("postponed credit is cleared with breaks disabled, reset, and day rollover", () => {
+  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
+  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);
+  s=actOnTracking(s,{type:"pause"},"device-1",T+110*MIN);
+  s=actOnTracking(s,{type:"start"},"device-1",T+110*MIN);
+  assert.equal(configureTracking(s,tasks,"18:00",s.cursor,{...DEFAULT_REST,enabled:false}).restWorkCreditMs,undefined);
+  assert.equal(actOnTracking(s,{type:"reset"},"device-1",s.cursor).restWorkCreditMs,undefined);
+  assert.equal(advanceTracking(s,T+24*60*MIN).state.restWorkCreditMs,undefined);
+  for (const bad of [-1,NaN,Infinity,"10",91*MIN]) assert.equal(parseTracking({...s,restWorkCreditMs:bad}),null);
+  assert.ok(parseTracking({...s,restWorkCreditMs:0}));
 });
 check("skipping the waiting break again keeps the stretch under way", () => {
   let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+90*MIN).state;

@@ -115,6 +115,22 @@ test("sleep/resume catches up elapsed time without a flood of old alerts", async
   x.now += 2 * 60 * 60_000; await x.engine.resume();
   assert.equal(x.notifications.length, 0); assert.ok(x.engine.view().state.restMs > 0);
 });
+test("postponed-break credit survives desktop restart and alerts at 180 worked minutes", async () => {
+  const minute = 60_000;
+  let saved = advanceTracking(actOnTracking(createTracking([task], "23:00", "UTC", T), { type: "start" }, "windows_test", T), T + 100 * minute).state;
+  saved = actOnTracking(saved, { type: "skip-rest" }, "windows_test", saved.cursor);
+  saved = actOnTracking(saved, { type: "pause" }, "windows_test", T + 107 * minute);
+  saved = actOnTracking(saved, { type: "start" }, "windows_test", saved.cursor);
+  const x = setup(JSON.parse(JSON.stringify(saved))); x.now = saved.cursor;
+  await x.engine.identity(null);
+  for (let i = 0; i < 103; i++) { x.now += minute; x.engine.tick(); }
+  assert.equal(x.engine.view().state.workMs, 180 * minute);
+  assert.equal(x.engine.view().state.restMs, 30 * minute);
+  assert.equal(x.engine.view().state.mode, "rest");
+  assert.equal(x.notifications.filter(e => e.type === "rest-complete").length, 1);
+  assert.equal(x.notifications.find(e => e.type === "rest-soon")?.at, T + 205 * minute);
+  assert.equal(x.notifications.find(e => e.type === "rest-start")?.at, T + 210 * minute);
+});
 test("disabled alerts do not notify but keep in-app status", async () => {
   const s = actOnTracking(createTracking([task], "23:00", "UTC", T), { type: "start" }, "windows_test", T);
   s.workMs = s.cycleWorkMs = WORK_CYCLE_MS - 500; s.taskMs.a = s.workMs;
@@ -260,6 +276,20 @@ test("reset, pause, manual switch and ownership changes cancel obsolete checkpoi
     fixture.remote = { ...changed, revision: 1 };
     await x.engine.refresh(); x.engine.tick();
     assert.equal(x.notifications.length, 0, mutation);
+  }
+});
+test("account checkpoints retain alerts after completing a postponed break", async () => {
+  const minute = 60_000;
+  let initial = advanceTracking(actOnTracking(createTracking([task], "23:00", "UTC", T), { type: "start" }, "windows_test", T), T + 100 * minute).state;
+  initial = actOnTracking(initial, { type: "skip-rest" }, "windows_test", initial.cursor);
+  initial = actOnTracking(initial, { type: "pause" }, "windows_test", T + 107 * minute);
+  initial = actOnTracking(initial, { type: "start" }, "windows_test", initial.cursor);
+  for (const [minutes, type] of [[127, "rest-complete"], [205, "rest-soon"], [210, "rest-start"]] as const) {
+    const fixture = await accountBeforeBoundary(initial, T + minutes * minute);
+    fixture.remote = { ...advanceTracking(initial, fixture.x.now).state, revision: 1 };
+    await fixture.x.engine.refresh(); fixture.x.engine.tick();
+    assert.equal(fixture.x.notifications.filter(e => e.type === type).length, 1, type);
+    assert.equal(fixture.x.notifications.length, 1, type);
   }
 });
 
