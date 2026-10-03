@@ -30,8 +30,8 @@ release should be signed with the project's own code-signing certificate.
 
 Hidden renderers are background-throttled and receive no live state broadcasts.
 The mini window is created only when opened and freed when hidden. Visible active
-clocks update once per second with no continuous animation; paused windows do not
-need a one-second loop. Background
+work and idle countdowns update once per second with no continuous animation;
+completed/out-of-day displays do not need a one-second loop. Background
 timer wakeups are scheduled for task and idle-time transitions or a one-minute heartbeat,
 not a one-second loop. Account polling is 5 seconds when visible/active on AC,
 15 seconds active in the background on AC, 30 seconds active on battery, and
@@ -75,6 +75,7 @@ npm run typecheck
 npm test
 npm run build
 npm run smoke
+npm run smoke -- --countdown-check
 npm start
 npm run dist
 npm run smoke -- --packaged
@@ -90,6 +91,9 @@ sleep, idle-time transitions and battery scheduling. Run root `npm test` and
 `npm run smoke -- --power-check` adds a short hidden-idle CPU sample (not a
 battery-life benchmark). `--packaged` checks the built executable rather than
 the development Electron runtime.
+`--countdown-check` verifies that the real main and mini idle countdowns advance
+without manual ticks, then checks that hidden windows stop frequent wakeups and
+receive no countdown updates. Its visible test windows are transparent and click-through.
 Development runs use a separate `YanTasks Development` profile and Windows app
 ID. Smoke runs use `YanTasks Test`; neither shares the installed app's shell
 identity, so an Electron development shortcut cannot replace its taskbar/search

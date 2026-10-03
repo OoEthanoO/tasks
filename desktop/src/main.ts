@@ -8,13 +8,14 @@ import { defaults, type ApiReply, type DesktopState, type Settings } from "./con
 import { trustedPage, validateAction, validateApi } from "./security";
 import { statusModel } from "./model";
 import { formatDuration, upcomingTrackingEvents, type TrackingEvent } from "../../lib/tracking";
-import { syncDelay, wakeDelay } from "./power";
+import { hasLiveCountdown, syncDelay, wakeDelay } from "./power";
 import { AlertLog, type AlertDiagnostic } from "./diagnostics";
 import { desktopIdentity } from "./identity";
 
 const API = "https://tasks.ethanyanxu.com";
 const smoke = process.argv.includes("--smoke-test");
 const powerCheck = smoke && process.argv.includes("--power-check");
+const countdownCheck = smoke && process.argv.includes("--countdown-check");
 const identity = desktopIdentity(app.isPackaged, smoke);
 app.setName(identity.name);
 // Smoke tests use a fresh, isolated profile and cannot reach production APIs.
@@ -84,7 +85,7 @@ function showMini() {
 function isVisible(w: BrowserWindow | undefined): w is BrowserWindow { return !!w && !w.isDestroyed() && w.isVisible() && !w.isMinimized(); }
 
 function schedule(view: DesktopState) {
-  if (smoke && !powerCheck || suspended || quitting || !main) return;
+  if (smoke && !powerCheck && !countdownCheck || suspended || quitting || !main) return;
   const visible = isVisible(main) || isVisible(mini);
   const s = view.state;
   const key = `${view.accountId}/${s.revision}/${s.dayKey}/${s.mode}/${s.taskId}/${s.endTime}`;
@@ -94,7 +95,7 @@ function schedule(view: DesktopState) {
   }
   const next = eventTimes.find(t => t > s.cursor);
   clearTimeout(wakeTimer);
-  wakeTimer = setTimeout(() => engine.tick(), wakeDelay(visible && s.mode !== "idle", next === undefined ? null : next - s.cursor));
+  wakeTimer = setTimeout(() => engine.tick(), wakeDelay(visible && hasLiveCountdown(s), next === undefined ? null : next - s.cursor));
   // A nearer foreground deadline can shorten an existing background wait;
   // ordinary repainting must never postpone a scheduled server refresh.
   const due = Date.now() + syncDelay(s.mode !== "idle", visible, onBattery);
@@ -278,7 +279,7 @@ async function start() {
     return w;
   };
   main.on("close", event => { if (!quitting) { event.preventDefault(); main.hide(); if (engine.view().state.mode !== "idle") changeSettings({ mini: true }); } });
-  main.on("focus", () => { main.flashFrame(false); void engine.refresh(); });
+  main.on("focus", () => { main.flashFrame(false); engine.tick(); void engine.refresh(); });
   main.once("ready-to-show", () => { if (!process.argv.includes("--background") && !smoke) main.show(); });
   tray = new Tray(icons.idle);
   tray.on("double-click", showMain);
@@ -328,7 +329,7 @@ async function start() {
   if (smoke) {
     const { runSmoke } = await import("./smoke");
     mini = createMini();
-    await runSmoke({ main, mini, engine, icons, request, tray });
+    await runSmoke({ main, mini, engine, icons, request, tray, stats });
     if (powerCheck) {
       const { runPowerCheck } = await import("./power-check");
       mini.destroy(); mini = undefined;

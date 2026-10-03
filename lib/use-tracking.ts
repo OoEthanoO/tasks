@@ -6,6 +6,9 @@ import type { DayPlan } from "./plan";
 import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, idleLeftMs, localTimeZone, ownsAlerts, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
 
 export const TRACKING_KEY = "yantasks.tracking.v1";
+// Poll responses and UI ticks share one second boundary. A response arriving
+// between ticks must not create an extra, short-lived countdown update.
+const displayTime = (now: number) => Math.floor(now / 1000) * 1000;
 export type TrackingAdapter = {
   read(): Promise<string | null>;
   write(value: string): Promise<void>;
@@ -24,7 +27,7 @@ type Hooks = Pick<typeof React, "useState" | "useRef" | "useCallback" | "useMemo
 export function createTrackingHook({ useState, useRef, useEffect, useCallback, useMemo }: Hooks, adapter: TrackingAdapter) {
   return function useTracking(tasks: Task[], endTime: string, plan: DayPlan, accountId: string | null, enabled: boolean, beforeCommand: () => Promise<void>, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES) {
     const [snapshot, setSnapshot] = useState<TrackingState | null>(null);
-    const [clock, setClock] = useState(Date.now());
+    const [clock, setClock] = useState(() => displayTime(Date.now()));
     const [ready, setReady] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -35,6 +38,8 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     const config = useRef({ tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes }); config.current = { tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes };
     const scope = useRef(0);
     const offset = useRef(0);
+    const clockSynced = useRef(false);
+    const foregroundClock = useRef<(() => void) | null>(null);
     const fetching = useRef(false);
     const commanding = useRef(false);
     const seen = useRef(new Set<string>());
@@ -53,12 +58,18 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
         }
       };
       void readPermission();
-      const unsubscribe = adapter.onForeground(() => void readPermission());
+      const unsubscribe = adapter.onForeground(() => { void readPermission(); foregroundClock.current?.(); });
       return () => { cancelled = true; unsubscribe(); };
     }, []);
 
     const adopt = useCallback((value: TrackingState | null, serverNow?: number) => {
-      if (serverNow !== undefined) offset.current = serverNow - Date.now();
+      // Reject stale replies before they can change the display's clock.
+      if (value && snapshotRef.current && value.revision < snapshotRef.current.revision) return;
+      // Calibrate once per account/session. Replacing this offset on every
+      // poll makes variable response latency slow down or rewind the clock.
+      if (serverNow !== undefined && !clockSynced.current) {
+        offset.current = serverNow - Date.now(); clockSynced.current = true;
+      }
       const next = value ?? createTracking(config.current.tasks, config.current.endTime, localTimeZone(), Date.now() + offset.current, config.current.plan, config.current.unweighted, config.current.minimumEnabled, config.current.minimumMinutes);
       // A slow poll must never replace a more recent command response.
       if (snapshotRef.current && next.revision < snapshotRef.current.revision) return;
@@ -70,7 +81,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
         snapshotRef.current = next;
         setSnapshot(next);
       }
-      setClock(Date.now() + offset.current); setReady(true);
+      setClock(displayTime(Date.now() + offset.current)); setReady(true);
     }, []);
 
     const refresh = useCallback(async () => {
@@ -104,13 +115,21 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       scope.current++;
       snapshotRef.current = null; setSnapshot(null); setReady(false); setError(null);
       fetching.current = false; commanding.current = false; setBusy(false);
-      offset.current = 0; seen.current.clear(); lastCheck.current = Date.now();
+      offset.current = 0; clockSynced.current = false; seen.current.clear(); lastCheck.current = Date.now();
       let cancelled = false;
       void adapter.controllerId().then(id => { if (!cancelled) setController(id); });
       void refresh();
       const poll = setInterval(() => void refresh(), 3000);
-      const tick = setInterval(() => setClock(Date.now() + offset.current), 1000);
-      return () => { cancelled = true; scope.current++; clearInterval(poll); clearInterval(tick); void adapter.scheduleNotifications([]); };
+      let tick: ReturnType<typeof setTimeout>;
+      const repaint = () => {
+        const now = Date.now() + offset.current;
+        setClock(displayTime(now));
+        clearTimeout(tick);
+        tick = setTimeout(repaint, 1000 - now % 1000);
+      };
+      repaint();
+      foregroundClock.current = () => { repaint(); void refresh(); };
+      return () => { cancelled = true; scope.current++; foregroundClock.current = null; clearInterval(poll); clearTimeout(tick); void adapter.scheduleNotifications([]); };
     }, [refresh]);
 
     // Guest task edits use exactly the same checkpoint rule as account edits.

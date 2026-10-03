@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { TrackerEngine } from "../src/engine";
 import { statusModel } from "../src/model";
-import { syncDelay, wakeDelay } from "../src/power";
+import { hasLiveCountdown, syncDelay, wakeDelay } from "../src/power";
 import { trustedPage, validateAction, validateApi } from "../src/security";
 import { actOnTracking, advanceTracking, configureTracking, createTracking, dayEnd, dayPlan, taskProgress, workBudget, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import type { Task } from "../../lib/types";
@@ -450,6 +450,22 @@ test("power policy lowers idle/battery polling while preserving exact alert wake
   assert.equal(wakeDelay(false, 2300), 2325);
   assert.equal(wakeDelay(true, 60_000), 1000);
   assert.equal(wakeDelay(false, -10), 100);
+});
+
+test("visible idle countdowns tick each second without increasing hidden wakeups or polling", () => {
+  const idle = createTracking([task], "23:00", "UTC", T, PLAN);
+  const working = actOnTracking(idle, { type: "start" }, "windows_test", T);
+  for (const state of [idle, working]) {
+    assert.equal(hasLiveCountdown(state), true);
+    assert.equal(wakeDelay(true && hasLiveCountdown(state), null), 1000);
+    assert.equal(wakeDelay(false && hasLiveCountdown(state), null), 60_000);
+  }
+  assert.equal(syncDelay(false, true, true), 30_000, "visible idle on battery does not poll every second");
+  assert.equal(syncDelay(false, false, true), 60_000);
+  const done = advanceTracking(working, T + 390 * MIN).state;
+  assert.equal(hasLiveCountdown(done), false);
+  assert.equal(hasLiveCountdown({ ...idle, cursor: T - 1000 }), false);
+  assert.equal(hasLiveCountdown({ ...idle, cursor: dayEnd(idle) }), false);
 });
 test("taskbar model covers before the day, idle, working, forced work and day end", async () => {
   // 10:30–23:00 split 1:1: 6h15m each of work and idle time.

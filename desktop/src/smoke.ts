@@ -7,8 +7,9 @@ import type { TrackerEngine } from "./engine";
 import type { ApiReply } from "./contract";
 import { DIAGNOSTIC_FILE } from "./diagnostics";
 import { desktopIdentity } from "./identity";
+import type { PowerStats } from "./power-check";
 
-export async function runSmoke({ main, mini, engine, icons, request, tray }: { main: BrowserWindow; mini: BrowserWindow; engine: TrackerEngine; icons: Record<string, NativeImage>; request: (path: string) => Promise<ApiReply>; tray: Tray }) {
+export async function runSmoke({ main, mini, engine, icons, request, tray, stats }: { main: BrowserWindow; mini: BrowserWindow; engine: TrackerEngine; icons: Record<string, NativeImage>; request: (path: string) => Promise<ApiReply>; tray: Tray; stats: PowerStats }) {
   const ready = async (w: BrowserWindow) => {
     if (w.webContents.isLoading()) await new Promise<void>(resolve => w.webContents.once("did-finish-load", () => resolve()));
     for (let i = 0; i < 50; i++) {
@@ -91,6 +92,35 @@ export async function runSmoke({ main, mini, engine, icons, request, tray }: { m
   assert.equal(engine.view().state.mode, "idle");
   await main.webContents.executeJavaScript("window.desktop.command({type:'reset'})");
   assert.equal(engine.view().state.workMs, 0);
+  if (process.argv.includes("--countdown-check")) {
+    // Real visible renderers and the production wake scheduler, not manual
+    // engine.tick calls. Transparent/click-through windows do not interrupt
+    // the user's desktop. All data belongs to the isolated guest profile.
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const readSeconds = async (w: BrowserWindow, selector: string) => {
+      const text = await w.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.textContent`);
+      assert.match(text, /^\d+:\d{2}:\d{2}$/);
+      return text.split(":").reduce((seconds: number, part: string) => seconds * 60 + Number(part), 0);
+    };
+    for (const [w, selector] of [[main, ".focus-clock"], [mini, ".mini-clock"]] as const) {
+      main.hide(); mini.hide();
+      w.setOpacity(0); w.setIgnoreMouseEvents(true); w.showInactive();
+      await sleep(250);
+      const before = await readSeconds(w, selector);
+      await sleep(3200);
+      const after = await readSeconds(w, selector);
+      assert.ok(before - after >= 2 && before - after <= 4, `${selector} counts down in real time: ${before} -> ${after}`);
+      assert.equal(engine.view().state.mode, "idle");
+      assert.equal(engine.view().state.workMs, 0);
+    }
+    main.hide(); mini.hide();
+    await sleep(100);
+    const before = { ...stats };
+    await sleep(2200);
+    assert.equal(stats.publishes, before.publishes, "hidden idle returns to the low-power wake schedule");
+    assert.equal(stats.sends, before.sends, "hidden renderers receive no countdown IPC");
+    console.log("COUNTDOWN CHECK PASS: main and mini idle clocks advance; hidden windows stay quiet.");
+  }
   await assert.rejects(mini.webContents.executeJavaScript("window.desktop.api({path:'/api/auth/me',method:'GET'})"));
   // Opt-in native delivery probe. The normal smoke run remains silent. Only
   // this disposable profile is touched; no real account timer is changed.
@@ -107,6 +137,12 @@ export async function runSmoke({ main, mini, engine, icons, request, tray }: { m
     }
     assert.ok(shown, "Windows reported the test notification shown");
     console.log(`ALERT CHECK PASS: native request and show callback recorded in ${logFile}`);
+  }
+  if (process.argv.includes("--countdown-check")) {
+    // The cadence probe deliberately hides a previously visible Chromium
+    // surface; capturing it can wait for a frame that will never be painted.
+    console.log("SMOKE PASS: isolated guest, sandbox, IPC, real visible countdowns and hidden-window power policy.");
+    return;
   }
   const image = await mini.webContents.capturePage();
   const imagePath = path.join(app.getPath("userData"), "mini.png");
