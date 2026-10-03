@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Local build artifacts and signing configuration
+/build/
+credentials.json
+apple.json
+fastlane-api.json

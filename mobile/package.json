@@ -22,7 +22,11 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "mac:check": "node scripts/mac-build.mjs check",
+    "mac:archive": "node scripts/mac-build.mjs archive",
+    "testflight:mac": "node scripts/mac-build.mjs testflight",
+    "test:mac-build": "node --test scripts/mac-build.test.mjs"
   },
   "private": true
 }

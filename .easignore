@@ -27,6 +27,10 @@ mobile/.kotlin/
 mobile/.metro-health-check*
 mobile/ios/
 mobile/android/
+mobile/build/
+**/credentials.json
+**/apple.json
+**/fastlane-api.json
 *.orig.*
 *.jks
 *.p8

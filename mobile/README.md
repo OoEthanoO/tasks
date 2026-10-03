@@ -60,9 +60,10 @@ second copy of React.
 
 ## Native builds
 
-Expo Go covers development. A standalone `.ipa` for TestFlight or the App Store
-needs either a Mac with Xcode or an EAS build (`npx eas build -p ios`), which is
-a paid Expo service for private projects.
+Expo Go covers development. For a standalone signed `.ipa`, use the
+[Mac build server](MAC_BUILDER.md). It compiles with Xcode on the MacBook Pro and
+can upload directly to Apple without Expo's cloud build/submission services.
+The existing EAS configuration is retained as a manual fallback.
 
 ## Timer alerts
 
