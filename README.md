@@ -198,9 +198,11 @@ divides that window into the day's work time and idle allowance: 09:00–23:00 a
 
 Work time counts down only while you track it. Start takes the first unfinished
 daily target in list order (nearest due date, then creation order); weight
-decides how much time a task gets, not when. Each task also has a Track button.
+decides how much time a task gets, not when. The timer keeps following the
+list, so a task added or moved above the current one takes over at once.
 Reaching a target alerts you and moves on to the next unfinished task down the
-list. There are no breaks: pause whenever you like.
+list. Each task also has a Track button; a task picked with it stays until its
+target is met, then the list resumes. There are no breaks: pause whenever you like.
 
 Every minute of the work day that you are not tracking is **idle** time, counted
 down from the allowance, so work left plus idle left always equals the time left

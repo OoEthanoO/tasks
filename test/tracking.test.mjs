@@ -534,6 +534,38 @@ check("reserved property names can be valid task ids without corrupting counters
   near(s.taskMs.__proto__,MIN); near(s.workMs,MIN);
 });
 
+check("a task added above an automatically picked task takes over at once", () => {
+  const later = task("later", "2026-09-16");
+  const s = actOnTracking(day([later], 240), { type: "start" }, "device-1", T);
+  assert.equal(s.taskId, "later"); assert.equal("chosen" in s, false);
+  const workout = { ...task("workout"), createdAt: new Date(T + 10 * MIN).toISOString() };
+  const edited = configureTracking(s, [later, workout], s.endTime, T + 10 * MIN);
+  assert.equal(edited.taskId, "workout", "the new task is first in the list");
+  near(edited.taskMs.later, 10 * MIN);
+  near(advanceTracking(edited, T + 25 * MIN).state.taskMs.workout, 15 * MIN);
+  // A snapshot saved before choices were recorded follows the list from its last checkpoint.
+  const old = advanceTracking({ ...s, tasks: [later, workout], cursor: T + 10 * MIN, taskMs: { later: 10 * MIN }, workMs: 10 * MIN }, T + 20 * MIN).state;
+  assert.equal(old.taskId, "workout"); near(old.taskMs.workout, 10 * MIN);
+});
+check("a task tracked by hand stays until its target is met, then the list resumes", () => {
+  const list = [task("a"), task("b", "2026-09-15")];
+  let s = actOnTracking(day(list, 240), { type: "start", taskId: "b" }, "device-1", T);
+  assert.equal(s.taskId, "b"); assert.equal(s.chosen, true);
+  // Adding a task above does not replace a hand-picked one.
+  s = configureTracking(s, [...list, { ...task("c"), createdAt: new Date(T + 1).toISOString() }], s.endTime, T + 5 * MIN);
+  assert.equal(s.taskId, "b"); assert.equal(s.chosen, true);
+  assert.equal(parseTracking(JSON.parse(JSON.stringify(s))).chosen, true, "the choice survives sync");
+  const target = taskProgress(s).find(p => p.task.id === "b").remainingMs;
+  const after = advanceTracking(s, T + 5 * MIN + target + MIN);
+  assert.equal(after.state.taskId, "a", "the list takes over after its target"); assert.equal("chosen" in after.state, false);
+  assert.match(after.events.find(e => e.type === "task-complete").body, /Now tracking a\./);
+  // Tracking the list's own first task is no choice; pausing ends one; idle states never carry one.
+  assert.equal("chosen" in actOnTracking(day(list, 240), { type: "start", taskId: "a" }, "device-1", T), false);
+  assert.equal("chosen" in actOnTracking(s, { type: "pause" }, "device-1", T + 6 * MIN), false);
+  assert.equal("chosen" in parseTracking({ ...JSON.parse(JSON.stringify(s)), mode: "idle" }), false);
+  assert.equal(parseTracking({ ...JSON.parse(JSON.stringify(s)), chosen: "yes" }), null);
+});
+
 console.log("== water filling and the minimum ==");
 check("overruns cannot book more than the 16 minutes left, and slivers go to the tasks above", () => {
   const list=[...["chemistry","english","physics","yanvpn"].map(id=>task(id,"2026-09-15")),task("isu","2026-09-17"),task("ee","2026-09-17")];

@@ -30,6 +30,12 @@ export type TrackingState = {
   workMs: number;
   mode: "idle" | "work";
   taskId: string | null;
+  /**
+   * The task was picked with Track. It stays until its target is met. Without
+   * this, the timer always works on the first unfinished task in list order,
+   * so a task added or moved above it takes over.
+   */
+  chosen?: true;
   controllerId: string | null;
   /** Missing on older snapshots, which retain due-date/priority weighting. */
   unweighted?: boolean;
@@ -263,6 +269,16 @@ function nextTask(state: TrackingState, progressFor = taskProgress): TaskProgres
   return progressFor(state).filter(p => p.weight > 0 && !p.doneToday)
     .sort((a, b) => compareListOrder(a.task, b.task))[0];
 }
+/** What to work on now: a task picked with Track until its target is met, otherwise the list's first. */
+function workingTask(state: TrackingState, progressFor = taskProgress): TaskProgress | undefined {
+  const chosen = state.chosen && progressFor(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday);
+  return chosen || nextTask(state, progressFor);
+}
+/** Work on `task`, or go idle without one. A choice ends once the timer moves off it. */
+function select(state: TrackingState, task: TaskProgress | undefined) {
+  if (!task || task.task.id !== state.taskId) delete state.chosen;
+  state.mode = task ? "work" : "idle"; state.taskId = task?.task.id ?? null;
+}
 
 /**
  * Integrate elapsed time exactly at task, goal, idle and day boundaries. This
@@ -289,24 +305,22 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
   for (let guard = 0; guard < state.tasks.length * 2 + 20; guard++) {
     if (state.cursor >= until) break;
     if (state.mode === "work") {
-      const current = state.cursor < start ? undefined
-        : progressFor(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday) ?? nextTask(state, progressFor);
-      if (!current || goal - state.workMs <= EPSILON) { state.mode = "idle"; state.taskId = null; continue; }
-      state.taskId = current.task.id;
+      const current = state.cursor < start || goal - state.workMs <= EPSILON ? undefined : workingTask(state, progressFor);
+      select(state, current);
+      if (!current) continue;
       const elapsed = Math.min(until - state.cursor, current.remainingMs, goal - state.workMs);
       Object.defineProperty(state.taskMs, current.task.id, { value: current.trackedMs + elapsed, enumerable: true, writable: true, configurable: true });
       state.workMs += elapsed; state.cursor += elapsed;
       let completion: TrackingEvent | undefined;
       if (elapsed + EPSILON >= current.remainingMs) {
         completion = emit("task-complete", "Daily target reached", `${current.task.title} is complete for today.`, current.task.id);
-        state.taskId = null;
+        state.taskId = null; delete state.chosen;
       }
       if (goal - state.workMs <= EPSILON) {
-        state.mode = "idle"; state.taskId = null;
+        select(state, undefined);
         emit("work-complete", "Today’s work is done", `You tracked all ${formatDuration(goal)} of today’s work. The rest of the day is idle time.`);
       } else if (!state.taskId) {
-        const next = nextTask(state, progressFor);
-        state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
+        select(state, nextTask(state, progressFor));
       }
       if (completion) {
         // Describe the actual next step in the completion alert.
@@ -335,12 +349,12 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
     // With nothing to work on, idle time simply runs over.
     if (!next || runsOut > until) { state.cursor = until; break; }
     state.cursor = runsOut;
-    state.mode = "work"; state.taskId = next.task.id;
+    select(state, next);
     emit("idle-out", "Idle time is up", `Now tracking ${next.task.title}. Work continues until today’s work is done.`);
   }
   if (now >= end && state.mode === "work") {
     state.cursor = Math.max(state.cursor, end);
-    state.mode = "idle"; state.taskId = null;
+    select(state, undefined);
     emit("day-end", "Work day complete", "Tracking has stopped for today.");
   }
   state.cursor = now;
@@ -353,11 +367,7 @@ export function advanceTracking(original: TrackingState, now: number): { state: 
   // work with the old rule first; only future time uses the corrected targets.
   const result = integrateTracking(original, now, legacyTaskProgress);
   result.state.allocationVersion = 2;
-  if (result.state.mode === "work") {
-    const current = taskProgress(result.state).find(p => p.task.id === result.state.taskId && p.weight > 0 && !p.doneToday);
-    const next = current ?? nextTask(result.state);
-    result.state.mode = next ? "work" : "idle"; result.state.taskId = next?.task.id ?? null;
-  }
+  if (result.state.mode === "work") select(result.state, workingTask(result.state));
   return result;
 }
 
@@ -370,12 +380,8 @@ export function configureTracking(original: TrackingState, tasks: Task[], endTim
   const state = advanceTracking(original, now).state;
   state.tasks = tasks; state.endTime = endTime; state.unweighted = unweighted; state.minimumEnabled = minimumEnabled; state.minimumMinutes = sanitizeMinimumMinutes(minimumMinutes);
   if (!state.plan || !samePlan(state.plan, plan)) state.plan = { ...plan };
-  if (!canTrackWork(state, now)) { state.mode = "idle"; state.taskId = null; }
-  if (state.mode === "work") {
-    const current = taskProgress(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday);
-    const next = current ?? nextTask(state);
-    state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
-  }
+  // An automatically picked task follows the list, so a new or moved task above it takes over.
+  select(state, state.mode === "work" && canTrackWork(state, now) ? workingTask(state) : undefined);
   return state;
 }
 
@@ -389,17 +395,20 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
   }
   if (action.type === "pause") {
     if (state.mode === "work" && workRequired(state, now)) throw new Error("Idle time is used up, so work can’t be paused until today’s work is done.");
-    state.mode = "idle"; state.taskId = null;
+    select(state, undefined);
     return state;
   }
   if (now < dayStart(state)) throw new Error(`Your work day starts at ${dayPlan(state).startTime}.`);
   if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
   if (workLeftMs(state) <= EPSILON) throw new Error("Today’s work is done. The rest of the day is idle time.");
+  const listed = nextTask(state);
   const next = action.taskId
     ? taskProgress(state).find(p => p.task.id === action.taskId && p.weight > 0 && !p.doneToday)
-    : nextTask(state);
+    : listed;
   if (!next) throw new Error("No unfinished daily target to track.");
-  state.mode = "work"; state.taskId = next.task.id;
+  select(state, next);
+  // Tracking the task the list would pick anyway keeps following the list.
+  if (next.task.id !== listed?.task.id) state.chosen = true; else delete state.chosen;
   return state;
 }
 
@@ -437,10 +446,12 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (!s.taskMs || typeof s.taskMs !== "object" || Array.isArray(s.taskMs)) return null;
   if (!["idle", "work", "rest"].includes(s.mode)) return null;
   if (s.taskId !== null && typeof s.taskId !== "string") return null;
+  if (s.chosen !== undefined && s.chosen !== true) return null;
   if (s.controllerId !== null && typeof s.controllerId !== "string") return null;
   if ([s.workMs, ...Object.values(s.taskMs)].some(v => !Number.isFinite(v) || v < 0 || v > 86_400_000)) return null;
   // Snapshots from before priorities existed carry none; those weigh as low.
   if (s.tasks.some(t => !t || typeof t.id !== "string" || typeof t.title !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.dueDate) || typeof t.createdAt !== "string" || (t.priority !== undefined && !isPriority(t.priority)))) return null;
-  const { restMs: _restMs, cycleWorkMs: _cycleWorkMs, cycleRestMs: _cycleRestMs, restWorkCreditMs: _credit, deferredBreak: _deferred, rest: _rest, ...current } = s;
-  return { ...current, mode: s.mode === "work" ? "work" : "idle", taskId: s.mode === "work" ? s.taskId : null } as TrackingState;
+  const { restMs: _restMs, cycleWorkMs: _cycleWorkMs, cycleRestMs: _cycleRestMs, restWorkCreditMs: _credit, deferredBreak: _deferred, rest: _rest, chosen, ...current } = s;
+  const working = s.mode === "work";
+  return { ...current, mode: working ? "work" : "idle", taskId: working ? s.taskId : null, ...(working && chosen ? { chosen } : {}) } as TrackingState;
 }
