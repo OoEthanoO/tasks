@@ -1,28 +1,36 @@
 import { useEffect, useState } from "react";
 import { Pressable, Switch, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { dayEnd, formatDuration, RESET_PROGRESS_CONFIRMATION, restCycleMs, restOwed, restSettings, skipRestHint, workCycleMs } from "../../../lib/tracking";
-import { clampMinutes, REST_MINUTES, RestSettings, WORK_MINUTES } from "../../../lib/rest";
+import { canTrackWork, dayBudget, dayEnd, dayStart, formatDuration, idleLeftMs, RESET_PROGRESS_CONFIRMATION, shouldStartWorking, workLeftMs, workRequired } from "../../../lib/tracking";
+import { clampWhole, DayPlan, sanitizeClockTime, SPLIT_PARTS } from "../../../lib/plan";
 import { MINIMUM_MINUTES } from "../../../lib/minimum";
 import { Tracker } from "../useTracking";
 import { themed, useStyles, useTheme } from "../theme";
 import { Banner, Btn, Card, CardHead } from "./ui";
 import ConfirmSheet from "./ConfirmSheet";
 
-/** A whole-minutes field that commits when editing ends, so typing "25" never saves a passing "2". */
-function MinutesField({ label, value, range, onCommit, style }: { label: string; value: number; range: { min: number; max: number }; onCommit: (value: number) => void; style: StyleProp<TextStyle> }) {
+/** A whole-number field that commits when editing ends, so typing "25" never saves a passing "2". */
+function WholeField({ label, value, range, onCommit, style }: { label: string; value: number; range: { min: number; max: number }; onCommit: (value: number) => void; style: StyleProp<TextStyle> }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
   return <TextInput style={style} value={draft} onChangeText={setDraft} keyboardType="number-pad" maxLength={String(range.max).length} accessibilityLabel={label}
     onEndEditing={() => {
-      const next = draft.trim() === "" ? value : clampMinutes(Number(draft), range, value);
+      const next = draft.trim() === "" ? value : clampWhole(Number(draft), range, value);
       setDraft(String(next));
       if (next !== value) onCommit(next);
     }} />;
 }
 
-export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, rest, onRestChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
-  tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; rest: RestSettings; onRestChange: (value: RestSettings) => void;
+/** A 24-hour "HH:MM" field that commits when editing ends. */
+function TimeField({ label, value, onCommit, style }: { label: string; value: string; onCommit: (value: string) => void; style: StyleProp<TextStyle> }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return <TextInput style={style} value={draft} onChangeText={setDraft} accessibilityLabel={label} maxLength={5} keyboardType="numbers-and-punctuation"
+    onEndEditing={e => { const clean = sanitizeClockTime(e.nativeEvent.text, value); setDraft(clean); if (clean !== value) onCommit(clean); }} />;
+}
+
+export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, plan, onPlanChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
+  tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; plan: DayPlan; onPlanChange: (value: DayPlan) => void;
   unweighted: boolean; onUnweightedChange: (value: boolean) => void;
   minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
   minimumMinutes: number; onMinimumMinutesChange: (value: number) => void;
@@ -30,43 +38,64 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, res
   const s = useStyles(styles);
   const { c } = useTheme();
   const state = t.state;
-  const [draftEnd, setDraftEnd] = useState(endTime);
   const [confirmReset, setConfirmReset] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
-  useEffect(() => setDraftEnd(endTime), [endTime]);
   const current = t.progress.find(p => p.task.id === state.taskId);
-  const resting = state.mode === "rest";
-  const ended = state.cursor >= dayEnd(state);
-  const canStart = !ended && (restOwed(state) || t.progress.some(p => p.weight > 0 && !p.doneToday));
-  const breakDue = !ended && restOwed(state);
+  const working = state.mode === "work";
+  const before = state.cursor < dayStart(state), ended = state.cursor >= dayEnd(state);
+  const workLeft = workLeftMs(state), idleLeft = Math.max(0, idleLeftMs(state)), budget = dayBudget(state);
+  const done = !before && workLeft <= 0;
+  const forced = working && workRequired(state);
+  const advise = shouldStartWorking(state);
+  const canStart = canTrackWork(state) && t.progress.some(p => p.weight > 0 && !p.doneToday);
+  const label = !t.ready ? "LOADING TIMER…" : before ? "BEFORE YOUR DAY" : ended ? "DAY COMPLETE" : done ? "WORK DONE"
+    : working ? (forced ? "WORKING · IDLE TIME USED" : "WORKING ON") : "IDLE";
+  const title = working ? current?.task.title ?? "Working" : before ? `Your day starts at ${plan.startTime}.`
+    : ended ? "You’re done for today." : done ? "Today’s work is done." : "Idle time";
+  // Counts down whichever budget is being spent; before the day, the goal.
+  const clock = before ? budget.workMs : working || done ? workLeft : idleLeft;
+  const hint = !t.ready ? "" : before ? `${formatDuration(budget.workMs)} of work and ${formatDuration(budget.idleMs)} of idle time today.`
+    : ended ? "Tracking has stopped for today." : done ? "All of today’s work is tracked. The rest of the day is idle time."
+    : forced ? "Idle time is used up, so tracking continues until today’s work is done."
+    : working ? `Work time left today${current ? ` · ${formatDuration(current.remainingMs)} left on this task` : ""}`
+    : "Idle time left. When it runs out, work starts on its own.";
   return <Card>
     <CardHead title="Today’s focus" />
-    <Text style={s.hint}>Work day ends at {endTime}</Text>
-    <Text style={s.label}>{!t.ready ? "LOADING TIMER…" : resting ? "RESTING" : state.mode === "work" ? "WORKING ON" : ended ? "DAY COMPLETE" : "PAUSED"}</Text>
-    <Text style={s.title}>{resting ? "Take a breather." : current?.task.title ?? (ended ? "You’re done for today." : "Ready when you are.")}</Text>
-    <Text style={s.clock} accessibilityRole="timer">{formatDuration(resting ? restCycleMs(state) - state.cycleRestMs : current?.trackedMs ?? state.workMs, true)}</Text>
-    <Text style={s.hint}>{resting ? "Rest time remaining · work resumes automatically" : current ? `${formatDuration(current.remainingMs)} left to today’s target` : "Start the first unfinished task, or choose one from your list."}</Text>
-    <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (state.mode === "idle" && !canStart)} label={t.busy ? "Syncing…" : state.mode === "idle" ? restOwed(state) ? "Resume rest" : "Start working" : "Pause tracking"} onPress={() => void t.command({ type: state.mode === "idle" ? "start" : "pause" })} />
-    {breakDue && <Btn tone="ghost" label="Skip break and keep working" disabled={!t.ready || t.busy} onPress={() => void t.command({ type: "skip-rest" })} style={{ marginTop: -8, marginBottom: 8 }} />}
-    {breakDue && <Text style={[s.hint, { marginBottom: 12 }]}>{skipRestHint(state)}</Text>}
-    {restSettings(state).enabled && !restOwed(state) && <Text style={s.hint}>Rest after {formatDuration(workCycleMs(state) - state.cycleWorkMs)} more tracked work · {state.deferredBreak ? "pause to take the break you skipped" : `${restSettings(state).restMinutes}-minute breaks`}</Text>}
+    <Text style={s.hint}>Work day {plan.startTime}–{endTime}</Text>
+    <Text style={[s.label, !working && { color: c.dim }]}>{label}</Text>
+    <Text style={s.title}>{title}</Text>
+    <Text style={s.clock} accessibilityRole="timer" accessibilityLabel={working || done ? "Work time left today" : before ? "Today’s work goal" : "Idle time left today"}>{formatDuration(clock, true)}</Text>
+    <Text style={s.hint}>{hint}</Text>
+    {advise && <Banner tone="warn">Less than half of today’s idle time is left. Start working now.</Banner>}
+    <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (working ? forced : !canStart)} label={t.busy ? "Syncing…" : working ? "Pause tracking" : "Start working"} onPress={() => void t.command({ type: working ? "pause" : "start" })} />
     {t.error && <Banner tone="danger" action={<Btn label="Refresh timer" onPress={() => void t.refresh()} />}>{t.error}</Banner>}
     {t.message && <Banner tone="ok" action={<Btn label="Dismiss" onPress={t.dismissMessage} />}>{t.message}</Banner>}
     <View style={s.totals}>
       <View><Text style={s.hint}>Worked today</Text><Text style={s.total}>{formatDuration(state.workMs, true)}</Text></View>
-      <View><Text style={s.hint}>Rested today</Text><Text style={s.total}>{formatDuration(state.restMs, true)}</Text></View>
-      <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(t.remainingWorkMs)}</Text></View>
+      <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(workLeft)}</Text></View>
+      <View><Text style={s.hint}>Idle left</Text><Text style={s.total}>{formatDuration(idleLeft)}</Text></View>
     </View>
     <Pressable style={s.settingsHeader} accessibilityRole="button" accessibilityLabel="Day settings" accessibilityState={{ expanded: settingsOpen }} onPress={() => setSettingsOpen(!settingsOpen)}>
-      <View style={{ flex: 1 }}><Text style={s.settingsTitle}>Day settings</Text><Text style={s.hint}>{unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"} · {rest.enabled ? `${rest.workMinutes}/${rest.restMinutes} breaks` : "No breaks"}</Text></View>
+      <View style={{ flex: 1 }}><Text style={s.settingsTitle}>Day settings</Text><Text style={s.hint}>{plan.workParts}:{plan.idleParts} work:idle · {unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</Text></View>
       <Text style={s.settingsTitle}>{settingsOpen ? "−" : "+"}</Text>
     </Pressable>
     {settingsOpen && <View style={s.settingsBody}>
     <View style={s.controls}>
-      <Text style={s.hint}>Work day ends at</Text>
-      <TextInput style={s.input} value={draftEnd} onChangeText={setDraftEnd} onEndEditing={e => { const clean = sanitizeEndTime(e.nativeEvent.text); setDraftEnd(clean); onEndTimeChange(clean); }} accessibilityLabel="Work day end time, 24 hour clock" maxLength={5} keyboardType="numbers-and-punctuation" />
+      <Text style={s.hint}>Work day starts at</Text>
+      <TimeField style={s.input} label="Work day start time, 24 hour clock" value={plan.startTime} onCommit={startTime => onPlanChange({ ...plan, startTime })} />
     </View>
+    <View style={s.controls}>
+      <Text style={s.hint}>Work day ends at</Text>
+      <TimeField style={s.input} label="Work day end time, 24 hour clock" value={endTime} onCommit={value => onEndTimeChange(sanitizeEndTime(value))} />
+    </View>
+    <View style={[s.controls, s.wrap]}>
+      <Text style={s.hint}>Work : idle</Text>
+      <WholeField style={[s.input, s.minutes]} label="Work parts of the ratio" value={plan.workParts} range={SPLIT_PARTS} onCommit={workParts => onPlanChange({ ...plan, workParts })} />
+      <Text style={s.hint}>:</Text>
+      <WholeField style={[s.input, s.minutes]} label="Idle parts of the ratio" value={plan.idleParts} range={SPLIT_PARTS} onCommit={idleParts => onPlanChange({ ...plan, idleParts })} />
+    </View>
+    <Text style={s.hint}>Untracked time is idle. 1:1 is recommended.</Text>
     <View style={s.controls}>
       <Text style={s.hint}>Unweighted</Text>
       <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Give every open task equal weight." trackColor={{ true: c.accent, false: c.line }} />
@@ -77,28 +106,17 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, res
       <Switch value={minimumEnabled} onValueChange={onMinimumChange} accessibilityLabel="Daily minimum" accessibilityHint={`Skip tasks whose daily target is under ${minimumMinutes} minutes. The first eligible task is always kept.`} trackColor={{ true: c.accent, false: c.line }} />
     </View>
     <View style={s.controls}>
-      <MinutesField style={[s.input, s.minutes]} label="Minimum daily target in minutes" value={minimumMinutes} range={MINIMUM_MINUTES} onCommit={onMinimumMinutesChange} />
+      <WholeField style={[s.input, s.minutes]} label="Minimum daily target in minutes" value={minimumMinutes} range={MINIMUM_MINUTES} onCommit={onMinimumMinutesChange} />
       <Text style={s.hint}>min per task</Text>
     </View>
     <Text style={s.hint}>Skip daily targets below {minimumMinutes} minutes. The first eligible task is always kept.</Text>
-    <View style={s.controls}>
-      <Text style={s.hint}>Breaks</Text>
-      <Switch value={rest.enabled} onValueChange={enabled => onRestChange({ ...rest, enabled })} accessibilityLabel="Take breaks" trackColor={{ true: c.accent, false: c.line }} />
-    </View>
-    {rest.enabled && <View style={[s.controls, s.wrap]}>
-      <Text style={s.hint}>Work</Text>
-      <MinutesField style={[s.input, s.minutes]} label="Minutes of work before each break" value={rest.workMinutes} range={WORK_MINUTES} onCommit={workMinutes => onRestChange({ ...rest, workMinutes })} />
-      <Text style={s.hint}>min per</Text>
-      <MinutesField style={[s.input, s.minutes]} label="Minutes of rest in each break" value={rest.restMinutes} range={REST_MINUTES} onCommit={restMinutes => onRestChange({ ...rest, restMinutes })} />
-      <Text style={s.hint}>min of rest</Text>
-    </View>}
     <Text style={s.hint}>{state.timeZone} · settings save automatically</Text>
     <View style={s.settingsSection}>
       <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
       <Text style={s.hint}>Alerts follow the device that last started or switched tracking. Open this app to refresh alerts after changing the timer elsewhere.</Text>
     </View>
     <View style={s.settingsSection}>
-      <Text style={s.explainer}>Targets fit the work time left after breaks. Settings change future targets, never time already logged. Progress resets at midnight.</Text>
+      <Text style={s.explainer}>Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. Progress resets at midnight.</Text>
       <Btn tone="ghost" label="Reset today’s progress…" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} />
     </View>
     </View>}

@@ -1,18 +1,19 @@
 import { Task } from "./types";
 import { isPriority, taskWeight, WeightedTask } from "./weights";
 import { compareListOrder } from "./grouping";
-import { DEFAULT_REST, RestSettings, sameRest, sanitizeRestSettings } from "./rest";
+import { DEFAULT_PLAN, DayPlan, samePlan, sanitizePlan } from "./plan";
 import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 
-/** The default stretch and break. A timer's own settings (restSettings) override them. */
-export const WORK_CYCLE_MS = DEFAULT_REST.workMinutes * 60_000;
-export const REST_CYCLE_MS = DEFAULT_REST.restMinutes * 60_000;
-export const RESET_PROGRESS_CONFIRMATION = "Clear all of today’s tracked work, rest, and progress toward the next break? Tracking will pause on your synced devices. Your tasks and work day end time will stay unchanged. This cannot be undone.";
+export const RESET_PROGRESS_CONFIRMATION = "Clear all of today’s tracked work? Tracking will pause on your synced devices, and time already passed today will count as idle. Your tasks and work day settings stay unchanged. This cannot be undone.";
 const EPSILON = 1;
 const formatters = new Map<string, Intl.DateTimeFormat>();
-const endCache = new Map<string, number>();
+const wallCache = new Map<string, number>();
 
-/** One timestamp-based session, not one counter per device. */
+/**
+ * One timestamp-based session, not one counter per device. Only work is
+ * counted: between the day's start and now, every minute not tracked as work
+ * is idle, so idle time is derived rather than accumulated.
+ */
 export type TrackingState = {
   version: 1;
   /** Absent on legacy sessions; checkpoint their old projection before upgrading. */
@@ -21,29 +22,15 @@ export type TrackingState = {
   dayKey: string;
   timeZone: string;
   endTime: string;
+  /** Start time and work:idle ratio. Absent on timers from before them, which use the default. */
+  plan?: DayPlan;
   cursor: number;
   tasks: Task[];
   taskMs: Record<string, number>;
   workMs: number;
-  restMs: number;
-  cycleWorkMs: number;
-  cycleRestMs: number;
-  /** Work toward the next cycle, preserved while finishing a postponed break. */
-  restWorkCreditMs?: number;
-  mode: "idle" | "work" | "rest";
+  mode: "idle" | "work";
   taskId: string | null;
   controllerId: string | null;
-  /**
-   * A break skipped to keep working, with the rest already served on it.
-   * While work continues it waits; once work stops (a pause, or nothing left
-   * to track) it is owed again. The next break to start on its own replaces it.
-   */
-  deferredBreak?: { cycleRestMs: number };
-  /**
-   * The work/rest cycle this timer runs by, copied from the preference.
-   * Absent on timers from before it was adjustable, which use the default.
-   */
-  rest?: RestSettings;
   /** Missing on older snapshots, which retain due-date/priority weighting. */
   unweighted?: boolean;
   /** Missing on older snapshots, which keep the 30-minute minimum enabled. */
@@ -51,12 +38,11 @@ export type TrackingState = {
   /** Missing on older snapshots, which use 30 minutes. */
   minimumMinutes?: number;
 };
-export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" } | { type: "skip-rest" };
-export const SKIPPED_REST_MESSAGE = "Break skipped. Pause any time to come back to it.";
+export type TrackingAction = { type: "start"; taskId?: string } | { type: "pause" } | { type: "reset" };
 export type TrackingEvent = {
   id: string;
   at: number;
-  type: "task-complete" | "rest-soon" | "rest-start" | "rest-complete" | "day-end";
+  type: "task-complete" | "work-complete" | "idle-half" | "idle-soon" | "idle-out" | "day-end";
   title: string;
   body: string;
 };
@@ -102,97 +88,98 @@ function dateParts(at: number, timeZone: string) {
 }
 export function trackingDay(at: number, timeZone: string): string { return dateParts(at, timeZone).day; }
 
-/** Resolve account wall-clock time, including DST, independently of the server's zone. */
-export function dayEnd(state: Pick<TrackingState, "dayKey" | "endTime" | "timeZone">): number {
-  const key = `${state.dayKey}/${state.endTime}/${state.timeZone}`;
-  const cached = endCache.get(key);
+/** Resolve an account wall-clock time on the timer's day, including DST, independently of the server's zone. */
+function wallClock(dayKey: string, time: string, timeZone: string): number {
+  const key = `${dayKey}/${time}/${timeZone}`;
+  const cached = wallCache.get(key);
   if (cached !== undefined) return cached;
-  const [y, m, d] = state.dayKey.split("-").map(Number);
-  const [h, minute] = state.endTime.split(":").map(Number);
+  const [y, m, d] = dayKey.split("-").map(Number);
+  const [h, minute] = time.split(":").map(Number);
   const wall = Date.UTC(y, m - 1, d, h, minute);
   let result = wall;
   for (let i = 0; i < 4; i++) {
-    const p = dateParts(result, state.timeZone);
+    const p = dateParts(result, timeZone);
     const [py, pm, pd] = p.day.split("-").map(Number);
     const delta = wall - Date.UTC(py, pm - 1, pd, p.hour, p.minute, p.second);
     if (!delta) break;
     result += delta;
   }
-  if (endCache.size > 128) endCache.clear();
-  endCache.set(key, result);
+  if (wallCache.size > 128) wallCache.clear();
+  wallCache.set(key, result);
   return result;
+}
+export function dayEnd(state: Pick<TrackingState, "dayKey" | "endTime" | "timeZone">): number {
+  return wallClock(state.dayKey, state.endTime, state.timeZone);
+}
+/** The plan a timer runs by. */
+export function dayPlan(state: Pick<TrackingState, "plan">): DayPlan {
+  return state.plan ?? DEFAULT_PLAN;
+}
+export function dayStart(state: Pick<TrackingState, "dayKey" | "timeZone" | "plan">): number {
+  return wallClock(state.dayKey, dayPlan(state).startTime, state.timeZone);
+}
+/** The whole day's work goal and idle allowance: the start–end window split by the ratio. */
+export function dayBudget(state: Pick<TrackingState, "dayKey" | "endTime" | "timeZone" | "plan">): { workMs: number; idleMs: number } {
+  const window = Math.max(0, dayEnd(state) - dayStart(state));
+  const { workParts, idleParts } = dayPlan(state);
+  const workMs = Math.round(window * workParts / (workParts + idleParts));
+  return { workMs, idleMs: window - workMs };
+}
+/** Work still to track today. Idling never shrinks it: running out of idle time starts work instead. */
+export function workLeftMs(state: TrackingState): number {
+  return Math.max(0, dayBudget(state).workMs - state.workMs);
+}
+/**
+ * Idle time still allowed: the allowance minus every untracked minute since
+ * the day started. Work left plus idle left is the time left in the day. Goes
+ * negative only when idle time ran out with nothing to work on.
+ */
+export function idleLeftMs(state: TrackingState, now = state.cursor): number {
+  const elapsed = Math.max(0, Math.min(now, dayEnd(state)) - dayStart(state));
+  return dayBudget(state).idleMs - Math.max(0, elapsed - state.workMs);
+}
+/** Whether work can be tracked now: inside the day, with work left to do. */
+export function canTrackWork(state: TrackingState, now = state.cursor): boolean {
+  return now >= dayStart(state) && now < dayEnd(state) && workLeftMs(state) > EPSILON;
+}
+/** Idle time has run out with work still to do: work can't be paused. */
+export function workRequired(state: TrackingState, now = state.cursor): boolean {
+  return canTrackWork(state, now) && idleLeftMs(state, now) <= EPSILON;
+}
+/** Under half the idle allowance is left, work remains and there is a task to start: time to start. */
+export function shouldStartWorking(state: TrackingState, now = state.cursor): boolean {
+  return state.mode === "idle" && canTrackWork(state, now) && idleLeftMs(state, now) < dayBudget(state).idleMs / 2 && nextTask(state) !== undefined;
+}
+/**
+ * Alerts belong to the device that last started, paused or reset the timer.
+ * Idle reminders and the automatic start come due without anyone pressing
+ * anything, so until a device has, every device alerts.
+ */
+export function ownsAlerts(state: Pick<TrackingState, "controllerId">, controllerId: string): boolean {
+  return state.controllerId === null || state.controllerId === controllerId;
+}
+/** Kept for the "Work left" displays: work still to track today. */
+export function remainingWorkTime(state: TrackingState): number {
+  return workLeftMs(state);
+}
+export function workBudget(state: TrackingState): number {
+  return dayBudget(state).workMs;
 }
 
 /** Fingerprint of everything that shapes the timer; any change means reconfiguring it. */
-export function trackingConfigKey(tasks: Task[], endTime: string, rest: RestSettings = DEFAULT_REST, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): string {
-  return JSON.stringify([endTime, unweighted, minimumEnabled, sanitizeMinimumMinutes(minimumMinutes), [rest.enabled, rest.workMinutes, rest.restMinutes], tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt])]);
+export function trackingConfigKey(tasks: Task[], endTime: string, plan: DayPlan = DEFAULT_PLAN, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): string {
+  return JSON.stringify([endTime, unweighted, minimumEnabled, sanitizeMinimumMinutes(minimumMinutes), [plan.startTime, plan.workParts, plan.idleParts], tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt])]);
 }
 
-export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), rest: RestSettings = DEFAULT_REST, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): TrackingState {
+export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), plan: DayPlan = DEFAULT_PLAN, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): TrackingState {
   timeZone = validTimeZone(timeZone);
   return {
     version: 1, allocationVersion: 2, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
-    endTime, unweighted, minimumEnabled, minimumMinutes: sanitizeMinimumMinutes(minimumMinutes), cursor: now, tasks, taskMs: {}, workMs: 0, restMs: 0,
-    cycleWorkMs: 0, cycleRestMs: 0, mode: "idle", taskId: null, controllerId: null, rest: { ...rest },
+    endTime, plan: { ...plan }, unweighted, minimumEnabled, minimumMinutes: sanitizeMinimumMinutes(minimumMinutes),
+    cursor: now, tasks, taskMs: {}, workMs: 0, mode: "idle", taskId: null, controllerId: null,
   };
 }
 
-/** The work/rest cycle a timer runs by. */
-export function restSettings(state: Pick<TrackingState, "rest">): RestSettings {
-  return state.rest ?? DEFAULT_REST;
-}
-/** Tracked work before each break, for this timer. */
-export function workCycleMs(state: Pick<TrackingState, "rest">): number {
-  return restSettings(state).workMinutes * 60_000;
-}
-/** The length of each break, for this timer. */
-export function restCycleMs(state: Pick<TrackingState, "rest">): number {
-  return restSettings(state).restMinutes * 60_000;
-}
-
-/** A break is due: being taken, paused part-way, earned and not yet started, or skipped and work has since stopped. */
-export function restOwed(state: TrackingState): boolean {
-  if (state.mode === "rest") return true;
-  if (!restSettings(state).enabled) return false;
-  return state.cycleWorkMs + EPSILON >= workCycleMs(state) || (state.mode === "idle" && !!state.deferredBreak);
-}
-/** Rest already served on the break that is due. */
-function restServed(state: TrackingState): number {
-  return state.mode === "idle" && state.deferredBreak ? state.deferredBreak.cycleRestMs : state.cycleRestMs;
-}
-/** Turn a waiting skipped break back into the break itself, where it left off. */
-function resumeDeferredBreak(state: TrackingState): void {
-  if (state.mode === "work" || !state.deferredBreak) return;
-  state.restWorkCreditMs = state.cycleWorkMs;
-  state.cycleWorkMs = workCycleMs(state); state.cycleRestMs = state.deferredBreak.cycleRestMs;
-  delete state.deferredBreak;
-}
-/** What skipping the break that is due would mean, for the hint beside the button. */
-export function skipRestHint(state: TrackingState): string {
-  // Skipping the same waiting break again carries on with the stretch already under way.
-  const work = workCycleMs(state);
-  const stretch = work - (state.mode === "idle" && state.deferredBreak ? state.cycleWorkMs : state.restWorkCreditMs ?? 0);
-  return `Pause any time to come back to it. Otherwise the next break starts after ${formatDuration(stretch)} more work.`;
-}
-
-/** Work that can still fit before cutoff, including partial/paused rest debt. */
-export function remainingWorkTime(state: TrackingState, now = state.cursor): number {
-  let wall = Math.max(0, dayEnd(state) - now);
-  // With breaks off, every minute left in the day is work time.
-  if (!restSettings(state).enabled) return wall;
-  const work = workCycleMs(state), rest = restCycleMs(state);
-  const owesRest = restOwed(state);
-  if (owesRest) wall = Math.max(0, wall - Math.max(0, rest - restServed(state)));
-  const credit = state.mode === "idle" && state.deferredBreak ? state.cycleWorkMs : state.restWorkCreditMs ?? 0;
-  const firstWork = Math.min(wall, Math.max(0, work - (owesRest ? credit : state.cycleWorkMs)));
-  // After the first work stretch comes a break, then full work/rest cycles.
-  const tail = Math.max(0, wall - firstWork - rest);
-  const cycle = work + rest;
-  return firstWork + Math.floor(tail / cycle) * work + Math.min(work, tail % cycle);
-}
-export function workBudget(state: TrackingState, now = state.cursor): number {
-  return state.workMs + remainingWorkTime(state, now);
-}
 /**
  * Weighted water filling: the level at which sum(max(0, weight * level -
  * tracked)) = available. Tasks already above the level keep their logged time
@@ -209,7 +196,8 @@ function waterLevel(open: { weight: number; trackedMs: number }[], available: nu
   return level;
 }
 
-export function taskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
+/** Each task's share of the day's work goal, as daily targets. */
+export function taskProgress(state: TrackingState): TaskProgress[] {
   const minimumMs = sanitizeMinimumMinutes(state.minimumMinutes) * 60_000;
   const entries = state.tasks.map((task, index) => ({
     task, index, weight: taskWeight(task, state.dayKey, state.unweighted),
@@ -224,7 +212,7 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
     const level = waterLevel(byRatio.filter(e => receives[e.index]), available);
     for (const e of open) if (receives[e.index]) remaining[e.index] = Math.max(0, e.weight * level - e.trackedMs);
   };
-  pour(remainingWorkTime(state, now));
+  pour(workLeftMs(state));
   // In both modes, least important first (lowest weight; among equal weights, lowest
   // on the list), skip each task whose day would total under the minimum. Its share goes
   // only to the tasks above it, never sideways to less urgent ones, and the
@@ -237,7 +225,7 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
     for (const e of ascending.slice(0, -1)) {
       receives[e.index] = false;
       const freed = remaining[e.index];
-      // Nothing left to give (the day is over, or it is past its share): done, not skipped.
+      // Nothing left to give (the day's work is done, or it is past its share): done, not skipped.
       if (freed <= EPSILON || e.trackedMs + freed + EPSILON >= minimumMs) continue;
       skipped[e.index] = true;
       remaining[e.index] = 0;
@@ -254,10 +242,10 @@ export function taskProgress(state: TrackingState, now = state.cursor): TaskProg
 }
 
 /** Only used once to preserve elapsed history when upgrading a running timer. */
-function legacyTaskProgress(state: TrackingState, now = state.cursor): TaskProgress[] {
+function legacyTaskProgress(state: TrackingState): TaskProgress[] {
   const entries = state.tasks.map(task => ({ task, weight: taskWeight(task, state.dayKey) }));
   const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
-  const budget = state.workMs + Math.max(0, dayEnd(state) - now);
+  const budget = state.workMs + Math.max(0, dayEnd(state) - state.cursor);
   return entries.map(entry => {
     const probability = total > 0 ? entry.weight / total : 0;
     const trackedMs = Object.hasOwn(state.taskMs, entry.task.id) ? state.taskMs[entry.task.id] : 0;
@@ -266,9 +254,10 @@ function legacyTaskProgress(state: TrackingState, now = state.cursor): TaskProgr
   });
 }
 /**
- * The task the timer works on next, on Start and after each target or break:
- * the first unfinished one in list order. Weight decides how much time a task
- * gets, not when. The sort is stable, so full ties keep saved order, as in the list.
+ * The task the timer works on next, on Start, after each target and when idle
+ * time runs out: the first unfinished one in list order. Weight decides how
+ * much time a task gets, not when. The sort is stable, so full ties keep saved
+ * order, as in the list.
  */
 function nextTask(state: TrackingState, progressFor = taskProgress): TaskProgress | undefined {
   return progressFor(state).filter(p => p.weight > 0 && !p.doneToday)
@@ -276,87 +265,80 @@ function nextTask(state: TrackingState, progressFor = taskProgress): TaskProgres
 }
 
 /**
- * Integrate elapsed time exactly at task/rest/end boundaries. This same pure
- * projection runs on the server, in the browser and after iOS wakes up. No
- * heartbeat or background JavaScript is needed to keep time accurately.
+ * Integrate elapsed time exactly at task, goal, idle and day boundaries. This
+ * same pure projection runs on the server, in the browser and after iOS wakes
+ * up. No heartbeat or background JavaScript is needed to keep time accurately.
  */
 function integrateTracking(original: TrackingState, now: number, progressFor: typeof taskProgress): { state: TrackingState; events: TrackingEvent[] } {
-  const state: TrackingState = { ...original, taskMs: { ...original.taskMs } };
+  const state: TrackingState = { ...original, taskMs: { ...original.taskMs }, mode: original.mode === "work" ? "work" : "idle" };
   const events: TrackingEvent[] = [];
-  const emit = (type: TrackingEvent["type"], title: string, body: string, taskId = "") => {
-    const event = { id: `${state.dayKey}:${Math.round(state.cursor)}:${type}:${taskId}`, at: state.cursor, type, title, body };
+  const emit = (type: TrackingEvent["type"], title: string, body: string, taskId = "", at = state.cursor) => {
+    const event = { id: `${state.dayKey}:${Math.round(at)}:${type}:${taskId}`, at, type, title, body };
     events.push(event);
     return event;
   };
   if (!Number.isFinite(now) || now < state.cursor) return { state, events };
   // Never restart automatically on a new day, even if a client slept overnight.
   if (trackingDay(now, state.timeZone) !== state.dayKey) {
-    return { state: { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId: state.controllerId }, events };
+    return { state: { ...createTracking(state.tasks, state.endTime, state.timeZone, now, dayPlan(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId: state.controllerId }, events };
   }
-  const end = dayEnd(state);
+  const start = dayStart(state), end = dayEnd(state);
+  const { workMs: goal, idleMs: allowance } = dayBudget(state);
   const until = Math.min(now, end);
-  const breaks = restSettings(state).enabled, work = workCycleMs(state), rest = restCycleMs(state);
-  // Each loop pass ends at a task, rest or day boundary. Short cycles (a
-  // 10/1 split) cross many more boundaries in a day, so allow for them.
-  const passes = state.tasks.length * 2 + 100 + (breaks ? 2 * Math.ceil(Math.max(0, until - state.cursor) / (work + rest)) : 0);
-  for (let guard = 0; guard < passes; guard++) {
-    if (state.mode === "idle" || state.cursor >= until) break;
-    if (state.mode === "rest") {
-      const elapsed = Math.min(until - state.cursor, Math.max(0, rest - state.cycleRestMs));
-      state.restMs += elapsed;
-      state.cycleRestMs += elapsed;
-      state.cursor += elapsed;
-      if (state.cycleRestMs + EPSILON >= rest) {
-        state.cycleWorkMs = state.restWorkCreditMs ?? 0; state.cycleRestMs = 0;
-        delete state.restWorkCreditMs;
-        state.mode = "idle";
+  // Each pass ends at a task, goal, idle-allowance or day boundary.
+  for (let guard = 0; guard < state.tasks.length * 2 + 20; guard++) {
+    if (state.cursor >= until) break;
+    if (state.mode === "work") {
+      const current = state.cursor < start ? undefined
+        : progressFor(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday) ?? nextTask(state, progressFor);
+      if (!current || goal - state.workMs <= EPSILON) { state.mode = "idle"; state.taskId = null; continue; }
+      state.taskId = current.task.id;
+      const elapsed = Math.min(until - state.cursor, current.remainingMs, goal - state.workMs);
+      Object.defineProperty(state.taskMs, current.task.id, { value: current.trackedMs + elapsed, enumerable: true, writable: true, configurable: true });
+      state.workMs += elapsed; state.cursor += elapsed;
+      let completion: TrackingEvent | undefined;
+      if (elapsed + EPSILON >= current.remainingMs) {
+        completion = emit("task-complete", "Daily target reached", `${current.task.title} is complete for today.`, current.task.id);
+        state.taskId = null;
+      }
+      if (goal - state.workMs <= EPSILON) {
+        state.mode = "idle"; state.taskId = null;
+        emit("work-complete", "Today’s work is done", `You tracked all ${formatDuration(goal)} of today’s work. The rest of the day is idle time.`);
+      } else if (!state.taskId) {
         const next = nextTask(state, progressFor);
         state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
-        emit("rest-complete", "Rest complete", next ? `Now tracking ${next.task.title}.` : "All daily targets are met. Nice work.");
+      }
+      if (completion) {
+        // Describe the actual next step in the completion alert.
+        const next = state.tasks.find(t => t.id === state.taskId);
+        completion.body += state.cursor >= end ? " Tracking has stopped for today."
+          : next ? ` Now tracking ${next.title}.` : " Today’s work is done.";
       }
       continue;
     }
-    const current = progressFor(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday) ?? nextTask(state, progressFor);
-    if (!current) { state.mode = "idle"; state.taskId = null; break; }
-    state.taskId = current.task.id;
-    const toRest = breaks ? Math.max(0, work - state.cycleWorkMs) : Infinity;
-    const elapsed = Math.min(until - state.cursor, current.remainingMs, toRest);
-    const previousCycle = state.cycleWorkMs;
-    Object.defineProperty(state.taskMs, current.task.id, { value: current.trackedMs + elapsed, enumerable: true, writable: true, configurable: true });
-    state.workMs += elapsed; state.cursor += elapsed;
-    // With breaks off there is no stretch to count toward.
-    if (breaks) state.cycleWorkMs += elapsed;
-    const warnAt = work - 5 * 60_000;
-    if (breaks && previousCycle < warnAt && state.cycleWorkMs >= warnAt) {
-      const warningAt = state.cursor - (state.cycleWorkMs - warnAt);
-      events.push({ id: `${state.dayKey}:${Math.round(warningAt)}:rest-soon`, at: warningAt, type: "rest-soon", title: "Rest in 5 minutes", body: `Five more minutes of tracked work, then a ${restSettings(state).restMinutes}-minute break.` });
+    // Idle. Before the day starts nothing counts; once the work is done, the
+    // rest of the day is simply idle.
+    if (state.cursor < start) { state.cursor = Math.min(start, until); continue; }
+    if (goal - state.workMs <= EPSILON) { state.cursor = until; break; }
+    const next = nextTask(state, progressFor);
+    const runsOut = state.cursor + Math.max(0, idleLeftMs(state, state.cursor));
+    // Match the advice's strict "less than half" rule: alert at the first
+    // millisecond below half, not while exactly half remains. Each reminder
+    // belongs only to the stretch of idle time actually being crossed.
+    const halfAt = Math.floor(runsOut - allowance / 2) + 1, soonAt = runsOut - 5 * 60_000;
+    if (next && halfAt > state.cursor && halfAt <= until) {
+      emit("idle-half", "Time to start working", `Less than half of today’s idle time is left. ${formatDuration(goal - state.workMs)} of work is left.`, "", halfAt);
     }
-    let completion: TrackingEvent | undefined;
-    if (elapsed + EPSILON >= current.remainingMs) {
-      completion = emit("task-complete", "Daily target reached", `${current.task.title} is complete for today.`, current.task.id);
-      state.taskId = null;
+    if (next && soonAt > state.cursor && soonAt <= until) {
+      emit("idle-soon", "Idle time ends in 5 minutes", "Tracking will then start on its own and can’t be paused until today’s work is done.", "", soonAt);
     }
-    if (breaks && state.cycleWorkMs + EPSILON >= work) {
-      state.mode = "rest"; state.taskId = null;
-      // A fresh break replaces one skipped earlier; breaks never stack up.
-      delete state.deferredBreak;
-      delete state.restWorkCreditMs;
-      const { workMinutes, restMinutes } = restSettings(state);
-      emit("rest-start", "Time to rest", `${workMinutes} minutes of work complete. Now tracking a ${restMinutes}-minute break.`);
-    } else if (!state.taskId) {
-      const next = nextTask(state, progressFor);
-      state.mode = next ? "work" : "idle"; state.taskId = next?.task.id ?? null;
-    }
-    if (completion) {
-      // Describe the actual next step in the existing completion alert. A
-      // coincident break or cutoff must not tell the user to start a task.
-      const next = state.tasks.find(t => t.id === state.taskId);
-      completion.body += state.cursor >= end ? " Tracking has stopped for today."
-        : state.mode === "rest" ? ` Now tracking a ${restSettings(state).restMinutes}-minute break.`
-        : next ? ` Now tracking ${next.title}.` : " All daily targets are met.";
-    }
+    // With nothing to work on, idle time simply runs over.
+    if (!next || runsOut > until) { state.cursor = until; break; }
+    state.cursor = runsOut;
+    state.mode = "work"; state.taskId = next.task.id;
+    emit("idle-out", "Idle time is up", `Now tracking ${next.task.title}. Work continues until today’s work is done.`);
   }
-  if (now >= end && state.mode !== "idle") {
+  if (now >= end && state.mode === "work") {
     state.cursor = Math.max(state.cursor, end);
     state.mode = "idle"; state.taskId = null;
     emit("day-end", "Work day complete", "Tracking has stopped for today.");
@@ -380,33 +362,15 @@ export function advanceTracking(original: TrackingState, now: number): { state: 
 }
 
 /**
- * Adopt new rest settings mid-day. Time already worked or rested stays; only
- * the break still to come changes. A stretch already past a shorter length
- * owes its break now, a break already past a shorter length ends on the next
- * tick, and turning breaks off ends any break and goes back to work.
+ * Preferences default to the timer's own, so task/end-time edits keep them.
+ * A plan change keeps time already worked; the goal and allowance are simply
+ * recalculated, so a smaller allowance can start work at once.
  */
-function applyRest(state: TrackingState, rest: RestSettings): void {
-  if (state.rest && sameRest(state.rest, rest)) return;
-  state.rest = { ...rest };
-  if (!rest.enabled) {
-    if (state.mode === "rest") state.mode = "work";
-    state.cycleWorkMs = 0; state.cycleRestMs = 0;
-    delete state.deferredBreak;
-    delete state.restWorkCreditMs;
-    return;
-  }
-  state.cycleWorkMs = Math.min(state.cycleWorkMs, workCycleMs(state));
-  state.cycleRestMs = Math.min(state.cycleRestMs, restCycleMs(state));
-  if (state.restWorkCreditMs !== undefined) state.restWorkCreditMs = Math.min(state.restWorkCreditMs, workCycleMs(state));
-  if (state.deferredBreak) state.deferredBreak = { cycleRestMs: Math.min(state.deferredBreak.cycleRestMs, restCycleMs(state)) };
-}
-
-/** Preferences default to the timer's own, so task/end-time edits keep them. */
-export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number, rest: RestSettings = restSettings(original), unweighted = original.unweighted ?? false, minimumEnabled = original.minimumEnabled ?? true, minimumMinutes = original.minimumMinutes ?? DEFAULT_MINIMUM_MINUTES): TrackingState {
+export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number, plan: DayPlan = dayPlan(original), unweighted = original.unweighted ?? false, minimumEnabled = original.minimumEnabled ?? true, minimumMinutes = original.minimumMinutes ?? DEFAULT_MINIMUM_MINUTES): TrackingState {
   const state = advanceTracking(original, now).state;
   state.tasks = tasks; state.endTime = endTime; state.unweighted = unweighted; state.minimumEnabled = minimumEnabled; state.minimumMinutes = sanitizeMinimumMinutes(minimumMinutes);
-  applyRest(state, rest);
-  if (now >= dayEnd(state)) { state.mode = "idle"; state.taskId = null; }
+  if (!state.plan || !samePlan(state.plan, plan)) state.plan = { ...plan };
+  if (!canTrackWork(state, now)) { state.mode = "idle"; state.taskId = null; }
   if (state.mode === "work") {
     const current = taskProgress(state).find(p => p.task.id === state.taskId && p.weight > 0 && !p.doneToday);
     const next = current ?? nextTask(state);
@@ -421,35 +385,17 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
   if (action.type === "reset") {
     // A new checkpoint prevents any pre-reset elapsed time from being replayed.
     // The persistence layer increments the revision, just as for start/pause.
-    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, restSettings(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId };
+    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, dayPlan(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId };
   }
-  if (action.type === "pause") { state.mode = "idle"; state.taskId = null; return state; }
-  if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
-  const skipping = action.type === "skip-rest";
-  if (skipping) {
-    if (restOwed(state)) {
-      // The break waits rather than vanishing: pausing brings it back, with
-      // the rest already served. Meanwhile a fresh stretch of work counts
-      // toward the next break, and the unserved rest counts as work time.
-      // Skipping the same waiting break again keeps the stretch under way.
-      if (!(state.mode === "idle" && state.deferredBreak)) {
-        state.deferredBreak = { cycleRestMs: state.cycleRestMs };
-        state.cycleWorkMs = state.restWorkCreditMs ?? 0; state.cycleRestMs = 0;
-        delete state.restWorkCreditMs;
-      }
-      state.mode = "work"; state.taskId = null;
-    }
-    // Another device already ended the break: a running task carries on.
-    else if (state.mode === "work") return state;
-  }
-  // Pausing or switching devices cannot bypass a break already earned; only
-  // skipping it explicitly can.
-  if (!skipping && restOwed(state)) {
-    resumeDeferredBreak(state);
-    state.mode = "rest"; state.taskId = null;
+  if (action.type === "pause") {
+    if (state.mode === "work" && workRequired(state, now)) throw new Error("Idle time is used up, so work can’t be paused until today’s work is done.");
+    state.mode = "idle"; state.taskId = null;
     return state;
   }
-  const next = action.type === "start" && action.taskId
+  if (now < dayStart(state)) throw new Error(`Your work day starts at ${dayPlan(state).startTime}.`);
+  if (now >= dayEnd(state)) throw new Error("The work day has ended. Extend the end time or start tomorrow.");
+  if (workLeftMs(state) <= EPSILON) throw new Error("Today’s work is done. The rest of the day is idle time.");
+  const next = action.taskId
     ? taskProgress(state).find(p => p.task.id === action.taskId && p.weight > 0 && !p.doneToday)
     : nextTask(state);
   if (!next) throw new Error("No unfinished daily target to track.");
@@ -472,27 +418,29 @@ export function formatDuration(ms: number, seconds = false): string {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
-/** Guest storage is untrusted. Corrupt counters must never mint work time. */
+/**
+ * Guest storage is untrusted. Corrupt counters must never mint work time.
+ * Timers saved by the break-based model load as idle, without their break
+ * counters: rest was never work, and idle time is derived from the clock.
+ */
 export function parseTracking(value: unknown): TrackingState | null {
   if (!value || typeof value !== "object") return null;
-  const s = value as TrackingState;
+  const s = value as TrackingState & Record<string, unknown>;
   if (s.version !== 1 || !Number.isSafeInteger(s.revision) || s.revision < 0 || !Number.isFinite(s.cursor) || s.cursor < 0 || s.cursor > 8.64e15) return null;
   if (s.allocationVersion !== undefined && s.allocationVersion !== 2) return null;
   if (s.unweighted !== undefined && typeof s.unweighted !== "boolean") return null;
   if (s.minimumEnabled !== undefined && typeof s.minimumEnabled !== "boolean") return null;
   if (s.minimumMinutes !== undefined && (typeof s.minimumMinutes !== "number" || sanitizeMinimumMinutes(s.minimumMinutes) !== s.minimumMinutes)) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.dayKey) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.endTime)) return null;
+  if (s.plan !== undefined && (!s.plan || typeof s.plan !== "object" || !samePlan(sanitizePlan(s.plan), s.plan))) return null;
   if (typeof s.timeZone !== "string" || validTimeZone(s.timeZone) !== s.timeZone || !Array.isArray(s.tasks) || s.tasks.length > 2000) return null;
   if (!s.taskMs || typeof s.taskMs !== "object" || Array.isArray(s.taskMs)) return null;
   if (!["idle", "work", "rest"].includes(s.mode)) return null;
   if (s.taskId !== null && typeof s.taskId !== "string") return null;
   if (s.controllerId !== null && typeof s.controllerId !== "string") return null;
-  if ([s.workMs, s.restMs, s.cycleWorkMs, s.cycleRestMs, ...Object.values(s.taskMs)].some(v => !Number.isFinite(v) || v < 0 || v > 86_400_000)) return null;
-  if (s.rest !== undefined && (!s.rest || typeof s.rest !== "object" || !sameRest(sanitizeRestSettings(s.rest), s.rest))) return null;
-  if (s.cycleWorkMs > workCycleMs(s) || s.cycleRestMs > restCycleMs(s)) return null;
-  if (s.deferredBreak !== undefined && (!s.deferredBreak || typeof s.deferredBreak !== "object" || !Number.isFinite(s.deferredBreak.cycleRestMs) || s.deferredBreak.cycleRestMs < 0 || s.deferredBreak.cycleRestMs > restCycleMs(s))) return null;
-  if (s.restWorkCreditMs !== undefined && (!Number.isFinite(s.restWorkCreditMs) || s.restWorkCreditMs < 0 || s.restWorkCreditMs > workCycleMs(s) || s.restWorkCreditMs > s.workMs)) return null;
+  if ([s.workMs, ...Object.values(s.taskMs)].some(v => !Number.isFinite(v) || v < 0 || v > 86_400_000)) return null;
   // Snapshots from before priorities existed carry none; those weigh as low.
   if (s.tasks.some(t => !t || typeof t.id !== "string" || typeof t.title !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(t.dueDate) || typeof t.createdAt !== "string" || (t.priority !== undefined && !isPriority(t.priority)))) return null;
-  return s;
+  const { restMs: _restMs, cycleWorkMs: _cycleWorkMs, cycleRestMs: _cycleRestMs, restWorkCreditMs: _credit, deferredBreak: _deferred, rest: _rest, ...current } = s;
+  return { ...current, mode: s.mode === "work" ? "work" : "idle", taskId: s.mode === "work" ? s.taskId : null } as TrackingState;
 }

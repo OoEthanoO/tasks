@@ -992,18 +992,19 @@ const {
   summarizeState,
   emptyState,
   tasksWithoutPriority,
-  hasRestSettings,
+  hasPlan,
   hasUnweightedSetting,
   hasMinimumSetting,
   hasMinimumMinutes,
 } = require("../.test-build/app-state.js");
-const { sanitizeRestSettings, DEFAULT_REST } = require("../.test-build/rest.js");
+const { sanitizePlan, DEFAULT_PLAN } = require("../.test-build/plan.js");
 
-eq(sanitizeRestSettings(null), DEFAULT_REST, "missing rest settings are the 90/30 default");
-eq(sanitizeRestSettings({ enabled: false, workMinutes: 25, restMinutes: 5 }), { enabled: false, workMinutes: 25, restMinutes: 5 }, "valid settings survive, breaks off included");
-eq(sanitizeRestSettings({ enabled: true, workMinutes: 3, restMinutes: 500 }), { enabled: true, workMinutes: 10, restMinutes: 120 }, "lengths are clamped to range");
-eq(sanitizeRestSettings({ enabled: "yes", workMinutes: 52.6, restMinutes: "17" }), { enabled: true, workMinutes: 53, restMinutes: 30 }, "whole minutes; a non-number falls back");
-eq(sanitizeState({ tasks: [] }).rest, DEFAULT_REST, "a state without rest settings gets the default");
+eq(sanitizePlan(null), DEFAULT_PLAN, "a missing plan is the 9:00, 1:1 default");
+eq(DEFAULT_PLAN, { startTime: "09:00", workParts: 1, idleParts: 1 }, "1:1 is the default and recommended split");
+eq(sanitizePlan({ startTime: "7:30", workParts: 2, idleParts: 1 }), { startTime: "07:30", workParts: 2, idleParts: 1 }, "a valid plan survives, its time normalized");
+eq(sanitizePlan({ startTime: "24:00", workParts: 0, idleParts: 99 }), { startTime: "09:00", workParts: 1, idleParts: 20 }, "an impossible time falls back; parts are clamped to range");
+eq(sanitizePlan({ startTime: 9, workParts: 2.6, idleParts: "3" }), { startTime: "09:00", workParts: 3, idleParts: 1 }, "whole parts; a non-number falls back");
+eq(sanitizeState({ tasks: [] }).plan, DEFAULT_PLAN, "a state without a plan gets the default");
 eq(sanitizeState({ tasks: [] }).unweighted, false, "legacy states use weighted mode");
 eq(sanitizeState({ tasks: [] }).minimumEnabled, true, "legacy states keep the minimum");
 eq(sanitizeState({ tasks: [] }).minimumMinutes, 30, "legacy states keep 30 minutes");
@@ -1019,7 +1020,7 @@ eq([hasMinimumSetting({ minimumEnabled: false }), hasMinimumSetting({}), hasMini
 eq(sanitizeState({ unweighted: true }).unweighted, true, "unweighted survives sanitization");
 eq(sanitizeState({ unweighted: "true" }).unweighted, false, "unweighted requires a boolean, not a truthy string");
 eq([hasUnweightedSetting({ unweighted: false }), hasUnweightedSetting({}), hasUnweightedSetting(null)], [true, false, false], "an explicit off differs from a legacy client omitting the preference");
-eq([hasRestSettings({ rest: {} }), hasRestSettings({ tasks: [] }), hasRestSettings(null)], [true, false, false], "only a payload with a rest field marks a current client");
+eq([hasPlan({ plan: {} }), hasPlan({ rest: {} }), hasPlan(null)], [true, false, false], "only a payload with a plan field marks a current client");
 
 eq(sanitizeState(null), emptyState(), "null becomes an empty state");
 eq(sanitizeState("nope"), emptyState(), "a string becomes an empty state");
@@ -1411,7 +1412,7 @@ eq(restored.endTime, "22:00", "the end time round-trips");
   await db.deleteUser(carol.id);
 }
 
-// Rest settings round-trip, and a client built before them cannot reset them.
+// The day plan round-trips, and a client built before it cannot reset it.
 {
   const dana = await db.createUser({
     id: "u-dana",
@@ -1419,17 +1420,18 @@ eq(restored.endTime, "22:00", "the end time round-trips");
     usernameLower: "dana",
     passwordHash: hashPassword("danadana1234"),
   });
-  eq((await db.loadState(dana.id)).rest, DEFAULT_REST, "a new account starts with 90/30 breaks");
-  const pomodoro = { enabled: true, workMinutes: 25, restMinutes: 5 };
-  await db.saveState(dana.id, { ...emptyState(), rest: pomodoro });
-  eq((await db.loadState(dana.id)).rest, pomodoro, "rest settings round-trip");
-  const oldClient = { tasks: [goodTask], recommendation: null, schedule: null, endTime: "22:00" };
-  await db.saveState(dana.id, sanitizeState(oldClient), { rest: !hasRestSettings(oldClient) });
+  eq((await db.loadState(dana.id)).plan, DEFAULT_PLAN, "a new account starts with a 9:00, 1:1 day");
+  const early = { startTime: "07:00", workParts: 2, idleParts: 1 };
+  await db.saveState(dana.id, { ...emptyState(), plan: early });
+  eq((await db.loadState(dana.id)).plan, early, "the plan round-trips");
+  // Saved by a client from the break era: rest settings, no plan.
+  const oldClient = { tasks: [goodTask], recommendation: null, schedule: null, endTime: "22:00", rest: { enabled: true, workMinutes: 90, restMinutes: 30 } };
+  await db.saveState(dana.id, sanitizeState(oldClient), { plan: !hasPlan(oldClient) });
   const afterOld = await db.loadState(dana.id);
-  eq(afterOld.rest, pomodoro, "an old client's save keeps the stored rest settings");
+  eq(afterOld.plan, early, "an old client's save keeps the stored plan");
   eq(afterOld.endTime, "22:00", "while its other edits still apply");
-  await db.saveState(dana.id, { ...emptyState(), rest: { ...DEFAULT_REST, enabled: false } });
-  eq((await db.loadState(dana.id)).rest.enabled, false, "a current client can turn breaks off");
+  await db.saveState(dana.id, { ...emptyState(), plan: { ...early, idleParts: 2 } });
+  eq((await db.loadState(dana.id)).plan.idleParts, 2, "a current client can change it");
   await db.deleteUser(dana.id);
 }
 // Simulate a prefs row written before the feature was removed. Existing

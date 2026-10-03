@@ -62,13 +62,16 @@ const SCHEMA: string[] = [
      recommendation TEXT,
      schedule       TEXT,
      rest_mode      TEXT,
-     rest_settings  TEXT
+     rest_settings  TEXT,
+     day_plan       TEXT
    )`,
   // Retired preference column: keep it for compatibility with older server
   // versions during a rollout. Current clients neither read nor write it.
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_mode TEXT`,
-  // The work/rest cycle as JSON; NULL (older rows) reads as the default.
+  // Retired with breaks, which the day plan replaced; kept for older servers.
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS rest_settings TEXT`,
+  // Start time and work:idle ratio as JSON; NULL (older rows) reads as the default.
+  `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS day_plan TEXT`,
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS unweighted BOOLEAN NOT NULL DEFAULT FALSE`,
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS minimum_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
   `ALTER TABLE prefs ADD COLUMN IF NOT EXISTS minimum_minutes INTEGER NOT NULL DEFAULT 30`,

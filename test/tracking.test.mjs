@@ -2,27 +2,205 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
-const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, trackingDay, parseTracking, trackingConfigKey, restSettings, upcomingTrackingEvents, restOwed, formatDuration, MIN_DAILY_TARGET_MS, WORK_CYCLE_MS, REST_CYCLE_MS } = require("../.test-build/tracking.js");
+const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, dayStart, dayBudget, dayPlan, workLeftMs, idleLeftMs, canTrackWork, workRequired, shouldStartWorking, ownsAlerts, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, formatDuration, MIN_DAILY_TARGET_MS } = require("../.test-build/tracking.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
-const { DEFAULT_REST } = require("../.test-build/rest.js");
+const { DEFAULT_PLAN } = require("../.test-build/plan.js");
 const { commandTracking, loadTracking, readAccountTracking, configureAccountTracking, TrackingConflict } = require("../.test-build/tracking-db.js");
 const { saveState, loadState } = require("../.test-build/db.js");
 const MIN = 60_000;
 const T = Date.parse("2026-09-14T08:00:00Z");
 const task = (id, dueDate = "2026-09-14") => ({ id, title: id, description: "", dueDate, createdAt: new Date(T).toISOString(), completed: false, completedAt: null });
 const tasks = [task("first"), task("second"), task("later", "2026-09-15")];
-const fresh = (list = tasks, end = "18:00") => createTracking(list, end, "UTC", T);
+// 08:00–18:00 at 3:1: 450 minutes of work and 150 of idle time.
+const PLAN = { startTime: "08:00", workParts: 3, idleParts: 1 };
+const fresh = (list = tasks, end = "18:00") => createTracking(list, end, "UTC", T, PLAN);
+// A 1:1 day from 08:00 that holds exactly `minutes` of work (and as much idle).
+const clockAt = minutes => new Date(T + minutes * MIN).toISOString().slice(11, 16);
+const day = (list, minutes, ...settings) => createTracking(list, clockAt(2 * minutes), "UTC", T, { startTime: "08:00", workParts: 1, idleParts: 1 }, ...settings);
 let count = 0;
 function check(name, fn) { fn(); count++; console.log(`✓ ${name}`); }
 function near(a, b) { assert.ok(Math.abs(a-b) < 0.01, `${a} != ${b}`); }
 
-check("task percentages sum to 100% of work, excluding rest", () => {
+console.log("== the work day ==");
+check("the day's work goal and idle allowance come from its start, end and ratio", () => {
+  assert.deepEqual(DEFAULT_PLAN, { startTime: "09:00", workParts: 1, idleParts: 1 });
+  // The default 1:1 over 09:00–23:00 is seven hours of each.
+  const standard = createTracking([], "23:00", "UTC", T);
+  assert.deepEqual(dayBudget(standard), { workMs: 7 * 60 * MIN, idleMs: 7 * 60 * MIN });
+  const twoToOne = createTracking([], "23:00", "UTC", T, { ...DEFAULT_PLAN, workParts: 2 });
+  assert.deepEqual(dayBudget(twoToOne), { workMs: 560 * MIN, idleMs: 280 * MIN });
+  assert.deepEqual(dayBudget(fresh()), { workMs: 450 * MIN, idleMs: 150 * MIN });
+  near(workBudget(fresh()), 450 * MIN); near(remainingWorkTime(fresh()), 450 * MIN);
+  // A start at or after the end leaves no day to work in.
+  const backwards = createTracking(tasks, "08:00", "UTC", T, { ...PLAN, startTime: "09:00" });
+  assert.deepEqual(dayBudget(backwards), { workMs: 0, idleMs: 0 }); assert.equal(canTrackWork(backwards, T + 90 * MIN), false);
+});
+check("idle time is spent from the idle allowance, never from work", () => {
+  const s = advanceTracking(fresh(), T + 40 * MIN).state;
+  assert.equal(s.workMs, 0); near(workLeftMs(s), 450 * MIN); near(idleLeftMs(s), 110 * MIN);
+  near(taskProgress(s)[0].targetMs, 180 * MIN);
+});
+check("working counts work down and leaves idle time alone", () => {
+  const s = advanceTracking(actOnTracking(fresh(), { type: "start" }, "device-1", T), T + 40 * MIN).state;
+  near(s.taskMs.first, 40 * MIN); near(s.workMs, 40 * MIN); near(workLeftMs(s), 410 * MIN); near(idleLeftMs(s), 150 * MIN);
+  near(workBudget(s), 450 * MIN);
+});
+check("paused time counts as idle, and work picks up where it stopped", () => {
+  let s = actOnTracking(fresh(), { type: "start" }, "device-1", T);
+  s = actOnTracking(s, { type: "pause" }, "device-1", T + 30 * MIN);
+  s = actOnTracking(s, { type: "start" }, "device-1", T + 60 * MIN);
+  s = advanceTracking(s, T + 90 * MIN).state;
+  near(s.workMs, 60 * MIN); near(idleLeftMs(s), 120 * MIN); near(workLeftMs(s), 390 * MIN);
+});
+check("work left plus idle left is always the time left in the day", () => {
+  let s = fresh();
+  // Idle use stays inside the 150-minute allowance, so every pause is allowed.
+  for (const [at, action] of [[0, "start"], [37, "pause"], [80, "start"], [91, "pause"], [150, "start"], [260, "pause"]]) {
+    s = actOnTracking(s, { type: action }, "device-1", T + at * MIN);
+    for (const step of [0, 5, 13]) {
+      const now = T + (at + step) * MIN, projected = advanceTracking(s, now).state;
+      near(workLeftMs(projected) + idleLeftMs(projected, now), dayEnd(s) - now);
+    }
+  }
+});
+check("before the day starts nothing counts and work cannot start", () => {
+  const s = createTracking(tasks, "18:00", "UTC", T, { ...PLAN, startTime: "09:00" });
+  near(dayStart(s) - T, 60 * MIN);
+  const waiting = advanceTracking(s, T + 30 * MIN).state;
+  near(idleLeftMs(waiting), dayBudget(s).idleMs); assert.equal(shouldStartWorking(waiting), false);
+  assert.throws(() => actOnTracking(s, { type: "start" }, "device-1", T + 30 * MIN), /Your work day starts at 09:00/);
+  const started = actOnTracking(s, { type: "start" }, "device-1", T + 60 * MIN);
+  assert.equal(started.mode, "work"); near(advanceTracking(started, T + 70 * MIN).state.workMs, 10 * MIN);
+});
+check("finishing the day's work stops tracking for the rest of the day", () => {
+  const s = actOnTracking(day([task("a"), task("b")], 60), { type: "start" }, "device-1", T);
+  const out = advanceTracking(s, T + 60 * MIN);
+  assert.equal(out.state.mode, "idle"); near(out.state.workMs, 60 * MIN); near(workLeftMs(out.state), 0);
+  const done = out.events.find(e => e.type === "work-complete");
+  assert.equal(done.at, T + 60 * MIN); assert.equal(done.body, "You tracked all 1h 0m of today’s work. The rest of the day is idle time.");
+  for (const action of [{ type: "start" }, { type: "start", taskId: "b" }]) {
+    assert.throws(() => actOnTracking(out.state, action, "device-1", T + 70 * MIN), /Today’s work is done/);
+  }
+  // No advice, no forced work and no further alerts once the work is done.
+  const later = advanceTracking(out.state, T + 110 * MIN).state;
+  assert.equal(shouldStartWorking(later), false); assert.equal(canTrackWork(later), false);
+  assert.deepEqual(upcomingTrackingEvents(out.state, T + 60 * MIN), []);
+});
+check("with under half the idle time left, it advises starting work, and says so once", () => {
+  const s = fresh();
+  assert.equal(shouldStartWorking(advanceTracking(s, T + 74 * MIN).state), false);
+  const halfway = advanceTracking(s, T + 75 * MIN);
+  assert.equal(shouldStartWorking(halfway.state), false);
+  assert.deepEqual(halfway.events, [], "exactly half left is not below half");
+  const belowHalf = advanceTracking(halfway.state, T + 75 * MIN + 1);
+  assert.equal(shouldStartWorking(belowHalf.state), true);
+  assert.deepEqual(belowHalf.events.map(e => e.type), ["idle-half"]);
+  assert.deepEqual(advanceTracking(belowHalf.state, T + 100 * MIN).events, [], "checkpointing cannot repeat the advice alert");
+  assert.equal(shouldStartWorking(advanceTracking(s, T + 76 * MIN).state), true);
+  const events = advanceTracking(s, T + 100 * MIN).events;
+  assert.deepEqual(events.map(e => [e.type, e.at]), [["idle-half", T + 75 * MIN + 1]]);
+  assert.equal(events[0].title, "Time to start working");
+  // Not while working, and not without a task to start.
+  const working = actOnTracking(advanceTracking(s, T + 76 * MIN).state, { type: "start" }, "device-1", T + 76 * MIN);
+  assert.equal(shouldStartWorking(working), false);
+  assert.equal(shouldStartWorking(advanceTracking(fresh([]), T + 100 * MIN).state), false);
+});
+check("finishing or exceeding a revised work goal suppresses all idle advice and reminders", () => {
+  const working = actOnTracking(day([task("a")], 60), { type: "start" }, "device-1", T);
+  const completed = advanceTracking(working, T + 60 * MIN).state;
+  // Lowering the work share after tracking must not erase logged time or ask for more work.
+  const smallerGoal = configureTracking(completed, completed.tasks, completed.endTime, completed.cursor,
+    { ...completed.plan, idleParts: 3 });
+  for (const state of [completed, smallerGoal]) {
+    const restored = parseTracking(JSON.parse(JSON.stringify(state)));
+    const later = advanceTracking(restored, T + 110 * MIN);
+    assert.ok(idleLeftMs(later.state) < dayBudget(later.state).idleMs / 2);
+    assert.equal(later.state.workMs, 60 * MIN);
+    assert.equal(shouldStartWorking(later.state), false);
+    assert.deepEqual(later.events, []);
+    assert.deepEqual(upcomingTrackingEvents(restored, restored.cursor), []);
+  }
+});
+check("when idle time runs out, work starts and cannot be paused until it is done", () => {
+  const s = fresh([task("a"), task("b")]);
+  const out = advanceTracking(s, T + 160 * MIN);
+  assert.deepEqual(out.events.map(e => [e.type, e.at]), [["idle-half", T + 75 * MIN + 1], ["idle-soon", T + 145 * MIN], ["idle-out", T + 150 * MIN]]);
+  assert.equal(out.events[2].body, "Now tracking a. Work continues until today’s work is done.");
+  assert.equal(out.state.mode, "work"); assert.equal(out.state.taskId, "a"); near(out.state.workMs, 10 * MIN);
+  assert.equal(workRequired(out.state), true);
+  assert.throws(() => actOnTracking(out.state, { type: "pause" }, "device-1", T + 160 * MIN), /Idle time is used up/);
+  // Switching tasks is still work, so it is allowed.
+  const switched = actOnTracking(out.state, { type: "start", taskId: "b" }, "device-1", T + 160 * MIN);
+  assert.equal(switched.taskId, "b");
+  // The forced stretch fits the day exactly: the last of the work lands at the end time.
+  const end = advanceTracking(switched, dayEnd(s));
+  near(end.state.workMs, 450 * MIN); assert.equal(end.state.mode, "idle");
+  assert.equal(end.events.at(-1).type, "work-complete"); near(end.events.at(-1).at, dayEnd(s));
+  assert.equal(actOnTracking(end.state, { type: "pause" }, "device-1", dayEnd(s)).mode, "idle");
+});
+check("with nothing to work on, running out of idle time forces nothing", () => {
+  for (const list of [[], [{ ...task("done"), completed: true }]]) {
+    const out = advanceTracking(fresh(list), T + 400 * MIN);
+    assert.equal(out.state.mode, "idle"); assert.deepEqual(out.events, []);
+    assert.ok(idleLeftMs(out.state) < 0);
+    assert.throws(() => actOnTracking(out.state, { type: "start" }, "device-1", T + 400 * MIN), /No unfinished/);
+  }
+});
+check("changing the plan keeps time worked and recalculates the rest", () => {
+  const working = advanceTracking(actOnTracking(fresh(), { type: "start" }, "device-1", T), T + 60 * MIN).state;
+  const even = configureTracking(working, tasks, "18:00", T + 60 * MIN, { ...PLAN, workParts: 1 });
+  near(even.workMs, 60 * MIN); near(workLeftMs(even), 240 * MIN); near(idleLeftMs(even), 300 * MIN);
+  assert.equal(even.mode, "work"); assert.deepEqual(even.taskMs, working.taskMs);
+  // A smaller allowance than the idle time already used starts work at once.
+  const idle = advanceTracking(fresh(), T + 100 * MIN).state;
+  const tight = configureTracking(idle, tasks, "18:00", T + 100 * MIN, { ...PLAN, workParts: 9 });
+  assert.ok(idleLeftMs(tight) < 0);
+  const forced = advanceTracking(tight, T + 101 * MIN);
+  assert.equal(forced.state.mode, "work"); assert.ok(forced.events.some(e => e.type === "idle-out" && e.at === T + 100 * MIN));
+  // A later start, mid-day, stops counting time before it.
+  const later = configureTracking(working, tasks, "18:00", T + 60 * MIN, { ...PLAN, startTime: "12:00" });
+  assert.equal(later.mode, "idle"); near(later.workMs, 60 * MIN);
+});
+check("timers saved by the break model load as idle, keeping their work", () => {
+  const legacy = { ...fresh(), mode: "rest", taskId: null, workMs: 90 * MIN, taskMs: { first: 90 * MIN }, restMs: 10 * MIN, cycleWorkMs: 90 * MIN, cycleRestMs: 10 * MIN, restWorkCreditMs: 0, deferredBreak: { cycleRestMs: 0 }, rest: { enabled: true, workMinutes: 90, restMinutes: 30 } };
+  delete legacy.plan;
+  const parsed = parseTracking(JSON.parse(JSON.stringify(legacy)));
+  assert.equal(parsed.mode, "idle"); assert.equal(parsed.taskId, null); near(parsed.workMs, 90 * MIN);
+  for (const key of ["restMs", "cycleWorkMs", "cycleRestMs", "restWorkCreditMs", "deferredBreak", "rest"]) assert.equal(key in parsed, false);
+  assert.deepEqual(dayPlan(parsed), DEFAULT_PLAN);
+  assert.equal(parseTracking({ ...legacy, mode: "work", taskId: "first" }).mode, "work");
+  // Even unparsed, a projection never treats rest as work.
+  assert.equal(advanceTracking(legacy, T + MIN).state.mode, "idle");
+});
+check("the plan is part of the timer's configuration and is validated", () => {
+  assert.notEqual(trackingConfigKey(tasks, "18:00", PLAN), trackingConfigKey(tasks, "18:00", { ...PLAN, workParts: 2 }));
+  assert.notEqual(trackingConfigKey(tasks, "18:00", PLAN), trackingConfigKey(tasks, "18:00", { ...PLAN, startTime: "08:30" }));
+  assert.equal(trackingConfigKey(tasks, "18:00"), trackingConfigKey(tasks, "18:00", DEFAULT_PLAN));
+  assert.deepEqual(parseTracking(JSON.parse(JSON.stringify(fresh()))).plan, PLAN);
+  for (const plan of [{ ...PLAN, workParts: 0 }, { ...PLAN, idleParts: 1.5 }, { ...PLAN, startTime: "25:00" }, "early", null]) {
+    assert.equal(parseTracking({ ...fresh(), plan }), null);
+  }
+});
+
+check("idle reminders reach every device until one starts, pauses or resets the timer", () => {
+  // Idle time runs out with nobody pressing anything, so an unclaimed timer alerts everywhere.
+  const unclaimed = fresh();
+  assert.equal(unclaimed.controllerId, null);
+  assert.ok(ownsAlerts(unclaimed, "phone") && ownsAlerts(unclaimed, "windows"));
+  assert.ok(upcomingTrackingEvents(unclaimed, T).some(e => e.type === "idle-out"));
+  for (const action of [{ type: "start" }, { type: "pause" }, { type: "reset" }]) {
+    const claimed = actOnTracking(unclaimed, action, "phone", T + MIN);
+    assert.ok(ownsAlerts(claimed, "phone"), action.type); assert.ok(!ownsAlerts(claimed, "windows"), action.type);
+  }
+});
+console.log("== allocation ==");
+check("task percentages sum to 100% of work", () => {
   const p = taskProgress(fresh()); near(p[0].probability, .4); near(p[1].probability,.4); near(p[2].probability,.2);
   near(p.reduce((sum,p)=>sum+p.probability,0), 1);
 });
 check("unweighted gives every open task weight 1 regardless of due date or priority", () => {
   const list = [{ ...task("urgent", "2026-09-10"), priority: "high" }, task("later", "2026-10-14"), { ...task("done"), completed: true }];
-  const s = createTracking(list, "12:00", "UTC", T, DEFAULT_REST, true);
+  const s = createTracking(list, "12:00", "UTC", T, PLAN, true);
   const p = taskProgress(s);
   assert.deepEqual(p.map(p => p.weight), [1, 1, 0]);
   assert.deepEqual(p.map(p => p.probability), [.5, .5, 0]);
@@ -34,9 +212,7 @@ check("unweighted gives every open task weight 1 regardless of due date or prior
 });
 check("unweighted applies the minimum, redistributes short shares and keeps equal retained targets", () => {
   for (const minutes of [1, 20, 59, 60, 89, 90]) {
-    const list = [task("a"), task("b"), task("c")];
-    const endTime = new Date(T + minutes * MIN).toISOString().slice(11, 16);
-    const s = createTracking(list, endTime, "UTC", T, { ...DEFAULT_REST, enabled: false }, true);
+    const s = day([task("a"), task("b"), task("c")], minutes, true);
     const p = taskProgress(s);
     const kept = Math.max(1, Math.floor(minutes / 30));
     for (const [i, entry] of p.entries()) {
@@ -44,7 +220,7 @@ check("unweighted applies the minimum, redistributes short shares and keeps equa
       near(entry.targetMs, i < kept ? minutes * MIN / kept : 0);
       assert.equal(entry.skipped, i >= kept); assert.equal(entry.doneToday, i >= kept);
     }
-    near(p.reduce((sum, entry) => sum + entry.remainingMs, 0), remainingWorkTime(s));
+    near(p.reduce((sum, entry) => sum + entry.remainingMs, 0), workLeftMs(s));
     const running = actOnTracking(s, { type: "start" }, "device-1", T);
     const end = advanceTracking(running, dayEnd(s));
     for (const entry of p) near(end.state.taskMs[entry.task.id] ?? 0, entry.targetMs);
@@ -53,50 +229,45 @@ check("unweighted applies the minimum, redistributes short shares and keeps equa
     assert.equal(end.state.mode, "idle");
   }
 });
-check("unweighted minimum respects break capacity and already tracked time", () => {
-  const s = createTracking([task("a"), task("b"), task("c")], "08:20", "UTC", T, DEFAULT_REST, true);
-  s.cycleWorkMs = s.workMs = 85 * MIN; s.taskMs.a = 85 * MIN;
+check("unweighted minimum respects the work goal and already tracked time", () => {
+  const s = day([task("a"), task("b"), task("c")], 90, true);
+  s.workMs = 85 * MIN; s.taskMs.a = 85 * MIN;
   const p = taskProgress(s);
-  near(remainingWorkTime(s), 5 * MIN);
+  near(workLeftMs(s), 5 * MIN);
   near(p[0].remainingMs, 5 * MIN); near(p[0].targetMs, 90 * MIN);
   near(p[1].remainingMs, 0); near(p[2].remainingMs, 0);
   assert.deepEqual(p.map(entry => entry.skipped), [false, true, true]);
-  near(s.taskMs.a, 85 * MIN);
-  const running = actOnTracking(s, { type: "start" }, "device-1", T);
-  const end = advanceTracking(running, dayEnd(s)).state;
-  near(end.workMs, 90 * MIN); near(end.restMs, 15 * MIN);
+  const end = advanceTracking(actOnTracking(s, { type: "start" }, "device-1", T), dayEnd(s)).state;
+  near(end.workMs, 90 * MIN);
 });
 check("switching weighting modes keeps the minimum without losing progress", () => {
   const list = [task("a"), task("b")];
-  const weighted = createTracking(list, "08:20", "UTC", T);
+  const weighted = day(list, 20);
   assert.equal(taskProgress(weighted)[1].skipped, true);
   const running = actOnTracking(weighted, { type: "start" }, "device-1", T);
-  const flat = configureTracking(running, list, "08:20", T + 8 * MIN, DEFAULT_REST, true);
+  const flat = configureTracking(running, list, weighted.endTime, T + 8 * MIN, weighted.plan, true);
   const p = taskProgress(flat);
   near(flat.workMs, 8 * MIN); near(p[0].remainingMs, 12 * MIN); near(p[1].remainingMs, 0);
   assert.deepEqual(p.map(entry => entry.skipped), [false, true]);
-  const restored = configureTracking(flat, list, "08:20", flat.cursor, DEFAULT_REST, false);
+  const restored = configureTracking(flat, list, weighted.endTime, flat.cursor, weighted.plan, false);
   assert.equal(taskProgress(restored)[1].skipped, true);
   near(taskProgress(restored)[0].remainingMs, 12 * MIN);
-  assert.deepEqual(restored.taskMs, flat.taskMs); near(restored.cycleWorkMs, flat.cycleWorkMs);
+  assert.deepEqual(restored.taskMs, flat.taskMs); near(restored.workMs, flat.workMs);
 });
-check("toggling weights checkpoints elapsed work and preserves task metadata and rest progress", () => {
+check("toggling weights checkpoints elapsed work and preserves task metadata", () => {
   const list = [{ ...task("a"), priority: "high" }, task("b", "2026-09-16")];
   const original = actOnTracking(fresh(list), { type: "start" }, "device-1", T);
   const checkpoint = advanceTracking(original, T + 20 * MIN).state;
-  const flat = configureTracking(original, list, "18:00", T + 20 * MIN, DEFAULT_REST, true);
-  for (const key of ["taskMs", "workMs", "restMs", "cycleWorkMs", "cycleRestMs", "taskId", "mode", "controllerId", "tasks"]) assert.deepEqual(flat[key], checkpoint[key]);
+  const flat = configureTracking(original, list, "18:00", T + 20 * MIN, PLAN, true);
+  for (const key of ["taskMs", "workMs", "taskId", "mode", "controllerId", "tasks"]) assert.deepEqual(flat[key], checkpoint[key]);
   const p = taskProgress(flat); near(p[0].targetMs, p[1].targetMs);
-  near(p.reduce((sum, p) => sum + p.remainingMs, 0), remainingWorkTime(flat));
-  const restored = configureTracking(flat, list, "18:00", flat.cursor, DEFAULT_REST, false);
+  near(p.reduce((sum, p) => sum + p.remainingMs, 0), workLeftMs(flat));
+  const restored = configureTracking(flat, list, "18:00", flat.cursor, PLAN, false);
   assert.deepEqual(restored.taskMs, flat.taskMs);
   assert.deepEqual(taskProgress(restored).map(p => p.weight), [8, .5]);
-  const onBreak = advanceTracking(original, T + 100 * MIN).state;
-  const reweightedBreak = configureTracking(onBreak, list, "18:00", onBreak.cursor, DEFAULT_REST, true);
-  assert.equal(reweightedBreak.mode, "rest"); near(reweightedBreak.cycleRestMs, onBreak.cycleRestMs);
 });
 check("unweighted persists through reset, rollover, parsing and task-only edits", () => {
-  const s = createTracking(tasks, "18:00", "UTC", T, DEFAULT_REST, true);
+  const s = createTracking(tasks, "18:00", "UTC", T, PLAN, true);
   assert.equal(actOnTracking(s, { type: "reset" }, "device-1", T).unweighted, true);
   assert.equal(advanceTracking(s, T + 24 * 60 * MIN).state.unweighted, true);
   assert.equal(configureTracking(s, tasks.slice(1), "19:00", T).unweighted, true);
@@ -104,17 +275,17 @@ check("unweighted persists through reset, rollover, parsing and task-only edits"
   assert.equal(parseTracking({ ...s, unweighted: "true" }), null);
   const { unweighted, ...legacy } = s;
   assert.ok(parseTracking(legacy)); assert.equal(taskProgress(legacy)[0].weight, 2);
-  assert.notEqual(trackingConfigKey(tasks, "18:00", DEFAULT_REST, true), trackingConfigKey(tasks, "18:00", DEFAULT_REST, false));
+  assert.notEqual(trackingConfigKey(tasks, "18:00", PLAN, true), trackingConfigKey(tasks, "18:00", PLAN, false));
 });
 check("minimum is independent of weighting, keeps smaller shares when off and predicts their alerts", () => {
   const list = [task("a"), task("b", "2026-09-15")];
   for (const unweighted of [false, true]) for (const minimumEnabled of [false, true]) {
-    const s = createTracking(list, "08:20", "UTC", T, DEFAULT_REST, unweighted, minimumEnabled);
+    const s = day(list, 20, unweighted, minimumEnabled);
     const p = taskProgress(s);
     near(p[0].targetMs, (minimumEnabled ? 20 : unweighted ? 10 : 20 * 2 / 3) * MIN);
     near(p[1].targetMs, (minimumEnabled ? 0 : unweighted ? 10 : 20 / 3) * MIN);
     assert.equal(p[1].skipped, minimumEnabled);
-    near(p.reduce((sum, entry) => sum + entry.remainingMs, 0), remainingWorkTime(s));
+    near(p.reduce((sum, entry) => sum + entry.remainingMs, 0), workLeftMs(s));
     const running = actOnTracking(s, { type: "start" }, "device-1", T);
     const projected = advanceTracking(running, dayEnd(s));
     for (const entry of p) near(projected.state.taskMs[entry.task.id] ?? 0, entry.targetMs);
@@ -124,21 +295,18 @@ check("minimum is independent of weighting, keeps smaller shares when off and pr
 });
 check("toggling the minimum checkpoints work without reallocating elapsed time or changing ownership", () => {
   const list = [task("a"), task("b")];
-  const running = actOnTracking(createTracking(list, "08:20", "UTC", T), { type: "start" }, "device-1", T);
-  const off = configureTracking(running, list, "08:20", T + 8 * MIN, DEFAULT_REST, false, false);
-  near(off.workMs, 8 * MIN); near(off.taskMs.a, 8 * MIN); near(off.cycleWorkMs, 8 * MIN);
+  const s = day(list, 20);
+  const running = actOnTracking(s, { type: "start" }, "device-1", T);
+  const off = configureTracking(running, list, s.endTime, T + 8 * MIN, s.plan, false, false);
+  near(off.workMs, 8 * MIN); near(off.taskMs.a, 8 * MIN);
   assert.equal(off.controllerId, "device-1"); assert.equal(off.taskId, "a"); assert.equal(off.mode, "work");
   near(taskProgress(off)[0].remainingMs, 2 * MIN); near(taskProgress(off)[1].remainingMs, 10 * MIN);
-  const on = configureTracking(off, list, "08:20", off.cursor, DEFAULT_REST, false, true);
-  assert.deepEqual(on.taskMs, off.taskMs); near(on.workMs, off.workMs); near(on.cycleWorkMs, off.cycleWorkMs);
+  const on = configureTracking(off, list, s.endTime, off.cursor, s.plan, false, true);
+  assert.deepEqual(on.taskMs, off.taskMs); near(on.workMs, off.workMs);
   near(taskProgress(on)[0].remainingMs, 12 * MIN); assert.equal(taskProgress(on)[1].skipped, true);
-  // A setting change during rest must not restart, shorten or cancel that break.
-  const onBreak = advanceTracking(actOnTracking(fresh(list), { type: "start" }, "device-1", T), T + 100 * MIN).state;
-  const changed = configureTracking(onBreak, list, onBreak.endTime, onBreak.cursor, DEFAULT_REST, false, false);
-  for (const key of ["taskMs", "workMs", "restMs", "cycleWorkMs", "cycleRestMs", "controllerId", "taskId", "mode"]) assert.deepEqual(changed[key], onBreak[key]);
 });
 check("minimum off persists through reset, rollover and task edits; legacy defaults on", () => {
-  const s = createTracking(tasks, "08:20", "UTC", T, DEFAULT_REST, false, false);
+  const s = day(tasks, 20, false, false);
   assert.equal(actOnTracking(s, { type: "reset" }, "device-1", T).minimumEnabled, false);
   assert.equal(advanceTracking(s, T + 24 * 60 * MIN).state.minimumEnabled, false);
   assert.equal(configureTracking(s, tasks.slice(1), "19:00", T).minimumEnabled, false);
@@ -146,13 +314,13 @@ check("minimum off persists through reset, rollover and task edits; legacy defau
   assert.equal(parseTracking({ ...s, minimumEnabled: "false" }), null);
   const { minimumEnabled, ...legacy } = s;
   assert.ok(parseTracking(legacy)); assert.equal(taskProgress(legacy)[1].skipped, true);
-  assert.equal(trackingConfigKey(tasks, "08:20"), trackingConfigKey(tasks, "08:20", DEFAULT_REST, false, true));
-  assert.notEqual(trackingConfigKey(tasks, "08:20"), trackingConfigKey(tasks, "08:20", DEFAULT_REST, false, false));
+  assert.equal(trackingConfigKey(tasks, "08:20"), trackingConfigKey(tasks, "08:20", DEFAULT_PLAN, false, true));
+  assert.notEqual(trackingConfigKey(tasks, "08:20"), trackingConfigKey(tasks, "08:20", DEFAULT_PLAN, false, false));
 });
 check("custom minimums control allocation and labels in either weighting mode", () => {
   const list = [task("a"), task("b"), task("c")];
   for (const unweighted of [false, true]) for (const minimum of [1, 5, 15, 30, 45, 120, 1440]) {
-    const s = createTracking(list, "09:30", "UTC", T, DEFAULT_REST, unweighted, true, minimum);
+    const s = day(list, 90, unweighted, true, minimum);
     const p = taskProgress(s), kept = Math.max(1, Math.min(3, Math.floor(90 / minimum)));
     assert.equal(p.filter(p => !p.skipped).length, kept);
     for (const [i, entry] of p.entries()) {
@@ -164,31 +332,29 @@ check("custom minimums control allocation and labels in either weighting mode", 
     assert.deepEqual(upcomingTrackingEvents(running, T), projected.events);
     for (const entry of p) near(projected.state.taskMs[entry.task.id] ?? 0, entry.targetMs);
   }
-  const weighted = createTracking([task("a"), task("b", "2026-09-15")], "08:15", "UTC", T, DEFAULT_REST, false, true, 5);
+  const weighted = day([task("a"), task("b", "2026-09-15")], 15, false, true, 5);
   near(taskProgress(weighted)[0].targetMs, 10 * MIN); near(taskProgress(weighted)[1].targetMs, 5 * MIN);
 });
-check("editing custom minimums keeps earned work, breaks and the setting through reset and rollover", () => {
+check("editing custom minimums keeps earned work and the setting through reset and rollover", () => {
   const list = [task("a"), task("b")];
-  const running = actOnTracking(createTracking(list, "08:20", "UTC", T), { type: "start" }, "device-1", T);
-  const shorter = configureTracking(running, list, "08:20", T + 8 * MIN, DEFAULT_REST, false, true, 5);
+  const s = day(list, 20);
+  const running = actOnTracking(s, { type: "start" }, "device-1", T);
+  const shorter = configureTracking(running, list, s.endTime, T + 8 * MIN, s.plan, false, true, 5);
   near(shorter.workMs, 8 * MIN); near(shorter.taskMs.a, 8 * MIN);
   near(taskProgress(shorter)[1].remainingMs, 10 * MIN);
-  const longer = configureTracking(shorter, list, "08:20", shorter.cursor, DEFAULT_REST, false, true, 15);
+  const longer = configureTracking(shorter, list, s.endTime, shorter.cursor, s.plan, false, true, 15);
   assert.equal(taskProgress(longer)[1].skipped, true);
-  assert.deepEqual(longer.taskMs, shorter.taskMs); near(longer.cycleWorkMs, shorter.cycleWorkMs);
-  assert.equal(longer.controllerId, shorter.controllerId);
-  const off = configureTracking(longer, list, longer.endTime, longer.cursor, DEFAULT_REST, false, false);
+  assert.deepEqual(longer.taskMs, shorter.taskMs); assert.equal(longer.controllerId, shorter.controllerId);
+  const off = configureTracking(longer, list, longer.endTime, longer.cursor, s.plan, false, false);
   assert.equal(off.minimumMinutes, 15); assert.ok(taskProgress(off).every(p => !p.skipped));
   assert.equal(actOnTracking(off, { type: "reset" }, "device-1", off.cursor).minimumMinutes, 15);
   assert.equal(advanceTracking(off, T + 24 * 60 * MIN).state.minimumMinutes, 15);
-  const onBreak = advanceTracking(actOnTracking(fresh(list), { type: "start" }, "device-1", T), T + 100 * MIN).state;
-  const changed = configureTracking(onBreak, list, onBreak.endTime, onBreak.cursor, DEFAULT_REST, false, true, 120);
-  for (const key of ["taskMs", "workMs", "restMs", "cycleWorkMs", "cycleRestMs", "controllerId", "taskId", "mode"]) assert.deepEqual(changed[key], onBreak[key]);
+  const changed = configureTracking(off, list, off.endTime, off.cursor, s.plan, false, true, 120);
   assert.equal(parseTracking(JSON.parse(JSON.stringify(changed))).minimumMinutes, 120);
   for (const invalid of [0, 1441, 1.5, "15", null, NaN, Infinity]) assert.equal(parseTracking({ ...changed, minimumMinutes: invalid }), null);
   const { minimumMinutes, ...legacy } = changed;
   assert.ok(parseTracking(legacy)); assert.equal(taskProgress(legacy)[0].minimumMs, 30 * MIN);
-  assert.notEqual(trackingConfigKey(list, "08:20", DEFAULT_REST, false, true, 5), trackingConfigKey(list, "08:20", DEFAULT_REST, false, true, 15));
+  assert.notEqual(trackingConfigKey(list, "08:20", DEFAULT_PLAN, false, true, 5), trackingConfigKey(list, "08:20", DEFAULT_PLAN, false, true, 15));
 });
 check("Start takes the first unfinished task in list order, not the heaviest", () => {
   assert.equal(actOnTracking(fresh(), {type:"start"}, "device-1", T).taskId, "first");
@@ -203,36 +369,27 @@ check("Start takes the first unfinished task in list order, not the heaviest", (
 });
 check("after a target is met, the timer moves to the next task down the list", () => {
   // Shares of a 450-minute day: a 112.5, big 225, c 112.5. "a" finishes at
-  // 142.5 minutes (with a break at 90); "c" is next on the list, not "big".
+  // 112.5 minutes; "c" is next on the list, not "big".
   const s=actOnTracking(fresh([task("a"),{...task("big","2026-09-15"),priority:"high"},task("c")]),{type:"start"},"device-1",T);
-  const out=advanceTracking(s,T+145*MIN);
+  const out=advanceTracking(s,T+115*MIN);
   assert.equal(out.state.taskId,"c"); assert.ok(out.events.some(e=>e.type==="task-complete"));
   assert.equal(out.events.find(e=>e.type==="task-complete").body,"a is complete for today. Now tracking c.");
 });
-check("completion alert describes a coincident break, not another task", () => {
-  const s=actOnTracking(fresh([task("a"),task("b")],"12:00"),{type:"start"},"device-1",T);
-  const out=advanceTracking(s,T+90*MIN);
-  assert.equal(out.state.mode,"rest");
-  assert.equal(out.events.find(e=>e.type==="task-complete").body,"a is complete for today. Now tracking a 30-minute break.");
-  assert.deepEqual(out.events.map(e=>e.type),["rest-soon","task-complete","rest-start"]);
+check("completion alert says when today's work is done", () => {
+  const out=advanceTracking(actOnTracking(day([task("a")],30),{type:"start"},"device-1",T),T+30*MIN);
+  assert.equal(out.state.mode,"idle");
+  assert.equal(out.events.find(e=>e.type==="task-complete").body,"a is complete for today. Today’s work is done.");
+  assert.deepEqual(out.events.map(e=>e.type),["task-complete","work-complete"]);
 });
 check("completion at cutoff says tracking stopped and never suggests a next task", () => {
-  const s=actOnTracking(fresh([task("a")],"08:30"),{type:"start"},"device-1",T);
-  const out=advanceTracking(s,T+30*MIN);
+  // Idle until the allowance runs out, then forced work fills the rest of the day.
+  const out=advanceTracking(day([task("a")],30),T+60*MIN);
   assert.equal(out.state.mode,"idle");
   assert.equal(out.events.find(e=>e.type==="task-complete").body,"a is complete for today. Tracking has stopped for today.");
-  assert.equal(out.events.length,1);
+  assert.deepEqual(out.events.map(e=>e.type),["idle-half","idle-soon","idle-out","task-complete","work-complete"]);
 });
 check("manual selection overrides default without changing weights", () => {
   assert.equal(actOnTracking(fresh(), {type:"start",taskId:"later"}, "device-1", T).taskId,"later");
-});
-check("idle shrinks the budget and does not accumulate time", () => {
-  const s = advanceTracking(fresh(), T+40*MIN).state;
-  assert.equal(s.workMs,0); near(workBudget(s),440*MIN); near(taskProgress(s)[0].targetMs,176*MIN);
-});
-check("active work keeps the budget constant", () => {
-  const s = advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+40*MIN).state;
-  near(s.taskMs.first,40*MIN); near(s.workMs,40*MIN); near(workBudget(s),450*MIN);
 });
 check("switching keeps both tasks' accumulated time", () => {
   let s = actOnTracking(fresh(),{type:"start"},"device-1",T);
@@ -240,252 +397,19 @@ check("switching keeps both tasks' accumulated time", () => {
   s=advanceTracking(s,T+35*MIN).state;
   near(s.taskMs.first,20*MIN); near(s.taskMs.second,15*MIN); near(s.workMs,35*MIN);
 });
-check("pause/resume preserves the cycle and excludes paused time", () => {
-  let s=actOnTracking(fresh(),{type:"start"},"device-1",T);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+30*MIN);
-  s=actOnTracking(s,{type:"start"},"device-1",T+60*MIN);
-  s=advanceTracking(s,T+90*MIN).state;
-  near(s.workMs,60*MIN); near(s.cycleWorkMs,60*MIN); near(workBudget(s),450*MIN);
-});
-check("90 cumulative work minutes force rest across task switches", () => {
-  let s=actOnTracking(fresh(),{type:"start"},"device-1",T);
-  s=actOnTracking(s,{type:"start",taskId:"second"},"device-1",T+45*MIN);
-  const result=advanceTracking(s,T+90*MIN);
-  assert.equal(result.state.mode,"rest"); near(result.state.workMs,90*MIN); assert.equal(result.state.taskId,null);
-  assert.deepEqual(result.events.map(e=>e.type),["rest-soon","rest-start"]);
-});
-check("rest is reserved up front and does not change targets while taken", () => {
-  const start=actOnTracking(fresh(),{type:"start"},"device-1",T);
-  const s=advanceTracking(start,T+120*MIN).state;
-  near(s.workMs,90*MIN); near(s.restMs,30*MIN); near(workBudget(s),450*MIN);
-  assert.deepEqual(taskProgress(s).map(p=>p.targetMs),taskProgress(start).map(p=>p.targetMs));
-  near(s.restMs/(s.workMs+s.restMs),.25); assert.equal(s.mode,"work"); near(s.cycleWorkMs,0);
-});
-check("pausing rest cannot bypass the remaining break", () => {
-  let s=actOnTracking(fresh(),{type:"start"},"device-1",T);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+100*MIN);
-  s=actOnTracking(s,{type:"start",taskId:"second"},"device-2",T+130*MIN);
-  assert.equal(s.mode,"rest"); near(s.cycleRestMs,10*MIN);
-  s=advanceTracking(s,T+150*MIN).state; near(s.restMs,30*MIN); assert.equal(s.mode,"work");
-});
-check("skipping a break goes straight back to work and restarts the 90-minute stretch", () => {
-  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
-  assert.equal(s.mode,"rest"); near(s.cycleRestMs,10*MIN);
-  const left=remainingWorkTime(s);
-  s=actOnTracking(s,{type:"skip-rest"},"device-2",T+100*MIN);
-  assert.equal(s.mode,"work"); assert.equal(s.taskId,"first");
-  near(s.cycleWorkMs,0); near(s.cycleRestMs,0); near(s.restMs,10*MIN);
-  // The 20 unserved break minutes become work time for today's targets.
-  near(remainingWorkTime(s),left+20*MIN);
-  const later=advanceTracking(s,T+190*MIN);
-  assert.equal(later.state.mode,"rest"); near(later.state.workMs,180*MIN);
-  assert.ok(later.events.some(e=>e.type==="rest-start"&&e.at===T+190*MIN));
-  // Alerts follow: the old "rest complete" is gone, the next break is predicted.
-  const upcoming=upcomingTrackingEvents(s,T+100*MIN);
-  assert.ok(!upcoming.some(e=>e.type==="rest-complete"&&e.at===T+120*MIN));
-  assert.ok(upcoming.some(e=>e.type==="rest-start"&&e.at===T+190*MIN));
-});
-const custom=(rest,list=tasks,end="18:00")=>createTracking(list,end,"UTC",T,rest);
-check("custom work and rest lengths drive breaks, alerts and capacity", () => {
-  const s=custom({enabled:true,workMinutes:25,restMinutes:5},tasks,"10:00");
-  // 120 wall minutes: 25 of work, a 5-minute break, then three more 25/5 cycles.
-  near(remainingWorkTime(s),100*MIN);
-  const out=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),T+31*MIN);
-  near(out.state.workMs,26*MIN); near(out.state.restMs,5*MIN); assert.equal(out.state.mode,"work");
-  const soon=out.events.find(e=>e.type==="rest-soon"), rest=out.events.find(e=>e.type==="rest-start");
-  assert.equal(soon.at,T+20*MIN); assert.equal(soon.body,"Five more minutes of tracked work, then a 5-minute break.");
-  assert.equal(rest.at,T+25*MIN); assert.equal(rest.body,"25 minutes of work complete. Now tracking a 5-minute break.");
-  assert.ok(out.events.some(e=>e.type==="rest-complete"&&e.at===T+30*MIN));
-});
-check("with breaks off, the whole day is work and no break ever starts", () => {
-  const s=custom({enabled:false,workMinutes:90,restMinutes:30},[task("a")]);
-  near(remainingWorkTime(s),600*MIN);
-  const out=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),T+200*MIN);
-  near(out.state.workMs,200*MIN); near(out.state.restMs,0); near(out.state.cycleWorkMs,0); assert.equal(out.state.mode,"work");
-  assert.ok(!out.events.some(e=>e.type.startsWith("rest")));
-  assert.equal(restOwed(out.state),false);
-  // There is no break to skip, so a running task carries on.
-  assert.equal(actOnTracking(out.state,{type:"skip-rest"},"device-1",T+200*MIN).taskId,"a");
-});
-check("changing the lengths mid-day keeps earned time and moves only the break to come", () => {
-  const s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+60*MIN).state;
-  // Shortening the stretch below what is already done makes the break due now.
-  const shorter=configureTracking(s,tasks,"18:00",T+60*MIN,{enabled:true,workMinutes:45,restMinutes:15});
-  near(shorter.workMs,60*MIN); near(shorter.cycleWorkMs,45*MIN); assert.equal(restOwed(shorter),true);
-  const next=advanceTracking(shorter,T+61*MIN);
-  assert.equal(next.state.mode,"rest"); assert.ok(next.events.some(e=>e.type==="rest-start"&&e.at===T+60*MIN));
-  // A break already past a shorter length ends straight away; rest taken stays.
-  const resting=advanceTracking(next.state,T+70*MIN).state;
-  const shortRest=configureTracking(resting,tasks,"18:00",T+70*MIN,{enabled:true,workMinutes:45,restMinutes:5});
-  const after=advanceTracking(shortRest,T+71*MIN);
-  assert.equal(after.state.mode,"work"); near(after.state.restMs,10*MIN);
-  assert.ok(after.events.some(e=>e.type==="rest-complete"&&e.at===T+70*MIN));
-});
-check("turning breaks off mid-break goes back to work; turning them on starts a fresh stretch", () => {
-  const resting=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
-  const off=configureTracking(resting,tasks,"18:00",T+100*MIN,{...DEFAULT_REST,enabled:false});
-  assert.equal(off.mode,"work"); assert.equal(off.taskId,"first"); near(off.restMs,10*MIN); near(off.cycleWorkMs,0);
-  // A skipped break that was waiting goes too.
-  const skipped=actOnTracking(resting,{type:"skip-rest"},"device-1",T+100*MIN);
-  assert.ok(skipped.deferredBreak);
-  assert.equal(configureTracking(skipped,tasks,"18:00",T+100*MIN,{...DEFAULT_REST,enabled:false}).deferredBreak,undefined);
-  const on=configureTracking(advanceTracking(off,T+130*MIN).state,tasks,"18:00",T+130*MIN,DEFAULT_REST);
-  near(on.cycleWorkMs,0); assert.equal(restOwed(on),false);
-  assert.equal(advanceTracking(on,T+219*MIN).state.mode,"work");
-  assert.equal(advanceTracking(on,T+221*MIN).state.mode,"rest");
-});
-check("short cycles integrate a whole day without running out of loop passes", () => {
-  // 10/1 over 600 minutes: 54 full cycles, then 6 more minutes of work.
-  const s=custom({enabled:true,workMinutes:10,restMinutes:1},[task("a")]);
-  near(remainingWorkTime(s),546*MIN);
-  const end=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),dayEnd(s)).state;
-  near(end.workMs,546*MIN); near(end.restMs,54*MIN);
-});
-check("rest settings are part of the timer's configuration and are validated", () => {
-  assert.notEqual(trackingConfigKey(tasks,"18:00",DEFAULT_REST),trackingConfigKey(tasks,"18:00",{...DEFAULT_REST,restMinutes:20}));
-  assert.equal(trackingConfigKey(tasks,"18:00"),trackingConfigKey(tasks,"18:00",DEFAULT_REST));
-  const pomodoro=custom({enabled:true,workMinutes:25,restMinutes:5});
-  assert.ok(parseTracking(JSON.parse(JSON.stringify(pomodoro))));
-  assert.equal(parseTracking({...pomodoro,cycleWorkMs:26*MIN}),null);
-  assert.equal(parseTracking({...fresh(),rest:{enabled:true,workMinutes:3,restMinutes:5}}),null);
-  assert.equal(parseTracking({...fresh(),rest:"pomodoro"}),null);
-  // Timers from before the setting existed run 90/30.
-  const legacy=fresh(); delete legacy.rest;
-  assert.ok(parseTracking(legacy)); near(remainingWorkTime(legacy),450*MIN);
-});
-check("pausing after a skip brings the skipped break back, where it left off", () => {
-  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);   // 10 minutes into the break
-  s=advanceTracking(s,T+130*MIN).state;                           // then 30 more of work
-  near(s.workMs,120*MIN); assert.equal(restOwed(s),false);
-  const paused=actOnTracking(s,{type:"pause"},"device-1",T+130*MIN);
-  assert.equal(restOwed(paused),true);
-  const resumed=actOnTracking(paused,{type:"start"},"device-1",T+130*MIN);
-  assert.equal(resumed.mode,"rest"); near(resumed.cycleRestMs,10*MIN); assert.equal(resumed.deferredBreak,undefined);
-  // Only the 20 unserved minutes remain; the extra 30 work minutes still count.
-  near(resumed.restWorkCreditMs,30*MIN);
-  const after=advanceTracking(resumed,T+150*MIN).state;
-  assert.equal(after.mode,"work"); near(after.restMs,30*MIN); near(after.cycleWorkMs,30*MIN);
-  assert.equal(after.restWorkCreditMs,undefined);
-  const next=advanceTracking(after,T+210*MIN);
-  near(next.state.workMs,180*MIN); assert.equal(next.state.mode,"rest");
-  assert.ok(next.events.some(e=>e.type==="rest-soon"&&e.at===T+205*MIN));
-  assert.ok(next.events.some(e=>e.type==="rest-start"&&e.at===T+210*MIN));
-});
-check("postponed-break credit survives repeated resumes, re-skips, and persistence", () => {
-  let s=advanceTracking(actOnTracking(fresh([task("only")]),{type:"start"},"device-1",T),T+100*MIN).state;
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+107*MIN);
-  s=actOnTracking(s,{type:"start"},"device-2",T+107*MIN);
-  near(s.restWorkCreditMs,7*MIN);
-  s=actOnTracking(s,{type:"pause"},"device-2",T+112*MIN);
-  s=parseTracking(JSON.parse(JSON.stringify(s)));
-  assert.ok(s); near(s.restWorkCreditMs,7*MIN);
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+112*MIN);
-  near(s.cycleWorkMs,7*MIN); assert.equal(s.restWorkCreditMs,undefined);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+115*MIN);
-  s=actOnTracking(s,{type:"start"},"device-2",T+115*MIN);
-  near(s.restWorkCreditMs,10*MIN);
-  s=actOnTracking(s,{type:"pause"},"device-2",T+120*MIN);
-  s=actOnTracking(s,{type:"start"},"device-1",T+125*MIN);
-  s=advanceTracking(s,T+135*MIN).state;
-  near(s.workMs,100*MIN); near(s.restMs,30*MIN); near(s.cycleWorkMs,10*MIN);
-  const next=advanceTracking(s,T+215*MIN);
-  near(next.state.workMs,180*MIN); assert.equal(next.state.mode,"rest");
-});
-check("remaining work reserves the next break using postponed work credit", () => {
-  let s=advanceTracking(actOnTracking(fresh([task("only")],"12:00"),{type:"start"},"device-1",T),T+100*MIN).state;
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+130*MIN);
-  // 110 wall minutes: finish 20 rest, work 60, then the next 30-minute break.
-  near(remainingWorkTime(s),60*MIN);
-  const resumed=actOnTracking(s,{type:"start"},"device-2",T+130*MIN);
-  near(remainingWorkTime(resumed),60*MIN);
-  near(workBudget(resumed),workBudget(s));
-  const predicted=upcomingTrackingEvents(resumed,resumed.cursor);
-  const end=advanceTracking(resumed,dayEnd(resumed));
-  near(end.state.workMs-resumed.workMs,remainingWorkTime(resumed));
-  assert.deepEqual(end.events,predicted);
-});
-check("the reported seven-minute gap is retained through the postponed break", () => {
-  let s=advanceTracking(actOnTracking(fresh([task("only")]),{type:"start"},"device-1",T),T+100*MIN).state;
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",s.cursor);
-  s=actOnTracking(s,{type:"pause"},"device-1",s.cursor+422244);
-  s=actOnTracking(s,{type:"start"},"device-1",s.cursor);
-  s=advanceTracking(s,s.cursor+20*MIN).state;
-  near(s.workMs,90*MIN+422244); near(s.cycleWorkMs,422244);
-  const restAt=s.cursor+90*MIN-422244;
-  const result=advanceTracking(s,restAt);
-  near(result.state.workMs,180*MIN); assert.equal(result.state.mode,"rest");
-  assert.ok(result.events.some(e=>e.type==="rest-start"&&e.at===restAt));
-});
-check("postponed credit is cleared with breaks disabled, reset, and day rollover", () => {
-  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+100*MIN).state;
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+100*MIN);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+110*MIN);
-  s=actOnTracking(s,{type:"start"},"device-1",T+110*MIN);
-  assert.equal(configureTracking(s,tasks,"18:00",s.cursor,{...DEFAULT_REST,enabled:false}).restWorkCreditMs,undefined);
-  assert.equal(actOnTracking(s,{type:"reset"},"device-1",s.cursor).restWorkCreditMs,undefined);
-  assert.equal(advanceTracking(s,T+24*60*MIN).state.restWorkCreditMs,undefined);
-  for (const bad of [-1,NaN,Infinity,"10",91*MIN]) assert.equal(parseTracking({...s,restWorkCreditMs:bad}),null);
-  assert.ok(parseTracking({...s,restWorkCreditMs:0}));
-});
-check("skipping the waiting break again keeps the stretch under way", () => {
-  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+90*MIN).state;
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+90*MIN);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+130*MIN);       // 40 minutes into the new stretch
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+135*MIN);
-  assert.equal(s.mode,"work"); near(s.cycleWorkMs,40*MIN); assert.ok(s.deferredBreak);
-  // So the next break comes after 50 more minutes, not 90, and replaces the waiting one.
-  const later=advanceTracking(s,T+185*MIN).state;
-  assert.equal(later.mode,"rest"); near(later.cycleRestMs,0); assert.equal(later.deferredBreak,undefined);
-});
-check("once work stops for any reason, a skipped break is owed again", () => {
-  let s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+90*MIN).state;
-  s=actOnTracking(s,{type:"skip-rest"},"device-1",T+90*MIN);
-  // Completing every task ends the work, not the break that was put off.
-  const done=configureTracking(s,tasks.map(t=>({...t,completed:true})),"18:00",T+100*MIN);
-  assert.equal(done.mode,"idle"); assert.equal(restOwed(done),true);
-  assert.equal(actOnTracking(done,{type:"start"},"device-1",T+100*MIN).mode,"rest");
-  // Stored timers carrying a waiting break load; malformed ones do not.
-  assert.ok(parseTracking(JSON.parse(JSON.stringify(s))));
-  assert.equal(parseTracking({...fresh(),deferredBreak:{cycleRestMs:-1}}),null);
-  assert.equal(parseTracking({...fresh(),deferredBreak:"later"}),null);
-});
-check("a break that is due while paused can be skipped too", () => {
-  const s={...fresh(),cycleWorkMs:90*MIN,workMs:90*MIN,taskMs:{first:90*MIN}};
-  assert.equal(actOnTracking(s,{type:"start"},"device-1",T).mode,"rest");
-  const skipped=actOnTracking(s,{type:"skip-rest"},"device-1",T);
-  assert.equal(skipped.mode,"work"); near(skipped.cycleWorkMs,0);
-});
-check("skipping when no break is due leaves the stretch alone", () => {
-  // Another device already ended the break: a running task carries on untouched.
-  const working=advanceTracking(actOnTracking(fresh(),{type:"start",taskId:"second"},"device-1",T),T+40*MIN).state;
-  const same=actOnTracking(working,{type:"skip-rest"},"device-2",T+40*MIN);
-  assert.equal(same.mode,"work"); assert.equal(same.taskId,"second"); near(same.cycleWorkMs,40*MIN);
-  // Paused mid-stretch, it resumes and keeps the progress toward the next break.
-  const paused=actOnTracking(working,{type:"pause"},"device-1",T+40*MIN);
-  const resumed=actOnTracking(paused,{type:"skip-rest"},"device-1",T+40*MIN);
-  assert.equal(resumed.mode,"work"); near(resumed.cycleWorkMs,40*MIN);
-  assert.throws(()=>actOnTracking(paused,{type:"skip-rest"},"device-1",dayEnd(paused)),/work day has ended/);
-});
 check("task completion notifies and selects next without permanent completion", () => {
   const s=actOnTracking(fresh([task("a"),task("b")],"10:00"),{type:"start"},"device-1",T);
   const out=advanceTracking(s,T+60*MIN);
   assert.equal(out.state.taskId,"b"); assert.equal(out.events[0].type,"task-complete");
   assert.equal(taskProgress(out.state)[0].doneToday,true); assert.equal(out.state.tasks[0].completed,false);
 });
-check("shrinking targets mark previously tracked tasks done while paused", () => {
-  let s=actOnTracking(fresh([task("a"),task("b")],"10:00"),{type:"start"},"device-1",T);
-  s=actOnTracking(s,{type:"pause"},"device-1",T+30*MIN);
-  s=advanceTracking(s,T+90*MIN).state;
-  assert.equal(taskProgress(s)[0].doneToday,true);
-  assert.equal(actOnTracking(s,{type:"start"},"device-1",T+90*MIN).taskId,"b");
-});
+
+console.log("== days, resets and edits ==");
 check("midnight wipes every counter, pauses, and makes tasks eligible anew", () => {
   const s=actOnTracking(fresh(),{type:"start"},"device-1",T);
   const reset=advanceTracking(s,Date.parse("2026-09-15T08:00:00Z")).state;
-  assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0); near(reset.restMs,0); near(reset.cycleWorkMs,0); assert.equal(reset.mode,"idle"); assert.equal(reset.dayKey,"2026-09-15");
+  assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0); assert.equal(reset.mode,"idle"); assert.equal(reset.dayKey,"2026-09-15");
+  assert.deepEqual(reset.plan,PLAN);
   assert.ok(taskProgress(reset).every(p=>!p.doneToday));
 });
 check("manual reset wipes all task time and pauses without mutating the old session", () => {
@@ -493,57 +417,50 @@ check("manual reset wipes all task time and pauses without mutating the old sess
   before=actOnTracking(before,{type:"start",taskId:"second"},"device-1",T+20*MIN);
   const copy=JSON.stringify(before);
   const reset=actOnTracking(before,{type:"reset"},"device-2",T+40*MIN);
-  assert.deepEqual(reset.taskMs,{});
-  for(const key of ["workMs","restMs","cycleWorkMs","cycleRestMs"]) near(reset[key],0);
+  assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0);
   assert.equal(reset.mode,"idle"); assert.equal(reset.taskId,null);
   assert.equal(reset.controllerId,"device-2"); assert.equal(reset.cursor,T+40*MIN);
   assert.equal(JSON.stringify(before),copy);
 });
-check("manual reset clears active rest and paused rest debt", () => {
-  const initial=actOnTracking(fresh(),{type:"start"},"device-1",T);
-  const resting=advanceTracking(initial,T+100*MIN).state;
-  assert.equal(resting.mode,"rest"); near(resting.cycleRestMs,10*MIN);
-  for(const before of [resting,actOnTracking(resting,{type:"pause"},"device-1",T+100*MIN)]) {
-    const reset=actOnTracking(before,{type:"reset"},"device-2",T+105*MIN);
-    near(reset.restMs,0); near(reset.cycleRestMs,0); near(reset.cycleWorkMs,0);
-    assert.equal(reset.mode,"idle");
-    const resumed=actOnTracking(reset,{type:"start"},"device-2",T+110*MIN);
-    assert.equal(resumed.mode,"work");
-    near(advanceTracking(resumed,T+120*MIN).state.workMs,10*MIN);
-  }
-});
-check("reset preserves task metadata, permanent completion, cutoff, zone and revision", () => {
+check("reset preserves task metadata, permanent completion, cutoff, plan, zone and revision", () => {
   const list=[...tasks,{...task("done"),completed:true,completedAt:new Date(T).toISOString()}];
-  const initial={...createTracking(list,"20:15","America/Toronto",T),revision:42};
-  const before=actOnTracking(initial,{type:"start"},"device-1",T);
-  const reset=actOnTracking(before,{type:"reset"},"device-2",T+40*MIN);
-  assert.deepEqual(reset.tasks,list); assert.equal(reset.endTime,"20:15");
+  const initial={...createTracking(list,"20:15","America/Toronto",T,PLAN),revision:42};
+  // 12:00 UTC is 08:00 in Toronto, when this day starts.
+  const before=actOnTracking(initial,{type:"start"},"device-1",T+240*MIN);
+  const reset=actOnTracking(before,{type:"reset"},"device-2",T+280*MIN);
+  assert.deepEqual(reset.tasks,list); assert.equal(reset.endTime,"20:15"); assert.deepEqual(reset.plan,PLAN);
   assert.equal(reset.timeZone,initial.timeZone); assert.equal(reset.dayKey,initial.dayKey); assert.equal(reset.revision,42);
 });
-check("reset makes daily-complete tasks eligible and uses only the remaining day", () => {
+check("after a reset, time already passed counts as idle", () => {
+  // 90 minutes of work and 30 of idle; 60 worked, then a reset.
   const before=advanceTracking(actOnTracking(fresh([task("a"),task("b")],"10:00"),{type:"start"},"device-1",T),T+60*MIN).state;
   assert.equal(taskProgress(before)[0].doneToday,true);
   const reset=actOnTracking(before,{type:"reset"},"device-1",T+60*MIN);
-  near(workBudget(reset),60*MIN);
-  assert.ok(taskProgress(reset).every(p=>!p.doneToday && p.trackedMs===0 && p.targetMs===30*MIN));
-  assert.equal(actOnTracking(reset,{type:"start"},"device-1",T+60*MIN).taskId,"a");
+  near(workBudget(reset),90*MIN); near(idleLeftMs(reset),-30*MIN);
+  assert.ok(taskProgress(reset).every(p=>!p.doneToday && p.trackedMs===0 && p.targetMs===45*MIN));
+  // The idle allowance is already spent, so work is required straight away.
+  assert.equal(workRequired(reset),true);
+  assert.equal(advanceTracking(reset,T+61*MIN).state.mode,"work");
 });
-check("reset checkpoint cannot replay old time and cancels upcoming alerts", () => {
+check("reset checkpoint cannot replay old time or old alerts", () => {
   const before=actOnTracking(fresh(),{type:"start"},"device-1",T);
   assert.ok(upcomingTrackingEvents(before,T).length>0);
   const reset=actOnTracking(before,{type:"reset"},"device-2",T+40*MIN);
   const restored=parseTracking(JSON.parse(JSON.stringify(reset)));
   assert.deepEqual(restored,reset);
   const projected=advanceTracking(restored,T+80*MIN);
-  near(projected.state.workMs,0); near(projected.state.restMs,0);
-  assert.deepEqual(projected.events,[]); assert.deepEqual(upcomingTrackingEvents(restored,T+40*MIN),[]);
+  near(projected.state.workMs,0);
+  assert.deepEqual(projected.events.map(e=>e.type),["idle-half"]);
+  // Only reminders for the reset day are ahead: idle time is used from the reset on.
+  const upcoming=upcomingTrackingEvents(restored,T+40*MIN);
+  assert.equal(upcoming[0].type,"idle-half"); near(upcoming[0].at,T+75*MIN+1);
   const started=actOnTracking(restored,{type:"start"},"device-2",T+80*MIN);
   near(advanceTracking(started,T+90*MIN).state.workMs,10*MIN);
 });
 check("reset is allowed after cutoff but cannot extend the work day", () => {
   const before=actOnTracking(fresh([task("a")],"08:20"),{type:"start"},"device-1",T);
   const reset=actOnTracking(before,{type:"reset"},"device-1",T+40*MIN);
-  near(reset.workMs,0); near(workBudget(reset),0); assert.equal(reset.endTime,"08:20");
+  near(reset.workMs,0); assert.equal(canTrackWork(reset),false); assert.equal(reset.endTime,"08:20");
   assert.throws(()=>actOnTracking(reset,{type:"start"},"device-1",T+40*MIN),/work day has ended/);
 });
 check("reset handles empty sessions and repeated requests without starting work", () => {
@@ -554,9 +471,10 @@ check("reset handles empty sessions and repeated requests without starting work"
   }
 });
 check("work day ends without tracking beyond the cutoff", () => {
+  // 20 minutes at 3:1 hold 15 of work.
   const s=actOnTracking(fresh([task("a")],"08:20"),{type:"start"},"device-1",T);
   const out=advanceTracking(s,T+80*MIN).state;
-  near(out.workMs,20*MIN); assert.equal(out.mode,"idle");
+  near(out.workMs,15*MIN); assert.equal(out.mode,"idle");
   assert.throws(()=>actOnTracking(out,{type:"start"},"device-1",T+80*MIN),/work day has ended/);
 });
 check("changing deadline checkpoints past time and adjusts future targets", () => {
@@ -574,32 +492,41 @@ check("empty and permanently completed tasks cannot start", () => {
   assert.throws(()=>actOnTracking(fresh([{...task("done"),completed:true}]),{type:"start"},"device-1",T),/No unfinished/);
 });
 check("background projection equals a thousand incremental ticks", () => {
-  const initial=actOnTracking(fresh(),{type:"start"},"device-1",T);
-  const once=advanceTracking(initial,T+8*60*MIN).state;
-  let incremental=initial;
-  for(let i=1;i<=960;i++) incremental=advanceTracking(incremental,T+i*30_000).state;
-  near(incremental.workMs,once.workMs); near(incremental.restMs,once.restMs);
-  for(const id of Object.keys(once.taskMs)) near(incremental.taskMs[id],once.taskMs[id]);
-  assert.equal(incremental.mode,once.mode); assert.equal(incremental.taskId,once.taskId);
+  for (const initial of [actOnTracking(fresh(),{type:"start"},"device-1",T), fresh()]) {
+    const once=advanceTracking(initial,T+8*60*MIN).state;
+    let incremental=initial;
+    for(let i=1;i<=960;i++) incremental=advanceTracking(incremental,T+i*30_000).state;
+    near(incremental.workMs,once.workMs);
+    for(const id of Object.keys(once.taskMs)) near(incremental.taskMs[id],once.taskMs[id]);
+    assert.equal(incremental.mode,once.mode); assert.equal(incremental.taskId,once.taskId);
+  }
 });
 check("notification forecasts match automatic transitions", () => {
   const initial=actOnTracking(fresh(),{type:"start"},"device-1",T);
   assert.deepEqual(upcomingTrackingEvents(initial,T),advanceTracking(initial,dayEnd(initial)).events);
-  assert.ok(upcomingTrackingEvents(initial,T).some(e=>e.type==="rest-complete"));
-  assert.deepEqual(upcomingTrackingEvents(actOnTracking(initial,{type:"pause"},"device-1",T),T),[]);
+  assert.ok(upcomingTrackingEvents(initial,T).some(e=>e.type==="work-complete"));
+  // Paused, the forecast is the idle reminders and the forced work that follows.
+  const paused=actOnTracking(initial,{type:"pause"},"device-1",T);
+  assert.deepEqual(upcomingTrackingEvents(paused,T),advanceTracking(paused,dayEnd(paused)).events);
+  assert.deepEqual(upcomingTrackingEvents(paused,T).slice(0,3).map(e=>e.type),["idle-half","idle-soon","idle-out"]);
 });
-check("account time zone governs midnight and DST", () => {
+check("account time zone governs midnight, DST and the length of the day", () => {
   assert.equal(trackingDay(Date.parse("2026-09-15T02:00:00Z"),"America/Toronto"),"2026-09-14");
   assert.equal(new Date(dayEnd({dayKey:"2026-03-08",endTime:"23:00",timeZone:"America/Toronto"})).toISOString(),"2026-03-09T03:00:00.000Z");
   assert.equal(new Date(dayEnd({dayKey:"2026-11-01",endTime:"23:00",timeZone:"America/Toronto"})).toISOString(),"2026-11-02T04:00:00.000Z");
+  // 01:00–04:00 on the spring-forward night is two real hours, so one of work at 1:1.
+  const spring={dayKey:"2026-03-08",endTime:"04:00",timeZone:"America/Toronto",plan:{startTime:"01:00",workParts:1,idleParts:1}};
+  assert.equal(new Date(dayStart(spring)).toISOString(),"2026-03-08T06:00:00.000Z");
+  assert.deepEqual(dayBudget(spring),{workMs:60*MIN,idleMs:60*MIN});
 });
 check("clock rollback cannot subtract or duplicate tracked time", () => {
   const s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+20*MIN).state;
   assert.deepEqual(advanceTracking(s,T).state,s);
 });
 check("corrupt guest counters are rejected", () => {
-  assert.equal(parseTracking({...fresh(),workMs:-1}),null); assert.equal(parseTracking({...fresh(),cycleWorkMs:Infinity}),null);
+  assert.equal(parseTracking({...fresh(),workMs:-1}),null); assert.equal(parseTracking({...fresh(),taskMs:{first:Infinity}}),null);
   assert.equal(parseTracking({...fresh(),endTime:"25:99"}),null); assert.equal(parseTracking({...fresh(),timeZone:"not/a/zone"}),null);
+  assert.equal(parseTracking({...fresh(),mode:"nap"}),null);
   assert.ok(parseTracking(fresh()));
 });
 check("reserved property names can be valid task ids without corrupting counters", () => {
@@ -607,9 +534,10 @@ check("reserved property names can be valid task ids without corrupting counters
   near(s.taskMs.__proto__,MIN); near(s.workMs,MIN);
 });
 
+console.log("== water filling and the minimum ==");
 check("overruns cannot book more than the 16 minutes left, and slivers go to the tasks above", () => {
   const list=[...["chemistry","english","physics","yanvpn"].map(id=>task(id,"2026-09-15")),task("isu","2026-09-17"),task("ee","2026-09-17")];
-  const s={...fresh(list,"08:16"),taskMs:{chemistry:41*MIN,english:24*MIN,physics:20*MIN,yanvpn:5*MIN},workMs:90*MIN,cycleWorkMs:28*MIN};
+  const s={...day(list,106),taskMs:{chemistry:41*MIN,english:24*MIN,physics:20*MIN,yanvpn:5*MIN},workMs:90*MIN};
   const before=JSON.stringify(s), p=taskProgress(s), get=id=>p.find(p=>p.task.id===id);
   near(p.reduce((sum,p)=>sum+p.remainingMs,0),16*MIN);
   // Without the minimum these would get 7.6, 4.2 and 4.2 minutes: days of
@@ -621,54 +549,19 @@ check("overruns cannot book more than the 16 minutes left, and slivers go to the
   assert.equal(JSON.stringify(s),before,"rebalancing never rewrites logged time");
 });
 check("remaining allocation catches up underworked tasks instead of splitting blindly", () => {
-  const s={...fresh([task("a"),task("b")],"09:00"),taskMs:{a:14*MIN,b:0},workMs:14*MIN,cycleWorkMs:14*MIN};
+  const s={...day([task("a"),task("b")],74),taskMs:{a:14*MIN,b:0},workMs:14*MIN};
   const p=taskProgress(s); near(p[0].remainingMs,23*MIN); near(p[1].remainingMs,37*MIN);
   near(p[0].targetMs,p[1].targetMs);
 });
 check("unequal weights preserve proportional final totals when feasible", () => {
-  const s={...fresh([task("a"),task("b","2026-09-15")],"10:00"),taskMs:{a:9*MIN,b:6*MIN},workMs:15*MIN,cycleWorkMs:15*MIN};
+  const s={...day([task("a"),task("b","2026-09-15")],105),taskMs:{a:9*MIN,b:6*MIN},workMs:15*MIN};
   const p=taskProgress(s); near(p[0].targetMs,70*MIN); near(p[1].targetMs,35*MIN);
   near(p[0].remainingMs+p[1].remainingMs,90*MIN);
 });
 check("overruns never inflate later tasks and removed/completed work stays in history", () => {
-  const s={...fresh([task("a"),task("b"),{...task("done"),completed:true}],"08:35"),taskMs:{a:40*MIN,b:0,done:15*MIN,deleted:30*MIN},workMs:85*MIN,cycleWorkMs:20*MIN};
+  const s={...day([task("a"),task("b"),{...task("done"),completed:true}],120),taskMs:{a:40*MIN,b:0,done:15*MIN,deleted:30*MIN},workMs:85*MIN};
   const p=taskProgress(s); near(p[0].remainingMs,0); near(p[1].remainingMs,35*MIN); near(p[2].remainingMs,0);
   near(p[0].targetMs,40*MIN); near(p[2].targetMs,15*MIN); near(s.workMs,85*MIN);
-});
-check("16 wall minutes with a break due in 5 only allocate 5 work minutes", () => {
-  const s={...fresh(tasks,"08:16"),cycleWorkMs:85*MIN,workMs:85*MIN,taskMs:{first:85*MIN}};
-  near(remainingWorkTime(s),5*MIN);
-  near(taskProgress(s).reduce((sum,p)=>sum+p.remainingMs,0),5*MIN);
-  const end=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),T+16*MIN).state;
-  near(end.workMs,90*MIN); near(end.restMs,11*MIN); assert.equal(end.mode,"idle");
-});
-check("active and paused partial breaks reserve only their unserved rest", () => {
-  for(const mode of ["rest","idle"]) {
-    const s={...fresh(tasks,"08:16"),mode,cycleWorkMs:90*MIN,cycleRestMs:20*MIN,workMs:90*MIN,restMs:20*MIN,taskMs:{first:90*MIN}};
-    near(remainingWorkTime(s),6*MIN);
-    near(taskProgress(s).reduce((sum,p)=>sum+p.remainingMs,0),6*MIN);
-  }
-});
-check("finishing a break does not reserve the same break again", () => {
-  const s={...fresh([task("a")],"08:42"),mode:"rest",cycleWorkMs:90*MIN,workMs:90*MIN,taskMs:{a:90*MIN}};
-  const resumed=advanceTracking(s,T+30*MIN).state;
-  assert.equal(resumed.mode,"work"); near(remainingWorkTime(resumed),12*MIN);
-  const end=advanceTracking(s,T+42*MIN).state;
-  near(end.workMs,102*MIN); near(end.restMs,30*MIN);
-});
-check("work capacity agrees with a separate minute-by-minute rest simulation", () => {
-  for(const worked of [0,30,85,89,90]) for(const rested of (worked===90?[0,10,29]:[0])) {
-    for(const minutes of [0,1,5,16,30,89,90,91,119,120,121,239,600,900]) {
-      const now=dayEnd(fresh())-minutes*MIN;
-      const s={...fresh(),cursor:now,cycleWorkMs:worked*MIN,cycleRestMs:rested*MIN};
-      let work=worked, rest=rested, available=0;
-      for(let m=0;m<minutes;m++) {
-        if(work===90) { rest++; if(rest===30) { work=0; rest=0; } }
-        else { work++; available++; }
-      }
-      near(remainingWorkTime(s),available*MIN);
-    }
-  }
 });
 check("legacy running sessions checkpoint the old elapsed allocation before upgrading", () => {
   const legacy={...fresh([task("a"),task("b")],"10:00"),mode:"work",taskId:"a",controllerId:"old-device"};
@@ -680,13 +573,13 @@ check("legacy running sessions checkpoint the old elapsed allocation before upgr
   const later=advanceTracking(upgraded,T+70*MIN).state;
   near(later.taskMs.a,60*MIN); near(later.taskMs.b,10*MIN);
   const end=advanceTracking(upgraded,T+120*MIN).state;
-  near(end.workMs,90*MIN); near(end.restMs,30*MIN);
+  near(end.workMs,90*MIN);
 });
 check("legacy paused counters are preserved and allocation upgrades are idempotent", () => {
-  const legacy={...fresh(),taskMs:{first:100*MIN},workMs:100*MIN,restMs:30*MIN,cycleWorkMs:10*MIN};
+  const legacy={...fresh(),taskMs:{first:100*MIN},workMs:100*MIN};
   delete legacy.allocationVersion;
   const upgraded=advanceTracking(legacy,T+MIN).state;
-  assert.deepEqual(upgraded.taskMs,legacy.taskMs); near(upgraded.workMs,legacy.workMs); near(upgraded.restMs,legacy.restMs);
+  assert.deepEqual(upgraded.taskMs,legacy.taskMs); near(upgraded.workMs,legacy.workMs);
   assert.deepEqual(advanceTracking(upgraded,T+MIN).state,upgraded);
   assert.equal(parseTracking({...upgraded,allocationVersion:99}),null);
 });
@@ -700,7 +593,7 @@ check("priority multiplies a task's share of work time", () => {
 check("raising a priority rebalances future targets and keeps earned time", () => {
   const s = advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+30*MIN).state;
   const raised = tasks.map(t => t.id==="second" ? {...t, priority:"high"} : t);
-  assert.notEqual(trackingConfigKey(raised,"18:00"), trackingConfigKey(tasks,"18:00"));
+  assert.notEqual(trackingConfigKey(raised,"18:00",PLAN), trackingConfigKey(tasks,"18:00",PLAN));
   // No priority and an explicit low are the same configuration: no needless checkpoint.
   assert.equal(trackingConfigKey(tasks.map(t => ({...t, priority:"low"})),"18:00"), trackingConfigKey(tasks,"18:00"));
   const next = configureTracking(s, raised, "18:00", T+30*MIN);
@@ -713,14 +606,13 @@ check("snapshots from before priorities load; unknown priorities are rejected", 
   assert.ok(parseTracking(fresh([{...task("a"), priority:"medium"}])));
   assert.equal(parseTracking(fresh([{...task("a"), priority:"urgent"}])), null);
 });
-// 08:00 to 18:00 leaves 450 minutes of work after breaks.
 check("a task whose day would total under 30 minutes is skipped and its time goes to the rest", () => {
   assert.equal(MIN_DAILY_TARGET_MS, 30*MIN);
   const s=fresh([task("a"),task("b"),task("far","2026-11-13")]);
   const p=taskProgress(s), far=p[2];
   assert.equal(far.skipped,true); assert.equal(far.remainingMs,0); assert.equal(far.targetMs,0); assert.equal(far.doneToday,true); assert.equal(far.probability,0);
   near(p[0].remainingMs,225*MIN); near(p[1].remainingMs,225*MIN); near(p[0].probability,.5); near(p[1].probability,.5);
-  near(p.reduce((sum,p)=>sum+p.remainingMs,0),remainingWorkTime(s));
+  near(p.reduce((sum,p)=>sum+p.remainingMs,0),workLeftMs(s));
   // Start never lands on it, it cannot be tracked by hand, and a full day of work gives it nothing.
   assert.throws(()=>actOnTracking(s,{type:"start",taskId:"far"},"device-1",T),/No unfinished daily target/);
   const end=advanceTracking(actOnTracking(s,{type:"start"},"device-1",T),dayEnd(s)).state;
@@ -735,10 +627,10 @@ check("exactly 30 minutes is kept; just under is skipped", () => {
   assert.equal(gone.skipped,true);
 });
 check("a share within a millisecond of 30 minutes is kept and reads as 30m", () => {
-  // 40 minutes on "a" plus 2 ms elsewhere: 49:59.998 of work left, and a
-  // 1:2 split of the stretch gives "b" 29:59.99933. The rule keeps it, so
-  // the display must not floor it to 29m.
-  const s={...fresh([task("a"),task("b","2026-09-15")],"09:00"),cycleWorkMs:40*MIN+2,workMs:40*MIN+2,taskMs:{a:40*MIN,other:2}};
+  // 40 minutes on "a" plus 2 ms elsewhere leave 49:59.998 of a 90-minute goal,
+  // and a 2:1 split gives "b" 29:59.99933. The rule keeps it, so the display
+  // must not floor it to 29m.
+  const s={...day([task("a"),task("b","2026-09-15")],90),workMs:40*MIN+2,taskMs:{a:40*MIN,other:2}};
   const b=taskProgress(s)[1];
   assert.equal(b.skipped,false); assert.ok(b.targetMs<30*MIN&&b.targetMs>30*MIN-1);
   assert.equal(formatDuration(b.targetMs),"30m"); assert.equal(formatDuration(b.remainingMs),"30m");
@@ -747,62 +639,65 @@ check("a share within a millisecond of 30 minutes is kept and reads as 30m", () 
 check("among equal weights, the task lowest on the list is skipped first", () => {
   // Three weight-2 tasks share 60 minutes, 20 each. "tomorrow" is medium
   // priority, so it ties with the two due today but sits below them.
-  const p=taskProgress(fresh([task("x"),{...task("tomorrow","2026-09-15"),priority:"medium"},task("z")],"09:00"));
+  const p=taskProgress(day([task("x"),{...task("tomorrow","2026-09-15"),priority:"medium"},task("z")],60));
   assert.deepEqual(p.map(p=>p.skipped),[false,true,false]);
   near(p[0].remainingMs,30*MIN); near(p[2].remainingMs,30*MIN);
 });
 check("tied tasks drop one at a time, lowest on the list first, until the rest reach 30 minutes", () => {
   // 60 minutes over three equal tasks is 20 each. Dropping one gives 30 each.
-  const p=taskProgress(fresh([task("a"),task("b"),task("c")],"09:00"));
+  const p=taskProgress(day([task("a"),task("b"),task("c")],60));
   assert.deepEqual(p.map(p=>p.skipped),[false,false,true]);
   near(p[0].remainingMs,30*MIN); near(p[1].remainingMs,30*MIN);
 });
 check("the most important task is never skipped, so short days are not wasted", () => {
-  const s=fresh([task("a"),task("tomorrow","2026-09-15")],"08:20");
+  const s=day([task("a"),task("tomorrow","2026-09-15")],20);
   const p=taskProgress(s);
   assert.equal(p[0].skipped,false); near(p[0].remainingMs,20*MIN); assert.equal(p[1].skipped,true);
   assert.equal(actOnTracking(s,{type:"start"},"device-1",T).taskId,"a");
 });
 check("skipped time goes only to more urgent tasks, never to less urgent ones", () => {
-  // "mid" would get all 20 minutes (a 20-minute day) and is skipped. "light"
-  // sits below it, so none of that time may go there, even though light is
-  // nearer its share than "heavy", which is far over its own.
+  // "mid" would get all 20 minutes left (a 20-minute day) and is skipped.
+  // "light" sits below it, so none of that time may go there, even though
+  // light is nearer its share than "heavy", which is far over its own.
   const list=[task("light","2026-09-16"),task("mid","2026-09-15"),task("heavy")];
-  const s={...fresh(list,"08:20"),taskMs:{light:40*MIN,heavy:300*MIN},workMs:340*MIN};
+  const s={...day(list,360),taskMs:{light:40*MIN,heavy:300*MIN},workMs:340*MIN};
   const p=taskProgress(s);
   assert.equal(p[1].skipped,true); near(p[0].remainingMs,0); near(p[2].remainingMs,20*MIN);
 });
-check("30 logged minutes protect a task, and nothing reads as skipped once the day is over", () => {
+check("30 logged minutes protect a task, and nothing reads as skipped once the work is done", () => {
   const s={...fresh([task("a"),task("far","2026-11-13")]),taskMs:{far:35*MIN},workMs:35*MIN};
   const far=taskProgress(s)[1];
   assert.equal(far.skipped,false); assert.equal(far.doneToday,true); near(far.targetMs,35*MIN);
   const over=advanceTracking(fresh([task("a"),task("b"),task("far","2026-11-13")]),dayEnd(fresh())).state;
-  assert.ok(taskProgress(over).every(p=>!p.skipped));
+  near(workLeftMs(over),0); assert.ok(taskProgress(over).every(p=>!p.skipped));
 });
-check("randomized overrun cases conserve remaining time and finish with projected totals", () => {
+check("randomized days conserve work time and finish with projected totals, whether started or forced", () => {
   let seed=73191;
   const random=()=>{ seed=(Math.imul(seed,1664525)+1013904223)>>>0; return seed/2**32; };
   for(let trial=0;trial<300;trial++) {
     const list=Array.from({length:1+Math.floor(random()*12)},(_,i)=>task(`task-${i}`,`2026-09-${String(14+Math.floor(random()*12)).padStart(2,"0")}`));
-    const s=fresh(list);
-    s.cursor=T+Math.floor(random()*580)*MIN;
-    s.cycleWorkMs=Math.floor(random()*91)*MIN;
-    s.cycleRestMs=s.cycleWorkMs===WORK_CYCLE_MS?Math.floor(random()*30)*MIN:0;
-    s.mode=s.cycleWorkMs===WORK_CYCLE_MS?"rest":"idle";
-    for(const t of list) s.taskMs[t.id]=Math.floor(random()*120)*MIN;
-    s.workMs=Object.values(s.taskMs).reduce((a,b)=>a+b,0);
-    const p=taskProgress(s), available=remainingWorkTime(s);
+    const plan={startTime:"08:00",workParts:1+Math.floor(random()*4),idleParts:1+Math.floor(random()*4)};
+    const s=createTracking(list,"18:00","UTC",T,plan,random()<.3,random()<.7);
+    const { workMs: goal, idleMs: allowance }=dayBudget(s);
+    // A consistent state: some work and some idle time already used, never more idle than allowed.
+    const worked=Math.floor(random()*goal/MIN)*MIN, idled=Math.floor(random()*allowance/MIN)*MIN;
+    s.cursor=T+worked+idled;
+    let left=worked;
+    for(const t of list) { const share=Math.min(left,Math.floor(random()*120)*MIN); s.taskMs[t.id]=share; left-=share; }
+    s.taskMs[list[0].id]+=left; s.workMs=worked;
+    const p=taskProgress(s), available=workLeftMs(s);
     near(p.reduce((sum,p)=>sum+p.remainingMs,0),available);
-    assert.ok(available<=dayEnd(s)-s.cursor);
-    const unfinished=p.filter(p=>!p.doneToday);
+    near(available+idleLeftMs(s),dayEnd(s)-s.cursor);
     for(const entry of p) { assert.ok(entry.targetMs>=entry.trackedMs); assert.ok(entry.remainingMs>=0); }
+    const unfinished=p.filter(p=>!p.doneToday);
     for(const entry of unfinished) near(entry.targetMs/entry.weight,unfinished[0].targetMs/unfinished[0].weight);
-    const start=actOnTracking(s,{type:"start"},"test-device",s.cursor);
-    const end=advanceTracking(start,dayEnd(start)).state;
-    assert.ok(Math.abs(end.workMs-s.workMs-available)<0.01,JSON.stringify({trial,available,start,end,p}));
-    const endProgress=taskProgress(end);
-    for(const entry of p) near(endProgress.find(p=>p.task.id===entry.task.id).trackedMs,entry.targetMs);
-    assert.ok(endProgress.every(p=>p.doneToday));
+    for(const begin of [s, canTrackWork(s)&&unfinished.length ? actOnTracking(s,{type:"start"},"test-device",s.cursor) : s]) {
+      const end=advanceTracking(begin,dayEnd(begin)).state;
+      assert.ok(Math.abs(end.workMs-s.workMs-available)<0.01,JSON.stringify({trial,available,plan}));
+      const endProgress=taskProgress(end);
+      for(const entry of p) near(endProgress.find(p=>p.task.id===entry.task.id).trackedMs,entry.targetMs);
+      assert.ok(endProgress.every(p=>p.doneToday)); assert.equal(end.mode,"idle");
+    }
   }
 });
 
@@ -811,56 +706,62 @@ const pg=new PGlite();
 setSql({ query:async(text,params=[]) => (await pg.query(text,params)).rows, transaction:async statements=>pg.transaction(async tx=>{ for(const s of statements) await tx.query(s.text,s.params??[]); }) });
 await ensureSchema();
 for (const id of ["timer-alice","timer-bob"]) await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)",[id,new Date(T).toISOString()]);
-let shared=await commandTracking("timer-alice",0,{type:"start"},"device-1","UTC",tasks,"18:00",DEFAULT_REST,T);
+await saveState("timer-alice",{tasks,recommendation:null,schedule:null,endTime:"18:00",plan:PLAN});
+let shared=await commandTracking("timer-alice",0,{type:"start"},"device-1","UTC",tasks,"18:00",PLAN,T);
 assert.equal(shared.revision,1); count++;
 const races=await Promise.allSettled([
-  commandTracking("timer-alice",1,{type:"start",taskId:"second"},"device-2","UTC",tasks,"18:00",DEFAULT_REST,T+10*MIN),
-  commandTracking("timer-alice",1,{type:"pause"},"device-3","UTC",tasks,"18:00",DEFAULT_REST,T+10*MIN),
+  commandTracking("timer-alice",1,{type:"start",taskId:"second"},"device-2","UTC",tasks,"18:00",PLAN,T+10*MIN),
+  commandTracking("timer-alice",1,{type:"pause"},"device-3","UTC",tasks,"18:00",PLAN,T+10*MIN),
 ]);
 assert.equal(races.filter(r=>r.status==="fulfilled").length,1); assert.ok(races.find(r=>r.status==="rejected").reason instanceof TrackingConflict); count++;
 shared=await loadTracking("timer-alice"); near(shared.workMs,10*MIN); assert.equal(shared.revision,2); count++;
 assert.equal(await loadTracking("timer-bob"),null); count++;
-// Old clients still send whole-state PUTs. They cannot overwrite any timer fields.
-await saveState("timer-alice",{tasks,recommendation:null,schedule:null,endTime:"18:00"});
+// Old clients still send whole-state PUTs without a plan. The stored plan is
+// kept, and they cannot overwrite any timer fields.
+await saveState("timer-alice",{tasks,recommendation:null,schedule:null,endTime:"18:00"},{plan:true});
+assert.deepEqual((await loadState("timer-alice")).plan,PLAN);
 assert.deepEqual(await loadTracking("timer-alice"),shared); count++;
-await configureAccountTracking("timer-alice",tasks.slice(1),"18:00",DEFAULT_REST,T+20*MIN);
+await configureAccountTracking("timer-alice",tasks.slice(1),"18:00",PLAN,T+20*MIN);
 const changed=await loadTracking("timer-alice"); assert.ok(changed.revision>shared.revision); assert.deepEqual(changed.tasks,tasks.slice(1)); count++;
 assert.ok((await loadState("timer-alice")).tasks.length===3); count++;
 // A reset uses the same revision-checked command path as every other client.
 const accountBeforeReset=await loadState("timer-alice");
-const reset=await commandTracking("timer-alice",changed.revision,{type:"reset"},"device-reset","America/Toronto",tasks,"18:00",DEFAULT_REST,T+25*MIN);
+const reset=await commandTracking("timer-alice",changed.revision,{type:"reset"},"device-reset","America/Toronto",tasks,"18:00",PLAN,T+25*MIN);
 assert.equal(reset.revision,changed.revision+1); assert.equal(reset.timeZone,"UTC");
 assert.equal(reset.mode,"idle"); assert.equal(reset.controllerId,"device-reset");
-assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0); near(reset.restMs,0); near(reset.cycleWorkMs,0); near(reset.cycleRestMs,0);
+assert.deepEqual(reset.taskMs,{}); near(reset.workMs,0);
 assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
 for(const type of ["start","pause","reset"]) {
-  await assert.rejects(commandTracking("timer-alice",changed.revision,{type},"stale-device","UTC",tasks,"18:00",DEFAULT_REST,T+26*MIN),TrackingConflict);
+  await assert.rejects(commandTracking("timer-alice",changed.revision,{type},"stale-device","UTC",tasks,"18:00",PLAN,T+26*MIN),TrackingConflict);
 }
 assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
 assert.deepEqual(await loadState("timer-alice"),accountBeforeReset);
 assert.equal(await loadTracking("timer-bob"),null); count++;
 await saveState("timer-alice",accountBeforeReset);
 assert.deepEqual(await loadTracking("timer-alice"),reset); count++;
-const resumed=await commandTracking("timer-alice",reset.revision,{type:"start"},"device-3","UTC",tasks,"18:00",DEFAULT_REST,T+30*MIN);
+const resumed=await commandTracking("timer-alice",reset.revision,{type:"start"},"device-3","UTC",tasks,"18:00",PLAN,T+30*MIN);
 near(advanceTracking(resumed,T+40*MIN).state.workMs,10*MIN);
 assert.equal(resumed.taskId,"first"); count++;
-// A priority change saved from any client reconfigures the shared timer.
+// Priority and plan changes saved from any client reconfigure the shared timer.
 await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)",["timer-carol",new Date(T).toISOString()]);
-const carolTimer=await commandTracking("timer-carol",0,{type:"start"},"device-1","UTC",tasks,"18:00",DEFAULT_REST,T);
-await saveState("timer-carol",{tasks:tasks.map(t=>t.id==="later"?{...t,priority:"high"}:t),recommendation:null,schedule:null,endTime:"18:00"});
+await saveState("timer-carol",{tasks,recommendation:null,schedule:null,endTime:"18:00",plan:PLAN});
+const carolTimer=await commandTracking("timer-carol",0,{type:"start"},"device-1","UTC",tasks,"18:00",PLAN,T);
+await saveState("timer-carol",{tasks:tasks.map(t=>t.id==="later"?{...t,priority:"high"}:t),recommendation:null,schedule:null,endTime:"18:00",plan:PLAN});
 const carolAfter=await loadTracking("timer-carol");
 assert.ok(carolAfter.revision>carolTimer.revision); assert.equal(carolAfter.tasks.find(t=>t.id==="later").priority,"high"); count++;
-// A rest change saved from any client reaches the shared timer too.
-await saveState("timer-carol",{tasks,recommendation:null,schedule:null,endTime:"18:00",rest:{enabled:true,workMinutes:50,restMinutes:10}});
-assert.deepEqual(restSettings(await loadTracking("timer-carol")),{enabled:true,workMinutes:50,restMinutes:10}); count++;
+const evenPlan={startTime:"08:00",workParts:1,idleParts:1};
+await saveState("timer-carol",{tasks,recommendation:null,schedule:null,endTime:"18:00",plan:evenPlan});
+assert.deepEqual(dayPlan(await loadTracking("timer-carol")),evenPlan);
+assert.deepEqual((await loadState("timer-carol")).plan,evenPlan); count++;
 await pg.query("DELETE FROM users WHERE id = $1",["timer-carol"]);
 // A synced toggle changes the shared policy, and legacy saves cannot turn it off.
 await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)", ["timer-unweighted", new Date(T).toISOString()]);
 const oldNow = Date.now;
 try {
   Date.now = () => T + 10 * MIN;
-  const initial = await commandTracking("timer-unweighted", 0, { type: "start" }, "device-1", "UTC", tasks, "18:00", DEFAULT_REST, T);
-  const prefs = { tasks, recommendation: null, schedule: null, endTime: "18:00", rest: DEFAULT_REST, unweighted: true };
+  await saveState("timer-unweighted", { tasks, recommendation: null, schedule: null, endTime: "18:00", plan: PLAN });
+  const initial = await commandTracking("timer-unweighted", 0, { type: "start" }, "device-1", "UTC", tasks, "18:00", PLAN, T);
+  const prefs = { tasks, recommendation: null, schedule: null, endTime: "18:00", plan: PLAN, unweighted: true };
   await saveState("timer-unweighted", prefs);
   const synced = await loadTracking("timer-unweighted");
   assert.equal((await loadState("timer-unweighted")).unweighted, true);
@@ -880,9 +781,11 @@ await pg.query("INSERT INTO users (id,username,username_lower,password_hash,crea
 try {
   Date.now = () => T + 8 * MIN;
   assert.equal((await loadState("timer-minimum")).minimumEnabled, true);
+  // 08:00–08:20 at 3:1 holds 15 minutes of work.
   const list = [task("a"), task("b")];
-  const initial = await commandTracking("timer-minimum", 0, { type: "start" }, "device-1", "UTC", list, "08:20", DEFAULT_REST, T);
-  const prefs = { tasks: list, recommendation: null, schedule: null, endTime: "08:20", rest: DEFAULT_REST, unweighted: true, minimumEnabled: false };
+  await saveState("timer-minimum", { tasks: list, recommendation: null, schedule: null, endTime: "08:20", plan: PLAN });
+  const initial = await commandTracking("timer-minimum", 0, { type: "start" }, "device-1", "UTC", list, "08:20", PLAN, T);
+  const prefs = { tasks: list, recommendation: null, schedule: null, endTime: "08:20", plan: PLAN, unweighted: true, minimumEnabled: false };
   await saveState("timer-minimum", prefs);
   const synced = await loadTracking("timer-minimum");
   assert.equal((await loadState("timer-minimum")).minimumEnabled, false);
@@ -905,7 +808,7 @@ try {
   await saveState("timer-minimum", { ...prefs, minimumEnabled: true }, { minimumMinutes: true });
   assert.equal((await loadState("timer-minimum")).minimumMinutes, 5);
   assert.deepEqual(await loadTracking("timer-minimum"), custom); count++;
-  const paused = await commandTracking("timer-minimum", custom.revision, { type: "pause" }, "device-1", "UTC", list, "08:20", DEFAULT_REST, Date.now(), true, true, 5);
+  const paused = await commandTracking("timer-minimum", custom.revision, { type: "pause" }, "device-1", "UTC", list, "08:20", PLAN, Date.now(), true, true, 5);
   assert.equal(paused.minimumMinutes, 5); assert.deepEqual(paused.taskMs, custom.taskMs); count++;
 } finally { Date.now = oldNow; }
 await pg.query("DELETE FROM users WHERE id = $1", ["timer-minimum"]);
@@ -921,6 +824,12 @@ near(migrated.taskMs.a,60*MIN); near(migrated.taskMs.b??0,0);
 assert.deepEqual(await loadTracking("timer-alice"),migrated); count++;
 assert.deepEqual(await readAccountTracking("timer-alice",T+65*MIN),migrated);
 near(advanceTracking(await loadTracking("timer-alice"),T+65*MIN).state.taskMs.b,5*MIN); count++;
+// A timer stored by the break model loads on the server as idle, with its work.
+const breakEra={...fresh(),revision:migrated.revision,mode:"rest",workMs:90*MIN,taskMs:{first:90*MIN},restMs:5*MIN,cycleWorkMs:90*MIN,cycleRestMs:5*MIN};
+delete breakEra.plan;
+await pg.query("UPDATE tracking SET state=$1 WHERE user_id=$2",[JSON.stringify(breakEra),"timer-alice"]);
+const loaded=await loadTracking("timer-alice");
+assert.equal(loaded.mode,"idle"); near(loaded.workMs,90*MIN); assert.equal("restMs" in loaded,false); count++;
 await pg.query("DELETE FROM users WHERE id = $1",["timer-alice"]); assert.equal(await loadTracking("timer-alice"),null); count++;
 await pg.close(); setSql(null);
 console.log(`${count} tracking scenarios passed`);

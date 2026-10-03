@@ -1,5 +1,5 @@
 import { sanitizeEndTime, sanitizeSchedule, sanitizeState } from "./app-state";
-import { sanitizeRestSettings } from "./rest";
+import { sanitizePlan } from "./plan";
 import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 import { AppState, Recommendation, Task } from "./types";
 import { parseTracking } from "./tracking";
@@ -11,7 +11,7 @@ const KEYS = {
   recommendation: "yantasks.recommendation.v1",
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
-  rest: "yantasks.rest.v1",
+  plan: "yantasks.plan.v1",
   unweighted: "yantasks.unweighted.v1",
   minimumEnabled: "yantasks.minimumEnabled.v1",
   minimumMinutes: "yantasks.minimumMinutes.v1",
@@ -19,6 +19,8 @@ const KEYS = {
 
 // Retain the retired key only for clearing guest data after migration.
 const LEGACY_REST_MODE_KEY = "yantasks.restMode.v1";
+// The break settings the day plan replaced; cleared with the rest of guest data.
+const LEGACY_REST_KEY = "yantasks.rest.v1";
 
 function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -53,7 +55,7 @@ export const localStore = {
       recommendation: read<Recommendation | null>(KEYS.recommendation, null),
       schedule: sanitizeSchedule(read<unknown>(KEYS.schedule, null)),
       endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),
-      rest: sanitizeRestSettings(read<unknown>(KEYS.rest, null)),
+      plan: sanitizePlan(read<unknown>(KEYS.plan, null)),
       unweighted: read<unknown>(KEYS.unweighted, false) === true,
       minimumEnabled: read<unknown>(KEYS.minimumEnabled, true) !== false,
       minimumMinutes: sanitizeMinimumMinutes(read<unknown>(KEYS.minimumMinutes, DEFAULT_MINIMUM_MINUTES)),
@@ -65,7 +67,7 @@ export const localStore = {
     write(KEYS.recommendation, state.recommendation);
     write(KEYS.schedule, state.schedule);
     write(KEYS.endTime, state.endTime);
-    write(KEYS.rest, state.rest);
+    write(KEYS.plan, state.plan);
     write(KEYS.unweighted, state.unweighted);
     write(KEYS.minimumEnabled, state.minimumEnabled);
     write(KEYS.minimumMinutes, state.minimumMinutes);
@@ -74,7 +76,7 @@ export const localStore = {
   /** Called after a successful migration — the data now lives in the account. */
   clear(): void {
     if (typeof window === "undefined") return;
-    for (const key of [...Object.values(KEYS), LEGACY_REST_MODE_KEY, "yantasks.tracking.v1"]) {
+    for (const key of [...Object.values(KEYS), LEGACY_REST_MODE_KEY, LEGACY_REST_KEY, "yantasks.tracking.v1"]) {
       try {
         window.localStorage.removeItem(key);
       } catch {

@@ -11,12 +11,12 @@ import {
 } from "react-native";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "../lib/app-state";
-import { DEFAULT_REST, RestSettings } from "../lib/rest";
+import { DayPlan, DEFAULT_PLAN } from "../lib/plan";
 import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
-import { restOwed, taskProgress } from "../lib/tracking";
+import { canTrackWork, taskProgress } from "../lib/tracking";
 import { useTracking } from "./src/useTracking";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
@@ -50,7 +50,7 @@ function YanTasks() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
-  const [rest, setRest] = useState<RestSettings>({ ...DEFAULT_REST });
+  const [plan, setPlan] = useState<DayPlan>({ ...DEFAULT_PLAN });
   const [unweighted, setUnweighted] = useState(false);
   const [minimumEnabled, setMinimumEnabled] = useState(true);
   const [minimumMinutes, setMinimumMinutes] = useState(30);
@@ -77,7 +77,7 @@ function YanTasks() {
     setRecommendation(state.recommendation);
     setSchedule(state.schedule);
     setEndTime(state.endTime);
-    setRest(state.rest);
+    setPlan(state.plan);
     setUnweighted(state.unweighted);
     setMinimumEnabled(state.minimumEnabled);
     setMinimumMinutes(state.minimumMinutes);
@@ -174,7 +174,7 @@ function YanTasks() {
     // Ignore the render in between swapping stores.
     if (loadedForRef.current !== key) return;
 
-    const state: AppState = { tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes };
+    const state: AppState = { tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes };
     const serialized = JSON.stringify(state);
     if (serialized === lastSavedRef.current) return;
 
@@ -187,7 +187,7 @@ function YanTasks() {
     pendingRef.current = state;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
-  }, [tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes, ready, account, flushRemote]);
+  }, [tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes, ready, account, flushRemote]);
 
   /**
    * Pull the account's copy back down, so edits made on the website (or another
@@ -271,7 +271,7 @@ function YanTasks() {
   /* ---------- accounts ---------- */
 
   const stateRef = useRef<AppState>(emptyState());
-  stateRef.current = { tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes };
+  stateRef.current = { tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes };
 
   const [guestSnapshot, setGuestSnapshot] = useState<AppState>(emptyState());
   useEffect(() => {
@@ -381,9 +381,9 @@ function YanTasks() {
     await flushRemote();
     if (pendingRef.current || syncingRef.current) throw new Error("Wait for your task changes to sync, then try again.");
   }, [account, flushRemote]);
-  const tracker = useTracking(tasks, endTime, rest, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
+  const tracker = useTracking(tasks, endTime, plan, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
   const today = tracker.state.dayKey;
-  const entries = taskProgress({ ...tracker.state, tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes });
+  const entries = taskProgress({ ...tracker.state, tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes });
   const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
   const maxProbability = Math.max(0, ...entries.map(e => e.probability));
   useEffect(() => {
@@ -506,7 +506,7 @@ function YanTasks() {
           </Banner>
         )}
 
-        <TrackingCard tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} rest={rest} onRestChange={setRest} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
+        <TrackingCard tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} plan={plan} onPlanChange={setPlan} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
 
         <Card>
           <CardHead
@@ -525,7 +525,7 @@ function YanTasks() {
               maxProbability={maxProbability}
               progress={entries}
               activeId={tracker.state.taskId}
-              trackingDisabled={!tracker.ready || tracker.busy || restOwed(tracker.state)}
+              trackingDisabled={!tracker.ready || tracker.busy || !canTrackWork(tracker.state)}
               onTrack={id => void tracker.command({ type: "start", taskId: id })}
               onToggle={toggleTask}
               onEdit={setEditing}

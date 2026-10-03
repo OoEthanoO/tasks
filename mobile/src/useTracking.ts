@@ -52,7 +52,7 @@ export const useTracking = createTrackingHook(React, {
   },
   enableNotifications: async () => {
     if (Platform.OS === "web") return "Use the native app for phone alerts";
-    if (Platform.OS === "android") await Notifications.setNotificationChannelAsync("work-timer", { name: "Task and rest timer", importance: Notifications.AndroidImportance.HIGH, sound: "default" });
+    if (Platform.OS === "android") await Notifications.setNotificationChannelAsync("work-timer", { name: "Work timer", importance: Notifications.AndroidImportance.HIGH, sound: "default" });
     const permission = await Notifications.requestPermissionsAsync();
     scheduledFingerprint = "";
     return permissionLabel(permission);

@@ -6,7 +6,9 @@ const { createTracking } = require("../.test-build/tracking.js");
 
 // Exercise the shared hook through its injected hook/adapter boundary without
 // adding another React renderer (web and mobile use separate React versions).
-function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true, workMinutes: 90, restMinutes: 30 }, unweighted = false, minimumEnabled = true, minimumMinutes = 30 } = {}) {
+// 08:00–18:00 at 3:1 holds 450 minutes of work, matching the timer tests.
+const PLAN = { startTime: "08:00", workParts: 3, idleParts: 1 };
+function mount(adapter, { tasks = [], endTime = "23:00", plan = PLAN, unweighted = false, minimumEnabled = true, minimumMinutes = 30 } = {}) {
   const slots = [];
   let index = 0, dirty = true, effects = [], result;
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -44,7 +46,7 @@ function mount(adapter, { tasks = [], endTime = "23:00", rest = { enabled: true,
       for (let i = 0; i < 12; i++) {
         if (dirty) {
           dirty = false; index = 0; effects = [];
-          result = useTracking(tasks, endTime, rest, null, true, beforeCommand, unweighted, minimumEnabled, minimumMinutes);
+          result = useTracking(tasks, endTime, plan, null, true, beforeCommand, unweighted, minimumEnabled, minimumMinutes);
           for (const effect of effects) effect();
         }
         await new Promise(resolve => setImmediate(resolve));
@@ -95,7 +97,7 @@ console.log("5 alert permission lifecycle scenarios passed");
 
 const realNow=Date.now, start=Date.parse("2026-09-14T08:00:00Z"), minute=60_000;
 const tasks=["a","b"].map(id=>({id,title:id,description:"",dueDate:"2026-09-14",createdAt:new Date(start).toISOString(),completed:false,completedAt:null}));
-const legacy={...createTracking(tasks,"10:00","UTC",start),mode:"work",taskId:"a",controllerId:"test-device"};
+const legacy={...createTracking(tasks,"10:00","UTC",start,PLAN),mode:"work",taskId:"a",controllerId:"test-device"};
 delete legacy.allocationVersion;
 let saved=JSON.stringify(legacy), writes=0;
 Date.now=()=>start+60*minute;
@@ -114,7 +116,7 @@ try {
 console.log("1 guest allocation upgrade scenario passed");
 
 Date.now = () => start;
-saved = JSON.stringify(createTracking(tasks, "18:00", "UTC", start));
+saved = JSON.stringify(createTracking(tasks, "18:00", "UTC", start, PLAN));
 const persistentAdapter = { ...adapter, read: async () => saved, write: async value => { saved = value; } };
 tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
 try {
@@ -133,7 +135,7 @@ try {
 console.log("1 guest unweighted persistence scenario passed");
 
 Date.now = () => start;
-saved = JSON.stringify(createTracking(tasks, "08:20", "UTC", start));
+saved = JSON.stringify(createTracking(tasks, "08:20", "UTC", start, PLAN));
 tracker = mount(persistentAdapter, { tasks, endTime: "08:20" });
 try {
   await tracker.flush();

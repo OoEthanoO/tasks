@@ -1,6 +1,6 @@
-import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, restSettings, SKIPPED_REST_MESSAGE, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import { sanitizeState } from "../../lib/app-state";
-import { sameRest } from "../../lib/rest";
+import { samePlan } from "../../lib/plan";
 import type { ApiReply, DesktopState, GuestConfig, Settings } from "./contract";
 import { defaults } from "./contract";
 import type { AlertDiagnostic, Suppression } from "./diagnostics";
@@ -24,25 +24,20 @@ function checkpointEvents(previous: TrackingState, next: TrackingState): { event
   const projected = advanceTracking(previous, next.cursor);
   const rejected = { events: projected.events, confirmed: false };
   if (next.cursor <= previous.cursor || next.dayKey !== previous.dayKey || next.timeZone !== previous.timeZone ||
-      next.controllerId !== previous.controllerId || !sameRest(restSettings(previous), restSettings(next))) return rejected;
-  const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, restSettings(next), next.unweighted, next.minimumEnabled, next.minimumMinutes);
+      next.controllerId !== previous.controllerId || !samePlan(dayPlan(previous), dayPlan(next))) return rejected;
+  const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, dayPlan(next), next.unweighted, next.minimumEnabled, next.minimumMinutes);
   if (expected.mode !== next.mode || expected.taskId !== next.taskId || expected.allocationVersion !== next.allocationVersion) return rejected;
   const equalTime = (a: number, b: number) => Math.abs(a - b) <= 1;
-  for (const key of ["workMs", "restMs", "cycleWorkMs", "cycleRestMs"] as const) {
-    if (!equalTime(expected[key], next[key])) return rejected;
-  }
-  if (!equalTime(expected.restWorkCreditMs ?? 0, next.restWorkCreditMs ?? 0)) return rejected;
-  if (!!expected.deferredBreak !== !!next.deferredBreak ||
-      !equalTime(expected.deferredBreak?.cycleRestMs ?? 0, next.deferredBreak?.cycleRestMs ?? 0)) return rejected;
+  // Only work is counted; idle time is derived from the clock.
+  if (!equalTime(expected.workMs, next.workMs)) return rejected;
   for (const id of new Set([...Object.keys(expected.taskMs), ...Object.keys(next.taskMs)])) {
     const time = (s: TrackingState) => Object.hasOwn(s.taskMs, id) ? s.taskMs[id] : 0;
     if (!equalTime(time(expected), time(next))) return rejected;
   }
   const changedNextStep = projected.state.mode !== next.mode || projected.state.taskId !== next.taskId;
   const task = next.tasks.find(t => t.id === next.taskId);
-  const nextStep = next.mode === "rest" ? `Now tracking a ${restSettings(next).restMinutes}-minute break.`
-    : next.mode === "work" && task ? `Now tracking ${task.title}.` : "Tracking is paused.";
-  return { confirmed: true, events: projected.events.map(event => changedNextStep && (event.type === "task-complete" || event.type === "rest-complete")
+  const nextStep = next.mode === "work" && task ? `Now tracking ${task.title}.` : "Tracking is paused.";
+  return { confirmed: true, events: projected.events.map(event => changedNextStep && (event.type === "task-complete" || event.type === "idle-out")
     ? { ...event, body: `${event.type === "task-complete" ? "A daily target was reached. " : ""}Targets were updated. ${nextStep}` }
     : event) };
 }
@@ -119,10 +114,10 @@ export class TrackerEngine {
     if (input.accountId !== this.accountId) throw new Error("Account changed. Reopen the task list to reconnect.");
     if (this.accountId) return;
     const clean = sanitizeState(input);
-    if (trackingConfigKey(clean.tasks, clean.endTime, clean.rest, clean.unweighted, clean.minimumEnabled, clean.minimumMinutes) !== trackingConfigKey(this.snapshot.tasks, this.snapshot.endTime, restSettings(this.snapshot), this.snapshot.unweighted, this.snapshot.minimumEnabled, this.snapshot.minimumMinutes)) {
+    if (trackingConfigKey(clean.tasks, clean.endTime, clean.plan, clean.unweighted, clean.minimumEnabled, clean.minimumMinutes) !== trackingConfigKey(this.snapshot.tasks, this.snapshot.endTime, dayPlan(this.snapshot), this.snapshot.unweighted, this.snapshot.minimumEnabled, this.snapshot.minimumMinutes)) {
       const now = this.d.now(), previousTick = this.lastTick;
       const reason = this.suppression(now, previousTick);
-      const next = configureTracking(this.snapshot, clean.tasks, clean.endTime, now, clean.rest, clean.unweighted, clean.minimumEnabled, clean.minimumMinutes);
+      const next = configureTracking(this.snapshot, clean.tasks, clean.endTime, now, clean.plan, clean.unweighted, clean.minimumEnabled, clean.minimumMinutes);
       const recovered = checkpointEvents(this.snapshot, next);
       this.snapshot = next;
       this.snapshot.revision++;
@@ -148,7 +143,7 @@ export class TrackerEngine {
     // the checkpoint before replacing it, not just the new snapshot in tick().
     // Freshness is checked BEFORE refreshing checkedAt: reconnecting must not
     // replay alerts from a period when another device might have taken over.
-    const reason = this.suppression(serverNow, previousTick) ?? (next.controllerId === this.controllerId ? null : "different-controller");
+    const reason = this.suppression(serverNow, previousTick) ?? (ownsAlerts(next, this.controllerId) ? null : "different-controller");
     const recovered = next.cursor > previousTick && next.cursor <= serverNow ? checkpointEvents(this.snapshot, next) : null;
     const events = advanceTracking(next, serverNow).events;
     this.offset = serverNow - this.d.now();
@@ -164,14 +159,15 @@ export class TrackerEngine {
     if (this.busy) return "command-in-progress";
     if (this.accountId && this.d.now() - this.checkedAt >= 90_000) return "sync-stale";
     if (now < after || now - after >= 90_000) return "sleep-or-clock-gap";
-    if (this.snapshot.controllerId !== this.controllerId) return "different-controller";
+    if (!ownsAlerts(this.snapshot, this.controllerId)) return "different-controller";
     return null;
   }
 
   private deliver(events: TrackingEvent[], after: number, now: number, suppression: Suppression | null, source: AlertDiagnostic["source"]) {
     for (const event of events) {
       if (event.at <= after || event.at > now || this.delivered.has(event.id)) continue;
-      const reason = suppression ?? (source !== "tick" && this.snapshot.mode === "idle" && event.type === "rest-soon" ? "checkpoint-replaced" : null);
+      // An idle warning predicted before a checkpoint that shows work is under way is stale.
+      const reason = suppression ?? (source !== "tick" && this.snapshot.mode === "work" && (event.type === "idle-half" || event.type === "idle-soon") ? "checkpoint-replaced" : null);
       this.trace({ kind: reason || !this.settings.alerts ? "alert-skipped" : "alert-requested", source,
         eventId: event.id, eventType: event.type, eventAt: event.at, revision: this.snapshot.revision,
         ...(reason || !this.settings.alerts ? { reason: reason ?? "alerts-disabled" } : {}) });
@@ -199,7 +195,7 @@ export class TrackerEngine {
           if (epoch !== this.epoch) return;
           if (data.status !== 200) throw new Error("Cannot load your tasks.");
           const state = sanitizeState((data.body as { state: unknown }).state);
-          body.tracking = createTracking(state.tasks, state.endTime, localTimeZone(), body.serverNow, state.rest, state.unweighted, state.minimumEnabled, state.minimumMinutes);
+          body.tracking = createTracking(state.tasks, state.endTime, localTimeZone(), body.serverNow, state.plan, state.unweighted, state.minimumEnabled, state.minimumMinutes);
         }
         this.adopt(body.tracking, body.serverNow);
       } catch (e) {
@@ -237,7 +233,7 @@ export class TrackerEngine {
         this.persist();
       }
       this.lastTick = this.d.now() + this.offset;
-      this.message = action.type === "reset" ? "Today’s progress was reset. Tracking is paused." : action.type === "skip-rest" ? SKIPPED_REST_MESSAGE : null;
+      this.message = action.type === "reset" ? "Today’s progress was reset. Tracking is paused." : null;
     } catch (e) {
       if (epoch === this.epoch) this.error = e instanceof Error ? e.message : "Could not update the timer.";
       throw e;

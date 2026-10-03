@@ -2,7 +2,7 @@ import { DEFAULT_MINIMUM_MINUTES } from "../../lib/minimum";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createTracking, remainingWorkTime, taskProgress, trackingConfigKey, workBudget, type TrackingAction } from "../../lib/tracking";
 import type { Task } from "../../lib/types";
-import type { RestSettings } from "../../lib/rest";
+import type { DayPlan } from "../../lib/plan";
 import { defaults, type DesktopState } from "./contract";
 
 const initial = (): DesktopState => ({ state: createTracking([], "23:00"), accountId: null, ready: false, busy: false, connected: true, error: null, message: null, settings: defaults });
@@ -23,12 +23,12 @@ export function useDesktopState() {
 
 // Reuses the task UI but not its browser timer. One main-process engine drives
 // both windows, so a hidden/unresponsive renderer cannot stop desktop alerts.
-export function useTracking(tasks: Task[], endTime: string, rest: RestSettings, accountId: string | null, enabled: boolean, beforeCommand?: () => Promise<void>, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES) {
+export function useTracking(tasks: Task[], endTime: string, plan: DayPlan, accountId: string | null, enabled: boolean, beforeCommand?: () => Promise<void>, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES) {
   const view = useDesktopState();
   const [localError, setError] = useState<string | null>(null);
-  const config = useRef({ tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes, accountId });
-  config.current = { tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes, accountId };
-  const key = trackingConfigKey(tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes);
+  const config = useRef({ tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes, accountId });
+  config.current = { tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes, accountId };
+  const key = trackingConfigKey(tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes);
   useEffect(() => {
     if (!enabled) return;
     let live = true;

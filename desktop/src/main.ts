@@ -158,11 +158,11 @@ function publish(view: DesktopState) {
     tray.setImage(icons[lastTrayMode]);
     main.setOverlayIcon(icons[lastTrayMode], m.label);
   }
-  const buttonKey = `${view.ready}/${view.busy}/${view.state.mode}/${m.canStart}`;
+  const buttonKey = `${view.ready}/${view.busy}/${view.state.mode}/${m.canStart}/${m.canPause}`;
   if (buttonKey !== lastButtons) {
     lastButtons = buttonKey;
     main.setThumbarButtons([
-      { tooltip: view.state.mode === "idle" ? "Start / resume" : "Pause tracking", icon: icons[view.state.mode === "idle" ? "work" : "idle"], flags: !view.ready || view.busy || view.state.mode === "idle" && !m.canStart ? ["disabled"] : [], click: () => void toggle() },
+      { tooltip: view.state.mode === "idle" ? "Start working" : "Pause tracking", icon: icons[view.state.mode === "idle" ? "work" : "idle"], flags: !view.ready || view.busy || (view.state.mode === "idle" ? !m.canStart : !m.canPause) ? ["disabled"] : [], click: () => void toggle() },
       { tooltip: "Show mini tracker", icon: icons.open, click: () => changeSettings({ mini: true }) },
       { tooltip: "Open tasks", icon: icons.app, click: showMain },
     ]);
@@ -195,11 +195,10 @@ function trayMenu() {
   const m = statusModel(v);
   const menu = Menu.buildFromTemplate([
     { label: `${m.label}: ${m.title.slice(0, 65)}`, enabled: false },
-    { label: `Worked ${formatDuration(v.state.workMs)} · Rested ${formatDuration(v.state.restMs)}`, enabled: false },
-    { label: v.connected ? m.breakText : "Offline — reconnect to sync", enabled: false },
+    { label: `Worked ${formatDuration(v.state.workMs)} · Work left ${formatDuration(m.workLeft)}`, enabled: false },
+    { label: v.connected ? `Idle left ${formatDuration(m.idleLeft)}${m.forced ? " · working until done" : ""}` : "Offline — reconnect to sync", enabled: false },
     { type: "separator" },
-    { label: v.state.mode === "idle" ? "Start / resume tracking" : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode !== "idle" || m.canStart), click: () => void toggle() },
-    ...(m.canSkipRest ? [{ label: "Skip break and keep working", enabled: v.ready && !v.busy, click: () => void engine.command({ type: "skip-rest" }).catch(() => {}) }] : []),
+    { label: v.state.mode === "idle" ? "Start working" : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode === "idle" ? m.canStart : m.canPause), click: () => void toggle() },
     { label: "Track a task", enabled: v.ready && !v.busy, submenu: m.entries.filter(p => p.weight > 0 && !p.doneToday).slice(0, 50).map(p => ({ label: `${p.task.title.slice(0, 60)} · ${formatDuration(p.remainingMs)} left`, type: "radio" as const, checked: p.task.id === v.state.taskId, click: () => void engine.command({ type: "start", taskId: p.task.id }).catch(() => {}) })) },
     { label: "Show tasks", click: showMain },
     { label: "Always-on-top mini tracker", type: "checkbox", checked: settings.mini, click: item => changeSettings({ mini: item.checked }) },
@@ -233,7 +232,7 @@ async function start() {
   } catch { /* First launch or corrupt preferences: keep safe defaults. */ }
   controllerId ||= `windows_${randomUUID()}`;
   save();
-  icons = Object.fromEntries(["app", "work", "rest", "idle", "open"].map(name => [name, nativeImage.createFromPath(path.join(__dirname, "../resources", name === "app" ? "icon.png" : `${name}.png`)).resize({ width: 32, height: 32 })]));
+  icons = Object.fromEntries(["app", "work", "idle", "open"].map(name => [name, nativeImage.createFromPath(path.join(__dirname, "../resources", name === "app" ? "icon.png" : `${name}.png`)).resize({ width: 32, height: 32 })]));
   engine = new TrackerEngine({ now: Date.now, request, publish, notify: nativeAlert, diagnostic: record => alertLog.record(record), saveGuest: state => { guest = state; try { save(); } catch { engine.report("Cannot save progress on this PC. Check available disk space."); } } }, controllerId, guest);
   engine.settings = settings;
 
@@ -320,7 +319,7 @@ async function start() {
     if (action === "main") showMain();
     else if (action === "mini") changeSettings({ mini: true });
     else if (action === "hide-mini") changeSettings({ mini: false });
-    else if (action === "test-alert") nativeAlert({ title: "YanTasks alerts are ready", body: "Task completion, upcoming breaks, and rest completion will appear here while YanTasks is running." });
+    else if (action === "test-alert") nativeAlert({ title: "YanTasks alerts are ready", body: "Daily targets, idle-time reminders and the end of today’s work will appear here while YanTasks is running." });
     else if (action === "dismiss") engine.dismiss();
     else throw new Error("Unknown window action.");
   });

@@ -6,11 +6,11 @@ import AuthDialog from "@/components/AuthDialog";
 import QuickAdd from "@/components/QuickAdd";
 import TrackingPanel from "@/components/TrackingPanel";
 import { useTracking } from "@/components/useTracking";
-import { restOwed, taskProgress } from "@/lib/tracking";
+import { canTrackWork, taskProgress } from "@/lib/tracking";
 import TaskList from "@/components/TaskList";
 import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
-import { DEFAULT_REST, RestSettings } from "@/lib/rest";
+import { DayPlan, DEFAULT_PLAN } from "@/lib/plan";
 import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api, getStateRefreshInterval } from "@/lib/remote";
 import { localStore, newId } from "@/lib/storage";
@@ -30,7 +30,7 @@ export default function Page() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
-  const [rest, setRest] = useState<RestSettings>({ ...DEFAULT_REST });
+  const [plan, setPlan] = useState<DayPlan>({ ...DEFAULT_PLAN });
   const [unweighted, setUnweighted] = useState(false);
   const [minimumEnabled, setMinimumEnabled] = useState(true);
   const [minimumMinutes, setMinimumMinutes] = useState(30);
@@ -55,7 +55,7 @@ export default function Page() {
     setRecommendation(state.recommendation);
     setSchedule(state.schedule);
     setEndTime(state.endTime);
-    setRest(state.rest);
+    setPlan(state.plan);
     setUnweighted(state.unweighted);
     setMinimumEnabled(state.minimumEnabled);
     setMinimumMinutes(state.minimumMinutes);
@@ -157,7 +157,7 @@ export default function Page() {
     // Ignore the render in between swapping stores.
     if (loadedForRef.current !== key) return;
 
-    const state: AppState = { tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes };
+    const state: AppState = { tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes };
     const serialized = JSON.stringify(state);
     if (serialized === lastSavedRef.current) return;
 
@@ -170,7 +170,7 @@ export default function Page() {
     pendingRef.current = state;
     if (timerRef.current !== null) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => void flushRemote(), SAVE_DEBOUNCE_MS);
-  }, [tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes, ready, account, flushRemote]);
+  }, [tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes, ready, account, flushRemote]);
 
   /**
    * Pull the account's copy back down, so edits made on the phone (or another
@@ -250,7 +250,7 @@ export default function Page() {
   /* ---------- accounts ---------- */
 
   const stateRef = useRef<AppState>(emptyState());
-  stateRef.current = { tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes };
+  stateRef.current = { tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes };
 
   const signIn = useCallback(
     async (username: string, password: string) => {
@@ -379,9 +379,9 @@ export default function Page() {
     await flushRemote();
     if (pendingRef.current || syncingRef.current) throw new Error("Wait for your task changes to sync, then try again.");
   }, [account, flushRemote]);
-  const tracker = useTracking(tasks, endTime, rest, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
+  const tracker = useTracking(tasks, endTime, plan, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
   const today = tracker.state.dayKey;
-  const entries = taskProgress({ ...tracker.state, tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes });
+  const entries = taskProgress({ ...tracker.state, tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes });
   const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
   const maxProbability = Math.max(0, ...entries.map(e => e.probability));
 
@@ -532,7 +532,7 @@ export default function Page() {
 
       <div className="columns">
         <div className="stack focus-column">
-          <TrackingPanel tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} rest={rest} onRestChange={setRest} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
+          <TrackingPanel tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} plan={plan} onPlanChange={setPlan} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
         </div>
         <section className="card">
           <div className="card-head">
@@ -551,7 +551,7 @@ export default function Page() {
               maxProbability={maxProbability}
               progress={entries}
               activeId={tracker.state.taskId}
-              trackingDisabled={!tracker.ready || tracker.busy || restOwed(tracker.state)}
+              trackingDisabled={!tracker.ready || tracker.busy || !canTrackWork(tracker.state)}
               onTrack={id => void tracker.command({ type: "start", taskId: id })}
               onToggle={toggleTask}
               onDelete={deleteTask}
@@ -640,7 +640,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               <code>×4</code>.
             </div>
             <div>
-              Open tasks divide tracked work in proportion to their weights. Unweighted mode gives every open task weight 1. With the daily minimum enabled, a task whose share would come to under your chosen minimum is skipped for the day, and its time is redistributed to higher-weight tasks, or earlier tasks in the list when weights are equal. The first eligible task is never skipped, so a short day can still be used. Choose a minimum from 1 to 1,440 minutes (30 by default), or turn it off to include smaller shares in either weighting mode. Breaks follow your setting beside the end time: by default 30 minutes of rest after every 90 minutes of tracked work, or turn them off. Daily targets and time reset at midnight.
+              Open tasks divide tracked work in proportion to their weights. Unweighted mode gives every open task weight 1. With the daily minimum enabled, a task whose share would come to under your chosen minimum is skipped for the day, and its time is redistributed to higher-weight tasks, or earlier tasks in the list when weights are equal. The first eligible task is never skipped, so a short day can still be used. Choose a minimum from 1 to 1,440 minutes (30 by default), or turn it off to include smaller shares in either weighting mode. The work day runs from your start time to your end time and divides into work and idle time by your ratio (1:1 recommended). Time you are not tracking counts as idle; once less than half of it is left you will be advised to start, and when it runs out, work starts on its own and continues until the day’s work is done. Daily targets and time reset at midnight.
             </div>
           </div>
         </div>

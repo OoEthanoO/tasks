@@ -30,14 +30,14 @@ function Mini() {
     <header className="mini-drag"><span>YANTASKS <span className="mini-pin">ALWAYS ON TOP</span></span><button className="mini-close" aria-label="Hide mini tracker" onClick={() => void window.desktop.window("hide-mini")}>×</button></header>
     <div className="mini-state"><i className="status-dot" />{m.label}<span>{!view.connected ? "OFFLINE" : view.accountId ? "SYNCED" : "THIS PC"}</span></div>
     <h1 title={m.title}>{m.title}</h1>
-    <div className="mini-clock">{formatDuration(view.state.mode === "rest" ? m.remaining : m.elapsed, true)}</div>
-    <p className="mini-sub">{view.state.mode === "rest" ? "Rest remaining · work resumes automatically" : view.state.mode === "work" ? `${formatDuration(m.remaining)} left on task${m.restIn === null ? "" : ` · break in ${formatDuration(m.restIn)}`}` : "Choose a task or resume your daily targets."}</p>
+    <div className="mini-clock">{formatDuration(m.remaining, true)}</div>
+    <p className="mini-sub">{m.forced ? "Idle time used · work until today’s work is done"
+      : view.state.mode === "work" ? `Work time left${m.current ? ` · ${formatDuration(m.current.remainingMs)} on this task` : ""}`
+      : m.advise ? "Under half of today’s idle time left · start working now"
+      : m.label === "Idle" ? "Idle time left · work starts when it runs out" : "Nothing to track right now."}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current target progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>
-    <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>RESTED</span><strong>{formatDuration(view.state.restMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(remainingWorkTime(view.state))}</strong></div></div>
-    <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || view.state.mode === "idle" && !m.canStart} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start / resume" : "Pause tracking"}</button>{m.canSkipRest
-      // The mini window has room for two buttons; during a break, skipping matters more than opening the list.
-      ? <button className="btn btn-ghost" disabled={!view.ready || view.busy} onClick={() => void command({ type: "skip-rest" })}>Skip break</button>
-      : <button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button>}</div>
+    <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(m.workLeft)}</strong></div><div><span>IDLE LEFT</span><strong>{formatDuration(m.idleLeft)}</strong></div></div>
+    <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || (view.state.mode === "idle" ? !m.canStart : !m.canPause)} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start working" : "Pause tracking"}</button><button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button></div>
     {(error || view.error || view.message) && <p role="status" className="mini-message" title={error || view.error || view.message || ""}>{error || view.error || view.message}</p>}
   </main>;
 }
@@ -60,7 +60,7 @@ function Desktop() {
     <label><input type="checkbox" checked={view.settings.sound} onChange={e => void setting("sound", e.target.checked)} /> Notification sound</label>
     <label><input type="checkbox" checked={view.settings.launchAtLogin} onChange={e => void setting("launchAtLogin", e.target.checked)} /> Launch quietly at Windows sign-in</label>
     <button className="btn btn-ghost" onClick={() => void window.desktop.window("test-alert")}>Send a test alert</button>
-    <p className="hint">Battery-aware: hidden windows stop updating, background sync slows while idle or on battery, and alert wakeups follow task/rest boundaries. YanTasks never keeps your PC awake. Alerts require a running app and an awake PC; Windows Do Not Disturb may silence them.</p>
+    <p className="hint">Battery-aware: hidden windows stop updating, background sync slows while idle or on battery, and alert wakeups follow task and idle-time boundaries. YanTasks never keeps your PC awake. Alerts require a running app and an awake PC; Windows Do Not Disturb may silence them.</p>
     {error && <p className="danger" role="alert">{error}</p>}
   </section>}<Page /></>;
 }

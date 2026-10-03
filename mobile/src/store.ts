@@ -9,7 +9,7 @@ const KEYS = {
   recommendation: "yantasks.recommendation.v1",
   schedule: "yantasks.schedule.v1",
   endTime: "yantasks.endTime.v1",
-  rest: "yantasks.rest.v1",
+  plan: "yantasks.plan.v1",
   unweighted: "yantasks.unweighted.v1",
   minimumEnabled: "yantasks.minimumEnabled.v1",
   minimumMinutes: "yantasks.minimumMinutes.v1",
@@ -17,6 +17,8 @@ const KEYS = {
 
 // Retain the retired key only for clearing guest data after migration.
 const LEGACY_REST_MODE_KEY = "yantasks.restMode.v1";
+// The break settings the day plan replaced; cleared with the rest of guest data.
+const LEGACY_REST_KEY = "yantasks.rest.v1";
 
 async function read(key: string): Promise<unknown> {
   try {
@@ -29,12 +31,12 @@ async function read(key: string): Promise<unknown> {
 
 export const guestStore = {
   async load(): Promise<AppState> {
-    const [tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes, tracking] = await Promise.all([
+    const [tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes, tracking] = await Promise.all([
       read(KEYS.tasks),
       read(KEYS.recommendation),
       read(KEYS.schedule),
       read(KEYS.endTime),
-      read(KEYS.rest),
+      read(KEYS.plan),
       read(KEYS.unweighted),
       read(KEYS.minimumEnabled),
       read(KEYS.minimumMinutes),
@@ -42,7 +44,7 @@ export const guestStore = {
     ]);
     // Everything read back off the device goes through the same coercion the
     // server applies, so a half-written key cannot take the app down.
-    return sanitizeState({ tasks, recommendation, schedule, endTime, rest, unweighted, minimumEnabled, minimumMinutes, tracking });
+    return sanitizeState({ tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes, tracking });
   },
 
   async save(state: AppState): Promise<void> {
@@ -52,7 +54,7 @@ export const guestStore = {
         [KEYS.recommendation, JSON.stringify(state.recommendation)],
         [KEYS.schedule, JSON.stringify(state.schedule)],
         [KEYS.endTime, JSON.stringify(state.endTime)],
-        [KEYS.rest, JSON.stringify(state.rest)],
+        [KEYS.plan, JSON.stringify(state.plan)],
         [KEYS.unweighted, JSON.stringify(state.unweighted)],
         [KEYS.minimumEnabled, JSON.stringify(state.minimumEnabled)],
         [KEYS.minimumMinutes, JSON.stringify(state.minimumMinutes)],
@@ -65,7 +67,7 @@ export const guestStore = {
   /** Called after a successful migration: the account copy is authoritative. */
   async clear(): Promise<void> {
     try {
-      await AsyncStorage.multiRemove([...Object.values(KEYS), LEGACY_REST_MODE_KEY, "yantasks.tracking.v1"]);
+      await AsyncStorage.multiRemove([...Object.values(KEYS), LEGACY_REST_MODE_KEY, LEGACY_REST_KEY, "yantasks.tracking.v1"]);
     } catch {
       // Nothing to do.
     }

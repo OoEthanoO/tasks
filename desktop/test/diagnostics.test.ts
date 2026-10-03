@@ -32,7 +32,7 @@ test("rotation keeps two bounded local logs and survives restart", () => {
     let log = new AlertLog(f.directory, () => 0, 512);
     for (let i = 0; i < 80; i++) {
       if (i === 40) log = new AlertLog(f.directory, () => 0, 512);
-      log.record({ kind: "native-shown", eventType: "rest-soon", eventId: String(i) });
+      log.record({ kind: "native-shown", eventType: "idle-soon", eventId: String(i) });
     }
     assert.deepEqual(fs.readdirSync(f.directory).sort(), [DIAGNOSTIC_FILE, DIAGNOSTIC_PREVIOUS].sort());
     for (const file of fs.readdirSync(f.directory)) {

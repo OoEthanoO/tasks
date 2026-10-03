@@ -6,7 +6,7 @@ import {
 } from "./app-state";
 import { Statement, ensureSchema, getSql } from "./sql";
 import { DEFAULT_PRIORITY, isPriority } from "./weights";
-import { sanitizeRestSettings } from "./rest";
+import { sanitizePlan } from "./plan";
 import { sanitizeMinimumMinutes } from "./minimum";
 import { configureAccountTracking, importAccountTracking } from "./tracking-db";
 import { AppState, Recommendation, Task, User } from "./types";
@@ -222,12 +222,12 @@ export async function loadState(userId: string): Promise<AppState> {
       end_time: string;
       recommendation: string | null;
       schedule: string | null;
-      rest_settings: string | null;
+      day_plan: string | null;
       unweighted: boolean;
       minimum_enabled: boolean;
       minimum_minutes: number;
     }>(
-      `SELECT end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled, minimum_minutes FROM prefs WHERE user_id = $1`,
+      `SELECT end_time, recommendation, schedule, day_plan, unweighted, minimum_enabled, minimum_minutes FROM prefs WHERE user_id = $1`,
       [userId],
     )
   )[0];
@@ -237,7 +237,7 @@ export async function loadState(userId: string): Promise<AppState> {
     recommendation: parseJson<Recommendation>(prefs?.recommendation),
     schedule: sanitizeSchedule(parseJson<unknown>(prefs?.schedule)),
     endTime: sanitizeEndTime(prefs?.end_time),
-    rest: sanitizeRestSettings(parseJson<unknown>(prefs?.rest_settings)),
+    plan: sanitizePlan(parseJson<unknown>(prefs?.day_plan)),
     unweighted: prefs?.unweighted === true,
     minimumEnabled: prefs?.minimum_enabled !== false,
     minimumMinutes: sanitizeMinimumMinutes(prefs?.minimum_minutes),
@@ -262,7 +262,7 @@ function parseJson<T>(raw: string | null | undefined): T | null {
  * them the next time it saved:
  * - `priority` names tasks that arrived with no priority field; they keep the
  *   priority the account already stores.
- * - `rest` means the payload had no rest settings; the stored ones stay.
+ * - `plan` means the payload had no day plan; the stored one stays.
  * - `unweighted` keeps the stored weighting mode when a legacy payload omits it.
  * - `minimumEnabled` keeps the stored minimum toggle when a legacy payload omits it.
  * - `minimumMinutes` keeps the chosen duration when a legacy payload omits it.
@@ -270,17 +270,17 @@ function parseJson<T>(raw: string | null | undefined): T | null {
 export async function saveState(
   userId: string,
   incoming: AppState,
-  preserve: { priority?: ReadonlySet<string>; rest?: boolean; unweighted?: boolean; minimumEnabled?: boolean; minimumMinutes?: boolean } = {},
+  preserve: { priority?: ReadonlySet<string>; plan?: boolean; unweighted?: boolean; minimumEnabled?: boolean; minimumMinutes?: boolean } = {},
 ): Promise<void> {
   const state = sanitizeState(incoming);
   const keepPriority = preserve.priority ?? new Set<string>();
 
-  if (preserve.rest) {
-    const [row] = await query<{ rest_settings: string | null }>(
-      `SELECT rest_settings FROM prefs WHERE user_id = $1`,
+  if (preserve.plan) {
+    const [row] = await query<{ day_plan: string | null }>(
+      `SELECT day_plan FROM prefs WHERE user_id = $1`,
       [userId],
     );
-    state.rest = sanitizeRestSettings(parseJson<unknown>(row?.rest_settings));
+    state.plan = sanitizePlan(parseJson<unknown>(row?.day_plan));
   }
 
   if (keepPriority.size > 0) {
@@ -325,13 +325,13 @@ export async function saveState(
   });
 
   statements.push({
-    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, rest_settings, unweighted, minimum_enabled, minimum_minutes)
+    text: `INSERT INTO prefs (user_id, end_time, recommendation, schedule, day_plan, unweighted, minimum_enabled, minimum_minutes)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (user_id) DO UPDATE SET
                 end_time = excluded.end_time,
                 recommendation = excluded.recommendation,
                 schedule = excluded.schedule,
-                rest_settings = excluded.rest_settings,
+                day_plan = excluded.day_plan,
                 unweighted = CASE WHEN $9 THEN prefs.unweighted ELSE excluded.unweighted END,
                 minimum_enabled = CASE WHEN $10 THEN prefs.minimum_enabled ELSE excluded.minimum_enabled END,
                 minimum_minutes = CASE WHEN $11 THEN prefs.minimum_minutes ELSE excluded.minimum_minutes END`,
@@ -340,7 +340,7 @@ export async function saveState(
       state.endTime,
       state.recommendation ? JSON.stringify(state.recommendation) : null,
       state.schedule ? JSON.stringify(state.schedule) : null,
-      JSON.stringify(state.rest),
+      JSON.stringify(state.plan),
       state.unweighted,
       state.minimumEnabled,
       state.minimumMinutes,
@@ -358,6 +358,6 @@ export async function saveState(
     if (preserve.minimumEnabled) state.minimumEnabled = prefs?.minimum_enabled !== false;
     if (preserve.minimumMinutes) state.minimumMinutes = sanitizeMinimumMinutes(prefs?.minimum_minutes);
   }
-  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled, state.minimumMinutes);
-  await configureAccountTracking(userId, state.tasks, state.endTime, state.rest, Date.now(), state.unweighted, state.minimumEnabled, state.minimumMinutes);
+  if (state.tracking) await importAccountTracking(userId, state.tracking, state.tasks, state.endTime, state.plan, Date.now(), state.unweighted, state.minimumEnabled, state.minimumMinutes);
+  await configureAccountTracking(userId, state.tasks, state.endTime, state.plan, Date.now(), state.unweighted, state.minimumEnabled, state.minimumMinutes);
 }

@@ -17,7 +17,6 @@ header.writeUInt32LE(icon.length, 14); header.writeUInt32LE(22, 18);
 await writeFile("resources/icon.ico", Buffer.concat([header, icon]));
 const symbols = {
   work: ['#4ade80', '<path d="m12 8 13 8-13 8z" fill="#0c1712"/>'],
-  rest: ['#7dd3fc', '<path d="M22 8A10 10 0 1 0 24 22 9 9 0 0 1 22 8" fill="#102030"/>'],
   idle: ['#fbbf24', '<path d="M11 9h4v14h-4zM18 9h4v14h-4z" fill="#241c0b"/>'],
   open: ['#a89aff', '<rect x="8" y="8" width="16" height="16" rx="2" fill="none" stroke="#151126" stroke-width="3"/>'],
 };

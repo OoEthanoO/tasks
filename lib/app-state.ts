@@ -8,7 +8,7 @@ import {
 } from "./types";
 import { DEFAULT_PRIORITY, isPriority, REST_LABEL } from "./weights";
 import { parseTracking } from "./tracking";
-import { DEFAULT_REST, sanitizeRestSettings } from "./rest";
+import { DEFAULT_PLAN, sanitizePlan } from "./plan";
 import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 
 export const DEFAULT_END_TIME = "23:00";
@@ -28,7 +28,7 @@ export function emptyState(): AppState {
     recommendation: null,
     schedule: null,
     endTime: DEFAULT_END_TIME,
-    rest: { ...DEFAULT_REST },
+    plan: { ...DEFAULT_PLAN },
     unweighted: false,
     minimumEnabled: true,
     minimumMinutes: DEFAULT_MINIMUM_MINUTES,
@@ -205,7 +205,7 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
     recommendation: sanitizeRecommendation(raw.recommendation, nowIso),
     schedule: sanitizeSchedule(raw.schedule, today, nowIso),
     endTime: sanitizeEndTime(raw.endTime),
-    rest: sanitizeRestSettings(raw.rest),
+    plan: sanitizePlan(raw.plan),
     unweighted: raw.unweighted === true,
     minimumEnabled: raw.minimumEnabled !== false,
     minimumMinutes: sanitizeMinimumMinutes(raw.minimumMinutes),
@@ -213,12 +213,12 @@ export function sanitizeState(raw: unknown, now: Date = new Date()): AppState {
 }
 
 /**
- * Whether an untrusted payload carries rest settings at all. One without them
- * comes from a client built before they existed: it has not chosen the
+ * Whether an untrusted payload carries a day plan at all. One without it
+ * comes from a client built before it existed: it has not chosen the
  * default, it cannot see the field. See `saveState`.
  */
-export function hasRestSettings(raw: unknown): boolean {
-  return isRecord(raw) && "rest" in raw;
+export function hasPlan(raw: unknown): boolean {
+  return isRecord(raw) && "plan" in raw;
 }
 
 /** Older clients cannot choose a weighting mode they do not know about. */
@@ -264,7 +264,7 @@ export function tasksWithoutPriority(raw: unknown): Set<string> {
  * anything on its own.
  */
 export function isEmptyState(state: AppState): boolean {
-  return state.tasks.length === 0 && state.schedule === null && !(state.tracking && (state.tracking.workMs > 0 || state.tracking.restMs > 0 || state.tracking.mode !== "idle"));
+  return state.tasks.length === 0 && state.schedule === null && !(state.tracking && (state.tracking.workMs > 0 || state.tracking.mode !== "idle"));
 }
 
 /**
@@ -290,7 +290,7 @@ export function summarizeState(state: AppState): string {
     parts.push(`${state.tasks.length} task${state.tasks.length === 1 ? "" : "s"}`);
   }
   if (state.schedule) parts.push("a saved schedule");
-  if (state.tracking && (state.tracking.workMs > 0 || state.tracking.restMs > 0)) parts.push("today's tracked time");
+  if (state.tracking && state.tracking.workMs > 0) parts.push("today's tracked time");
 
   if (parts.length === 0) return "nothing";
   if (parts.length === 1) return parts[0];

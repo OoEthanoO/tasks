@@ -1,6 +1,6 @@
 import { DateKey } from "./dates";
 import type { TrackingState } from "./tracking";
-import type { RestSettings } from "./rest";
+import type { DayPlan } from "./plan";
 
 /** Scales a task's due-date weight: low ×1, medium ×2, high ×4. */
 export type Priority = "low" | "medium" | "high";
@@ -58,8 +58,8 @@ export type AppState = {
   recommendation: Recommendation | null;
   schedule: Schedule | null;
   endTime: string;
-  /** Work/rest cycle, or breaks off. A preference, like the end time. */
-  rest: RestSettings;
+  /** When the work day starts and how it splits into work and idle. A preference, like the end time. */
+  plan: DayPlan;
   /** Ignore due-date and priority multipliers without changing the tasks. */
   unweighted: boolean;
   minimumEnabled: boolean;

@@ -1,5 +1,5 @@
 import type { Task } from "../../lib/types";
-import type { RestSettings } from "../../lib/rest";
+import type { DayPlan } from "../../lib/plan";
 import type { TrackingAction, TrackingState } from "../../lib/tracking";
 
 export type Settings = { alerts: boolean; sound: boolean; mini: boolean; launchAtLogin: boolean };
@@ -10,7 +10,7 @@ export type DesktopState = {
 };
 export type ApiRequest = { path: string; method: string; body?: string };
 export type ApiReply = { status: number; body: unknown };
-export type GuestConfig = { tasks: Task[]; endTime: string; rest: RestSettings; unweighted?: boolean; minimumEnabled?: boolean; minimumMinutes?: number; accountId: string | null };
+export type GuestConfig = { tasks: Task[]; endTime: string; plan: DayPlan; unweighted?: boolean; minimumEnabled?: boolean; minimumMinutes?: number; accountId: string | null };
 export interface DesktopBridge {
   api(request: ApiRequest): Promise<ApiReply>;
   snapshot(): Promise<DesktopState>;

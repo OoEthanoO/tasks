@@ -2,8 +2,8 @@ import { DEFAULT_MINIMUM_MINUTES } from "./minimum";
 import type * as React from "react";
 import { api, ApiError } from "./remote";
 import { Task } from "./types";
-import type { RestSettings } from "./rest";
-import { actOnTracking, advanceTracking, configureTracking, createTracking, localTimeZone, parseTracking, remainingWorkTime, restSettings, SKIPPED_REST_MESSAGE, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
+import type { DayPlan } from "./plan";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, idleLeftMs, localTimeZone, ownsAlerts, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
 
 export const TRACKING_KEY = "yantasks.tracking.v1";
 export type TrackingAdapter = {
@@ -22,7 +22,7 @@ type Hooks = Pick<typeof React, "useState" | "useRef" | "useCallback" | "useMemo
 
 /** Inject React so Metro never resolves the web app's separate React copy. */
 export function createTrackingHook({ useState, useRef, useEffect, useCallback, useMemo }: Hooks, adapter: TrackingAdapter) {
-  return function useTracking(tasks: Task[], endTime: string, rest: RestSettings, accountId: string | null, enabled: boolean, beforeCommand: () => Promise<void>, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES) {
+  return function useTracking(tasks: Task[], endTime: string, plan: DayPlan, accountId: string | null, enabled: boolean, beforeCommand: () => Promise<void>, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES) {
     const [snapshot, setSnapshot] = useState<TrackingState | null>(null);
     const [clock, setClock] = useState(Date.now());
     const [ready, setReady] = useState(false);
@@ -32,7 +32,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     const [permission, setPermission] = useState("Checking alerts…");
     const [controller, setController] = useState("");
     const snapshotRef = useRef(snapshot); snapshotRef.current = snapshot;
-    const config = useRef({ tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes }); config.current = { tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes };
+    const config = useRef({ tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes }); config.current = { tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes };
     const scope = useRef(0);
     const offset = useRef(0);
     const fetching = useRef(false);
@@ -59,11 +59,11 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
 
     const adopt = useCallback((value: TrackingState | null, serverNow?: number) => {
       if (serverNow !== undefined) offset.current = serverNow - Date.now();
-      const next = value ?? createTracking(config.current.tasks, config.current.endTime, localTimeZone(), Date.now() + offset.current, config.current.rest, config.current.unweighted, config.current.minimumEnabled, config.current.minimumMinutes);
+      const next = value ?? createTracking(config.current.tasks, config.current.endTime, localTimeZone(), Date.now() + offset.current, config.current.plan, config.current.unweighted, config.current.minimumEnabled, config.current.minimumMinutes);
       // A slow poll must never replace a more recent command response.
       if (snapshotRef.current && next.revision < snapshotRef.current.revision) return;
       if (JSON.stringify(snapshotRef.current) !== JSON.stringify(next)) {
-        if (next.mode === "idle" && next.workMs === 0 && next.restMs === 0) {
+        if (next.mode === "idle" && next.workMs === 0) {
           // Also clear stale in-app alerts when another client resets the day.
           setMessage(null); seen.current.clear(); lastCheck.current = next.cursor;
         }
@@ -117,20 +117,20 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     useEffect(() => {
       const previous = snapshotRef.current;
       if (accountId || !ready || !previous) return;
-      if (trackingConfigKey(previous.tasks, previous.endTime, restSettings(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes)) return;
-      const next = configureTracking(previous, tasks, endTime, Date.now(), rest, unweighted, minimumEnabled, minimumMinutes);
+      if (trackingConfigKey(previous.tasks, previous.endTime, dayPlan(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes)) return;
+      const next = configureTracking(previous, tasks, endTime, Date.now(), plan, unweighted, minimumEnabled, minimumMinutes);
       next.revision++;
       adopt(next);
       void adapter.write(JSON.stringify(next)).catch(() => setError("Timer changes could not be saved on this device."));
-    }, [tasks, endTime, rest, unweighted, minimumEnabled, minimumMinutes, accountId, ready, adopt]);
+    }, [tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes, accountId, ready, adopt]);
 
     const projected = useMemo(() => snapshot ? advanceTracking(snapshot, clock) : null, [snapshot, clock]);
-    const state = projected?.state ?? createTracking(tasks, endTime, localTimeZone(), clock, rest, unweighted, minimumEnabled, minimumMinutes);
+    const state = projected?.state ?? createTracking(tasks, endTime, localTimeZone(), clock, plan, unweighted, minimumEnabled, minimumMinutes);
     const progress = useMemo(() => taskProgress(state), [state]);
 
     useEffect(() => {
       if (!snapshot || !controller) return;
-      const events = snapshot.controllerId === controller ? upcomingTrackingEvents(snapshot, Date.now() + offset.current) : [];
+      const events = ownsAlerts(snapshot, controller) ? upcomingTrackingEvents(snapshot, Date.now() + offset.current) : [];
       void adapter.scheduleNotifications(events).catch(() => setPermission("Alerts unavailable — check device settings"));
     }, [snapshot, controller, permission]);
 
@@ -140,7 +140,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       for (const e of fresh) {
         seen.current.add(e.id);
         setMessage(`${e.title}. ${e.body}`);
-        if (snapshot?.controllerId === controller) adapter.notify(e);
+        if (snapshot && ownsAlerts(snapshot, controller)) adapter.notify(e);
       }
       lastCheck.current = clock;
     }, [projected, clock, snapshot, controller]);
@@ -162,17 +162,15 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
         } else {
           const raw = await adapter.read();
           const previous = (raw && parseTracking(JSON.parse(raw))) || snapshotRef.current!;
-          const configured = configureTracking(previous, config.current.tasks, config.current.endTime, Date.now(), config.current.rest, config.current.unweighted, config.current.minimumEnabled, config.current.minimumMinutes);
+          const configured = configureTracking(previous, config.current.tasks, config.current.endTime, Date.now(), config.current.plan, config.current.unweighted, config.current.minimumEnabled, config.current.minimumMinutes);
           const next = actOnTracking(configured, action, controller, Date.now());
           next.revision++;
           await adapter.write(JSON.stringify(next));
           if (scope.current === token) adopt(next);
         }
-        // Like the desktop app, each command replaces the last notice, so
-        // "Break skipped" does not linger once the break is resumed.
+        // Like the desktop app, each command replaces the last notice.
         if (scope.current === token) {
-          setMessage(action.type === "reset" ? "Today’s progress was reset. Tracking is paused."
-            : action.type === "skip-rest" ? SKIPPED_REST_MESSAGE : null);
+          setMessage(action.type === "reset" ? "Today’s progress was reset. Tracking is paused." : null);
         }
       } catch (e) {
         if (scope.current === token) {
@@ -193,10 +191,10 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
         const label = await adapter.enableNotifications();
         permissionRead.current++; setPermission(label);
         const current = snapshotRef.current;
-        if (current?.controllerId === controller) await adapter.scheduleNotifications(upcomingTrackingEvents(current, Date.now() + offset.current));
+        if (current && ownsAlerts(current, controller)) await adapter.scheduleNotifications(upcomingTrackingEvents(current, Date.now() + offset.current));
       } catch { setPermission("Alerts unavailable — check device settings"); }
     }, [controller]);
 
-    return { state, progress, budgetMs: workBudget(state), remainingWorkMs: remainingWorkTime(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
+    return { state, progress, budgetMs: workBudget(state), remainingWorkMs: remainingWorkTime(state), idleLeftMs: idleLeftMs(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
   };
 }
