@@ -59,7 +59,7 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, pla
     : ended ? "Tracking has stopped for today." : done ? "All of today’s work is tracked. The rest of the day is idle time."
     : forced ? "Idle time is used up, so tracking continues until today’s work is done."
     : working ? `Work time left today${current ? ` · ${formatDuration(current.remainingMs)} left on this task` : ""}`
-    : "Idle time left. When it runs out, work starts on its own.";
+    : canStart ? "Idle time left. When it runs out, work starts on its own." : "Idle time left. Add a task to have work to track.";
   return <Card>
     <CardHead title="Today’s focus" />
     <Text style={s.hint}>Work day {plan.startTime}–{endTime}</Text>
@@ -113,7 +113,7 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, pla
     <Text style={s.hint}>{state.timeZone} · settings save automatically</Text>
     <View style={s.settingsSection}>
       <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
-      <Text style={s.hint}>Alerts follow the device that last started or switched tracking. Open this app to refresh alerts after changing the timer elsewhere.</Text>
+      <Text style={s.hint}>Alerts follow the device that last started, paused or reset tracking; until one has, every device alerts. Open this app to refresh alerts after changing the timer elsewhere.</Text>
     </View>
     <View style={s.settingsSection}>
       <Text style={s.explainer}>Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. Progress resets at midnight.</Text>

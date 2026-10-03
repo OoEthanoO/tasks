@@ -47,7 +47,7 @@ export function useTracking(tasks: Task[], endTime: string, plan: DayPlan, accou
     state: view.state, progress: taskProgress(view.state), budgetMs: workBudget(view.state), remainingWorkMs: remainingWorkTime(view.state),
     ready: enabled && view.ready && view.accountId === accountId, busy: view.busy, error: localError ?? view.error, message: view.message,
     permission: view.settings.alerts ? "Windows alerts enabled" : "Enable Windows alerts",
-    notificationHelp: "Alerts continue in the system tray while this PC is awake. They follow the device that last started or switched tracking. Windows Do Not Disturb can silence them.",
+    notificationHelp: "Alerts continue in the system tray while this PC is awake. They follow the device that last started, paused or reset tracking; until one has, every device alerts. Windows Do Not Disturb can silence them.",
     command, refresh: async () => { setError(null); await window.desktop.refresh(); },
     enableNotifications: async () => { await window.desktop.settings({ alerts: true }); await window.desktop.window("test-alert"); },
     dismissMessage: () => { void window.desktop.window("dismiss"); },

@@ -48,7 +48,7 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, pl
     : ended ? "Tracking has stopped for today." : done ? "All of today’s work is tracked. The rest of the day is idle time."
     : forced ? "Idle time is used up, so tracking continues until today’s work is done."
     : working ? `Work time left today${current ? ` · ${formatDuration(current.remainingMs)} left on this task` : ""}`
-    : "Idle time left. When it runs out, work starts on its own.";
+    : canStart ? "Idle time left. When it runs out, work starts on its own." : "Idle time left. Add a task to have work to track.";
   // What the settings mean for an ordinary day, shown beside them.
   const minutesOf = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
   const dayMinutes = Math.max(0, minutesOf(endTime) - minutesOf(plan.startTime));
@@ -116,7 +116,7 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, pl
           </div>
           <div className="setting-section">
             <button type="button" className="btn btn-ghost" onClick={() => void t.enableNotifications()}>{t.permission}</button>
-            <p className="setting-help">{("notificationHelp" in t && typeof t.notificationHelp === "string") ? t.notificationHelp : "Browser alerts need this page open. Phone alerts can fire while locked. Alerts follow the device that last started or switched tracking."}</p>
+            <p className="setting-help">{("notificationHelp" in t && typeof t.notificationHelp === "string") ? t.notificationHelp : "Browser alerts need this page open. Phone alerts can fire while locked. Alerts follow the device that last started, paused or reset tracking; until one has, every device alerts."}</p>
           </div>
           <div className="setting-section">
             <p className="tracking-explainer">Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. Progress resets at midnight.</p>

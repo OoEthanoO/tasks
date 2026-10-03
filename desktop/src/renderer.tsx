@@ -34,7 +34,7 @@ function Mini() {
     <p className="mini-sub">{m.forced ? "Idle time used · work until today’s work is done"
       : view.state.mode === "work" ? `Work time left${m.current ? ` · ${formatDuration(m.current.remainingMs)} on this task` : ""}`
       : m.advise ? "Under half of today’s idle time left · start working now"
-      : m.label === "Idle" ? "Idle time left · work starts when it runs out" : "Nothing to track right now."}</p>
+      : m.label === "Idle" ? (m.canStart ? "Idle time left · work starts when it runs out" : "Idle time left · add a task to track work") : "Nothing to track right now."}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current target progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>
     <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(m.workLeft)}</strong></div><div><span>IDLE LEFT</span><strong>{formatDuration(m.idleLeft)}</strong></div></div>
     <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || (view.state.mode === "idle" ? !m.canStart : !m.canPause)} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start working" : "Pause tracking"}</button><button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button></div>
