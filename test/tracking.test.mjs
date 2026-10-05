@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 const require = createRequire(import.meta.url);
-const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, dayStart, dayBudget, dayPlan, workLeftMs, idleLeftMs, canTrackWork, borrowedMs, idleSource, shouldStartWorking, ownsAlerts, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, formatDuration, MIN_DAILY_TARGET_MS } = require("../.test-build/tracking.js");
+const { createTracking, advanceTracking, configureTracking, actOnTracking, taskProgress, remainingWorkTime, workBudget, dayEnd, dayStart, dayBudget, dayPlan, workLeftMs, idleLeftMs, canTrackWork, shouldStartWorking, ownsAlerts, trackingDay, parseTracking, trackingConfigKey, upcomingTrackingEvents, formatDuration, MIN_DAILY_TARGET_MS } = require("../.test-build/tracking.js");
 const { describeFocus } = require("../.test-build/focus.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
 const { DEFAULT_PLAN } = require("../.test-build/plan.js");
@@ -27,14 +27,14 @@ check("the day's work goal and idle allowance come from its start, end and ratio
   assert.deepEqual(DEFAULT_PLAN, { startTime: "09:00", workParts: 1, idleParts: 1 });
   // The default 1:1 over 09:00–23:00 is seven hours of each.
   const standard = createTracking([], "23:00", "UTC", T);
-  assert.deepEqual(dayBudget(standard), { workMs: 7 * 60 * MIN, idleMs: 7 * 60 * MIN, carriedMs: 0 });
+  assert.deepEqual(dayBudget(standard), { workMs: 7 * 60 * MIN, idleMs: 7 * 60 * MIN });
   const twoToOne = createTracking([], "23:00", "UTC", T, { ...DEFAULT_PLAN, workParts: 2 });
-  assert.deepEqual(dayBudget(twoToOne), { workMs: 560 * MIN, idleMs: 280 * MIN, carriedMs: 0 });
-  assert.deepEqual(dayBudget(fresh()), { workMs: 450 * MIN, idleMs: 150 * MIN, carriedMs: 0 });
+  assert.deepEqual(dayBudget(twoToOne), { workMs: 560 * MIN, idleMs: 280 * MIN });
+  assert.deepEqual(dayBudget(fresh()), { workMs: 450 * MIN, idleMs: 150 * MIN });
   near(workBudget(fresh()), 450 * MIN); near(remainingWorkTime(fresh()), 450 * MIN);
   // A start at or after the end leaves no day to work in.
   const backwards = createTracking(tasks, "08:00", "UTC", T, { ...PLAN, startTime: "09:00" });
-  assert.deepEqual(dayBudget(backwards), { workMs: 0, idleMs: 0, carriedMs: 0 }); assert.equal(canTrackWork(backwards, T + 90 * MIN), false);
+  assert.deepEqual(dayBudget(backwards), { workMs: 0, idleMs: 0 }); assert.equal(canTrackWork(backwards, T + 90 * MIN), false);
 });
 check("idle time is spent from the idle allowance, never from work", () => {
   const s = advanceTracking(fresh(), T + 40 * MIN).state;
@@ -53,7 +53,7 @@ check("paused time counts as idle, and work picks up where it stopped", () => {
   s = advanceTracking(s, T + 90 * MIN).state;
   near(s.workMs, 60 * MIN); near(idleLeftMs(s), 120 * MIN); near(workLeftMs(s), 390 * MIN);
 });
-check("work left plus idle left is always the time left in the day", () => {
+check("before idle is exhausted, work left plus idle left equals time left in the day", () => {
   let s = fresh();
   // Idle use stays inside the 150-minute allowance, so every pause is allowed.
   for (const [at, action] of [[0, "start"], [37, "pause"], [80, "start"], [91, "pause"], [150, "start"], [260, "pause"]]) {
@@ -122,23 +122,22 @@ check("finishing or exceeding a revised work goal suppresses all idle advice and
     assert.deepEqual(upcomingTrackingEvents(restored, restored.cursor), []);
   }
 });
-check("when idle runs out, tomorrow's idle drains without starting work or blocking pause", () => {
+check("when idle runs out, tracking stays paused until Start or Track", () => {
   const s = fresh([task("a"), task("b")]);
   const out = advanceTracking(s, T + 160 * MIN);
   assert.deepEqual(out.events.map(e => [e.type, e.at]), [["idle-half", T + 75 * MIN + 1], ["idle-soon", T + 145 * MIN], ["idle-out", T + 150 * MIN]]);
-  assert.match(out.events[2].body, /comes out of tomorrow’s/);
+  assert.match(out.events[2].body, /Choose Start working or Track/);
   assert.equal(out.state.mode, "idle"); assert.equal(out.state.taskId, null); near(out.state.workMs, 0);
-  near(borrowedMs(out.state), 10 * MIN);
-  assert.deepEqual(idleSource(out.state), { dayKey: "2026-09-15", days: 1, idleLeftMs: 140 * MIN });
+  near(idleLeftMs(out.state), 0); near(workLeftMs(out.state), 450 * MIN);
   assert.equal(actOnTracking(out.state, { type: "pause" }, "device-1", T + 160 * MIN).mode, "idle");
   // Starting and then pausing are both allowed, even with an idle deficit.
   const switched = actOnTracking(out.state, { type: "start", taskId: "b" }, "device-1", T + 160 * MIN);
   assert.equal(switched.taskId, "b");
   const paused = actOnTracking(switched, { type: "pause" }, "device-1", T + 170 * MIN);
-  near(paused.workMs, 10 * MIN); assert.equal(paused.mode, "idle"); near(borrowedMs(paused), 10 * MIN);
+  near(paused.workMs, 10 * MIN); assert.equal(paused.mode, "idle"); near(idleLeftMs(paused), 0);
   // Starting late leaves real unfinished work, never fictitious logged time.
   const end = advanceTracking(switched, dayEnd(s));
-  near(end.state.workMs, 440 * MIN); assert.equal(end.state.mode, "idle"); near(borrowedMs(end.state), 10 * MIN);
+  near(end.state.workMs, 440 * MIN); assert.equal(end.state.mode, "idle"); assert.equal(end.state.carryMs, undefined);
   assert.equal(end.events.at(-1).type, "day-end"); near(end.events.at(-1).at, dayEnd(s));
   assert.equal(actOnTracking(end.state, { type: "pause" }, "device-1", dayEnd(s)).mode, "idle");
 });
@@ -146,8 +145,7 @@ check("with nothing to work on, running out of idle time forces nothing", () => 
   for (const list of [[], [{ ...task("done"), completed: true }]]) {
     const out = advanceTracking(fresh(list), T + 400 * MIN);
     assert.equal(out.state.mode, "idle"); assert.deepEqual(out.events, []);
-    assert.ok(idleLeftMs(out.state) < 0);
-    near(borrowedMs(out.state), 0); assert.equal(idleSource(out.state), null);
+    near(idleLeftMs(out.state), 0); assert.equal(out.state.carryMs, undefined);
     assert.throws(() => actOnTracking(out.state, { type: "start" }, "device-1", T + 400 * MIN), /No unfinished/);
   }
 });
@@ -156,13 +154,13 @@ check("changing the plan keeps time worked and recalculates the rest", () => {
   const even = configureTracking(working, tasks, "18:00", T + 60 * MIN, { ...PLAN, workParts: 1 });
   near(even.workMs, 60 * MIN); near(workLeftMs(even), 240 * MIN); near(idleLeftMs(even), 300 * MIN);
   assert.equal(even.mode, "work"); assert.deepEqual(even.taskMs, working.taskMs);
-  // A smaller allowance than the idle time already used starts borrowing, not work.
+  // A smaller allowance than the idle time already used stays paused.
   const idle = advanceTracking(fresh(), T + 100 * MIN).state;
   const tight = configureTracking(idle, tasks, "18:00", T + 100 * MIN, { ...PLAN, workParts: 9 });
-  assert.ok(idleLeftMs(tight) < 0);
-  const borrowing = advanceTracking(tight, T + 101 * MIN);
-  assert.equal(borrowing.state.mode, "idle"); near(borrowedMs(borrowing.state), 41 * MIN);
-  assert.deepEqual(borrowing.events, [], "past boundaries are not replayed after settings change");
+  near(idleLeftMs(tight), 0);
+  const paused = advanceTracking(tight, T + 101 * MIN);
+  assert.equal(paused.state.mode, "idle"); near(paused.state.workMs, 0);
+  assert.deepEqual(paused.events, [], "past boundaries are not replayed after settings change");
   // A later start, mid-day, stops counting time before it.
   const later = configureTracking(working, tasks, "18:00", T + 60 * MIN, { ...PLAN, startTime: "12:00" });
   assert.equal(later.mode, "idle"); near(later.workMs, 60 * MIN);
@@ -199,129 +197,98 @@ check("idle reminders reach every device until one starts, pauses or resets the 
     assert.ok(ownsAlerts(claimed, "phone"), action.type); assert.ok(!ownsAlerts(claimed, "windows"), action.type);
   }
 });
-console.log("== borrowed idle across days ==");
-check("idle moves from today to tomorrow to successive days at exact boundaries", () => {
-  const initial = fresh();
-  assert.equal(idleSource(advanceTracking(initial, T + 150 * MIN - 1).state), null);
-  for (const [minutes, days, date, left] of [[150, 1, "2026-09-15", 150], [299, 1, "2026-09-15", 1], [300, 2, "2026-09-16", 150], [310, 2, "2026-09-16", 140], [450, 3, "2026-09-17", 150]]) {
-    const state = advanceTracking(initial, T + minutes * MIN).state;
-    assert.deepEqual(idleSource(state), { dayKey: date, days, idleLeftMs: left * MIN });
-    near(borrowedMs(state), (minutes - 150) * MIN);
-    assert.equal(state.mode, "idle"); near(state.workMs, 0); near(workLeftMs(state), 450 * MIN);
+console.log("== manual-only work and borrowing migration ==");
+check("idle stops at zero; paused work never moves, even hours later", () => {
+  for (const minutes of [150,160,300,450,599]) {
+    const s=advanceTracking(fresh(),T+minutes*MIN).state;
+    near(idleLeftMs(s),0); near(workLeftMs(s),450*MIN); near(s.workMs,0);
+    assert.equal(s.mode,"idle"); assert.deepEqual(s.taskMs,{}); assert.equal(s.carryMs,undefined);
   }
+  const s=actOnTracking(fresh(),{type:"start"},"desktop",T+160*MIN);
+  const paused=actOnTracking(s,{type:"pause"},"desktop",T+200*MIN);
+  const later=advanceTracking(paused,T+300*MIN).state;
+  near(later.workMs,40*MIN); assert.deepEqual(later.taskMs,paused.taskMs);
+  near(workLeftMs(later),410*MIN); near(idleLeftMs(later),0);
 });
-check("manual work freezes borrowed idle; pausing resumes it one second per second", () => {
-  let state = actOnTracking(fresh(), { type: "start" }, "desktop", T + 160 * MIN);
-  state = actOnTracking(state, { type: "pause" }, "desktop", T + 200 * MIN);
-  near(state.workMs, 40 * MIN); near(borrowedMs(state), 10 * MIN);
-  const next = advanceTracking(state, state.cursor + 1000).state;
-  near(borrowedMs(next), borrowedMs(state) + 1000);
-  near(idleSource(next).idleLeftMs, idleSource(state).idleLeftMs - 1000);
-  near(workLeftMs(next), workLeftMs(state));
+check("midnight and missed days start fresh, with no debt and no automatic work", () => {
+  const initial={...fresh(),controllerId:"desktop",revision:8};
+  let daily=initial;
+  for(let days=1;days<=7;days++) daily=advanceTracking(daily,T+days*24*60*MIN).state;
+  const once=advanceTracking(initial,daily.cursor);
+  assert.deepEqual(once.state,daily); assert.deepEqual(once.events,[]);
+  assert.deepEqual(dayBudget(daily),dayBudget(fresh())); assert.equal(daily.carryMs,undefined);
+  near(daily.workMs,0); assert.deepEqual(daily.taskMs,{}); assert.equal(daily.mode,"idle");
+  assert.equal(daily.controllerId,"desktop"); assert.equal(daily.revision,8);
 });
-check("midnight consumes future idle without resetting debt or charging overnight", () => {
-  const tomorrow = T + 24 * 60 * MIN;
-  const initial = { ...fresh(), controllerId: "desktop", revision: 8 };
-  const ended = advanceTracking(initial, dayEnd(initial)).state;
-  near(borrowedMs(ended), 450 * MIN);
-  near(borrowedMs(advanceTracking(ended, T + 15 * 60 * MIN).state), 450 * MIN);
-  const out = advanceTracking(ended, tomorrow - 60 * MIN);
-  assert.deepEqual(out.events, []); assert.equal(out.state.mode, "idle");
-  near(out.state.carryMs, 450 * MIN); near(out.state.workMs, 0); assert.deepEqual(out.state.taskMs, {});
-  assert.equal(out.state.controllerId, "desktop"); assert.equal(out.state.revision, 8);
-  assert.deepEqual(dayBudget(out.state), { workMs: 600 * MIN, idleMs: 0, carriedMs: 150 * MIN });
-  near(borrowedMs(out.state), 300 * MIN);
-  const next = advanceTracking(out.state, tomorrow).state;
-  near(borrowedMs(next), 300 * MIN);
-  assert.deepEqual(idleSource(next), { dayKey: "2026-09-18", days: 3, idleLeftMs: 150 * MIN });
-  const working = actOnTracking(next, { type: "start" }, "desktop", tomorrow);
-  const completed = advanceTracking(working, dayEnd(working)).state;
-  near(completed.workMs, 600 * MIN); near(borrowedMs(completed), 300 * MIN);
-  assert.equal(shouldStartWorking(completed), false);
+const borrowingSnapshot=(overrides={})=>{
+  const s={...fresh(),carryMs:60*MIN,...overrides}; delete s.idlePolicyVersion; return s;
+};
+check("migration removes borrowed debt but preserves every logged task and total", () => {
+  const old=borrowingSnapshot({cursor:T+300*MIN,workMs:120*MIN,taskMs:{first:80*MIN,second:40*MIN},revision:17,controllerId:"desktop"});
+  const copy=JSON.stringify(old);
+  const s=advanceTracking(parseTracking(JSON.parse(copy)),T+330*MIN).state;
+  near(s.workMs,old.workMs); assert.deepEqual(s.taskMs,old.taskMs); assert.deepEqual(s.tasks,old.tasks);
+  assert.equal(s.controllerId,old.controllerId); assert.equal(s.revision,old.revision);
+  assert.equal(s.mode,"idle"); assert.equal(s.carryMs,undefined); assert.equal(s.idlePolicyVersion,2);
+  assert.deepEqual(dayBudget(s),{workMs:450*MIN,idleMs:150*MIN}); assert.equal(JSON.stringify(old),copy);
+  assert.deepEqual(advanceTracking(parseTracking(JSON.parse(JSON.stringify(s))),s.cursor).state,s);
 });
-check("a small deficit reduces tomorrow's idle and increases its work goal exactly once", () => {
-  const initial = actOnTracking(fresh(), { type: "start" }, "desktop", T + 160 * MIN);
-  const tomorrow = advanceTracking(initial, T + 24 * 60 * MIN).state;
-  near(tomorrow.carryMs, 10 * MIN);
-  assert.deepEqual(dayBudget(tomorrow), { workMs: 460 * MIN, idleMs: 140 * MIN, carriedMs: 10 * MIN });
-  near(borrowedMs(tomorrow), 0);
-  const again = advanceTracking(parseTracking(JSON.parse(JSON.stringify(tomorrow))), tomorrow.cursor).state;
-  assert.deepEqual(again, tomorrow);
-  const reset = actOnTracking(tomorrow, { type: "reset" }, "phone", tomorrow.cursor + MIN);
-  near(reset.carryMs, 10 * MIN); near(reset.workMs, 0);
-  assert.deepEqual(dayBudget(reset), dayBudget(tomorrow));
+check("migration retains active elapsed work even above the new work goal", () => {
+  const old=borrowingSnapshot({tasks:[task("a")],cursor:T+440*MIN,workMs:440*MIN,taskMs:{a:440*MIN},mode:"work",taskId:"a",controllerId:"desktop"});
+  const s=advanceTracking(old,T+460*MIN).state;
+  near(s.workMs,460*MIN); near(s.taskMs.a,460*MIN); assert.equal(s.mode,"idle");
+  assert.equal(s.carryMs,undefined); near(workLeftMs(s),0); assert.equal(shouldStartWorking(s),false);
+  near(advanceTracking(s,T+470*MIN).state.workMs,460*MIN);
 });
-check("offline catch-up and daily checkpoints produce the same carried balance", () => {
-  const initial = fresh();
-  let daily = initial;
-  for (let days = 1; days <= 7; days++) daily = advanceTracking(daily, T + days * 24 * 60 * MIN).state;
-  const once = advanceTracking(initial, daily.cursor).state;
-  assert.deepEqual(once, daily); near(once.carryMs, 7 * 450 * MIN);
-  const restored = parseTracking(JSON.parse(JSON.stringify(once)));
-  assert.deepEqual(advanceTracking(restored, restored.cursor).state, once);
+check("migration preserves elapsed per-task allocation and an explicit task selection", () => {
+  const old=borrowingSnapshot({tasks:[task("a"),task("b")],cursor:T+240*MIN,workMs:240*MIN,taskMs:{a:240*MIN},mode:"work",taskId:"a",controllerId:"desktop"});
+  // The old goal is 510m: 255 per task, so the next 20m splits 15/5.
+  const s=advanceTracking(old,T+260*MIN).state;
+  near(s.taskMs.a,255*MIN); near(s.taskMs.b,5*MIN); near(s.workMs,260*MIN); assert.equal(s.taskId,"b");
+  const chosen=borrowingSnapshot({tasks:[task("a"),task("b")],mode:"work",taskId:"b",chosen:true});
+  const selected=advanceTracking(chosen,T+10*MIN).state;
+  assert.equal(selected.taskId,"b"); assert.equal(selected.chosen,true); near(selected.taskMs.b,10*MIN);
 });
-check("upgrading old timers never retrospectively bills days before borrowing existed", () => {
-  const old = fresh(); delete old.carryMs;
-  const upgraded = advanceTracking(old, T + 7 * 24 * 60 * MIN).state;
-  near(upgraded.carryMs, 0); near(upgraded.workMs, 0);
-  const sameDay = advanceTracking(old, T + 160 * MIN).state;
-  near(sameDay.carryMs, 0); near(borrowedMs(sameDay), 10 * MIN);
-  near(advanceTracking(sameDay, T + 24 * 60 * MIN).state.carryMs, 450 * MIN);
+check("over-target history and clock rollback cannot erase or duplicate tracked time", () => {
+  const old=borrowingSnapshot({cursor:T+550*MIN,workMs:510*MIN,taskMs:{first:510*MIN}});
+  assert.deepEqual(advanceTracking(old,old.cursor-1000).state,old);
+  const s=advanceTracking(old,old.cursor).state;
+  near(s.workMs,510*MIN); assert.deepEqual(s.taskMs,old.taskMs); assert.equal(s.carryMs,undefined);
+  near(workLeftMs(s),0); assert.equal(describeFocus(s,taskProgress(s),true).advice,null);
 });
-check("completed work and empty task lists never start borrowing", () => {
-  const started = actOnTracking(fresh(), { type: "start" }, "desktop", T);
-  for (const initial of [started, fresh([]), fresh(tasks.map(t => ({ ...t, completed: true })))]) {
-    const state = advanceTracking(initial, dayEnd(initial)).state;
-    near(borrowedMs(state), 0); assert.equal(idleSource(state), null);
-    assert.equal(shouldStartWorking(state), false);
-    near(advanceTracking(state, T + 24 * 60 * MIN).state.carryMs, 0);
+check("settings changes keep tracked history and do not restart an exhausted timer", () => {
+  const initial=actOnTracking(fresh(),{type:"start"},"desktop",T);
+  const paused=actOnTracking(initial,{type:"pause"},"desktop",T+40*MIN);
+  const s=configureTracking(paused,tasks,"18:00",T+400*MIN,{...PLAN,workParts:1});
+  near(s.workMs,40*MIN); assert.deepEqual(s.taskMs,paused.taskMs);
+  assert.equal(s.mode,"idle"); near(idleLeftMs(s),0); assert.equal(s.carryMs,undefined);
+});
+check("shared focus shows Paused and freezes the work clock until Track", () => {
+  const s=advanceTracking(fresh(),T+160*MIN).state, f=describeFocus(s,taskProgress(s),true);
+  assert.equal(f.label,"PAUSED"); near(f.clock,450*MIN);
+  assert.equal(f.clockLabel,"Work time left today — paused");
+  assert.deepEqual(f.idleStat,{label:"Idle left",value:0}); assert.match(f.hint,/No work is being tracked/);
+  const later=advanceTracking(s,T+200*MIN).state;
+  near(describeFocus(later,taskProgress(later),true).clock,f.clock);
+  const started=actOnTracking(s,{type:"start",taskId:"second"},"desktop",s.cursor);
+  const worked=advanceTracking(started,s.cursor+MIN).state;
+  near(worked.taskMs.second,MIN); assert.equal(describeFocus(worked,taskProgress(worked),true).label,"WORKING ON");
+  near(describeFocus(worked,taskProgress(worked),true).clock,f.clock-MIN);
+});
+check("an exhausted timer never repeats idle reminders after migration", () => {
+  const old=borrowingSnapshot({cursor:T+200*MIN}), s=advanceTracking(old,old.cursor).state;
+  assert.deepEqual(upcomingTrackingEvents(s,s.cursor),[]);
+  for(let i=1;i<=10;i++) assert.deepEqual(advanceTracking(s,s.cursor+i*1000).events,[]);
+});
+check("old borrowing balances are accepted only for migration, not future day budgets", () => {
+  for(const carryMs of [0,60*MIN,10_000*24*60*MIN]) {
+    const old=parseTracking(borrowingSnapshot({carryMs})); assert.ok(old);
+    const s=advanceTracking(old,old.cursor).state;
+    assert.equal(s.carryMs,undefined); assert.equal(s.idlePolicyVersion,2);
+    assert.deepEqual(dayBudget(s),dayBudget(fresh()));
   }
-});
-check("already exhausted idle does not repeat reminders on every tick", () => {
-  let state = { ...fresh(), carryMs: 200 * MIN };
-  for (let i = 1; i <= 10; i++) {
-    const out = advanceTracking(state, T + i * 1000);
-    assert.deepEqual(out.events, []); state = out.state;
-  }
-  assert.deepEqual(upcomingTrackingEvents(state, state.cursor), []);
-  near(state.workMs, 0); near(borrowedMs(state), 50 * MIN + 10_000);
-});
-check("future idle uses the account's actual DST day length", () => {
-  for (const [at, nextDay, allowance] of [["2026-03-07T06:00:00Z", "2026-03-08", 60], ["2026-10-31T05:00:00Z", "2026-11-01", 120]]) {
-    const start = Date.parse(at);
-    const initial = createTracking([task("a")], "04:00", "America/Toronto", start, { startTime: "01:00", workParts: 1, idleParts: 1 });
-    const state = advanceTracking(initial, start + 100 * MIN).state;
-    assert.deepEqual(idleSource(state), { dayKey: nextDay, days: 1, idleLeftMs: (allowance - 10) * MIN });
-    const tomorrow = advanceTracking(state, start + 24 * 60 * MIN).state;
-    near(tomorrow.carryMs, 90 * MIN);
-    near(dayBudget(tomorrow).idleMs, Math.max(0, allowance - 90) * MIN);
-  }
-});
-check("plan edits preserve incoming carry and re-evaluate future idle without stale caches", () => {
-  const state = { ...advanceTracking(fresh(), T + 310 * MIN).state, carryMs: 20 * MIN };
-  assert.equal(idleSource(state).days, 2);
-  const changed = configureTracking(state, state.tasks, state.endTime, state.cursor, { ...PLAN, workParts: 1 });
-  near(changed.carryMs, 20 * MIN); near(changed.workMs, 0);
-  assert.deepEqual(idleSource(changed), { dayKey: "2026-09-15", days: 1, idleLeftMs: 270 * MIN });
-});
-check("shared focus labels follow the borrowed day and never hide pause", () => {
-  const state = advanceTracking(fresh(), T + 160 * MIN).state;
-  const focus = describeFocus(state, taskProgress(state), true);
-  assert.equal(focus.label, "IDLE · FROM TOMORROW"); near(focus.clock, 140 * MIN);
-  assert.equal(focus.clockLabel, "Idle time left from tomorrow"); near(focus.idleStat.value, 10 * MIN);
-  assert.equal(focus.canStart, true); assert.match(focus.advice, /Start working/);
-  const working = actOnTracking(state, { type: "start" }, "desktop", state.cursor);
-  assert.equal(describeFocus(working, taskProgress(working), true).advice, null);
-  assert.equal(actOnTracking(working, { type: "pause" }, "desktop", state.cursor).mode, "idle");
-});
-check("long borrowing balances are never silently capped and corrupt balances are rejected", () => {
-  const state = { ...fresh(), carryMs: 10_000 * 24 * 60 * MIN };
-  assert.ok(parseTracking(state));
-  near(borrowedMs(state), state.carryMs - 150 * MIN);
-  assert.equal(idleSource(state), null, "very distant dates use a balance instead of an expensive date lookup");
-  const focus = describeFocus(state, taskProgress(state), true);
-  assert.equal(focus.label, "IDLE · BORROWING"); near(focus.clock, borrowedMs(state));
-  for (const carryMs of [-1, Infinity, NaN, "100", Number.MAX_SAFE_INTEGER + 1]) assert.equal(parseTracking({ ...state, carryMs }), null);
+  for(const carryMs of [-1,Infinity,NaN,"100",Number.MAX_SAFE_INTEGER+1]) assert.equal(parseTracking(borrowingSnapshot({carryMs})),null);
+  assert.equal(parseTracking({...fresh(),idlePolicyVersion:99}),null);
 });
 
 console.log("== allocation ==");
@@ -567,10 +534,10 @@ check("after a reset, time already passed counts as idle", () => {
   const before=advanceTracking(actOnTracking(fresh([task("a"),task("b")],"10:00"),{type:"start"},"device-1",T),T+60*MIN).state;
   assert.equal(taskProgress(before)[0].doneToday,true);
   const reset=actOnTracking(before,{type:"reset"},"device-1",T+60*MIN);
-  near(workBudget(reset),90*MIN); near(idleLeftMs(reset),-30*MIN);
+  near(workBudget(reset),90*MIN); near(idleLeftMs(reset),0);
   assert.ok(taskProgress(reset).every(p=>!p.doneToday && p.trackedMs===0 && p.targetMs===45*MIN));
-  // The spent allowance becomes borrowed idle, not automatically tracked work.
-  near(borrowedMs(reset),30*MIN);
+  // Exhausted idle never creates tracked work or future debt.
+  assert.equal(reset.carryMs,undefined);
   assert.equal(advanceTracking(reset,T+61*MIN).state.mode,"idle");
 });
 check("reset checkpoint cannot replay old time or old alerts", () => {
@@ -648,7 +615,7 @@ check("account time zone governs midnight, DST and the length of the day", () =>
   // 01:00–04:00 on the spring-forward night is two real hours, so one of work at 1:1.
   const spring={dayKey:"2026-03-08",endTime:"04:00",timeZone:"America/Toronto",plan:{startTime:"01:00",workParts:1,idleParts:1}};
   assert.equal(new Date(dayStart(spring)).toISOString(),"2026-03-08T06:00:00.000Z");
-  assert.deepEqual(dayBudget(spring),{workMs:60*MIN,idleMs:60*MIN,carriedMs:0});
+  assert.deepEqual(dayBudget(spring),{workMs:60*MIN,idleMs:60*MIN});
 });
 check("clock rollback cannot subtract or duplicate tracked time", () => {
   const s=advanceTracking(actOnTracking(fresh(),{type:"start"},"device-1",T),T+20*MIN).state;
@@ -834,7 +801,7 @@ check("30 logged minutes protect a task, and nothing reads as skipped once the w
   const over=advanceTracking(actOnTracking(fresh([task("a"),task("b"),task("far","2026-11-13")]),{type:"start"},"device-1",T),dayEnd(fresh())).state;
   near(workLeftMs(over),0); assert.ok(taskProgress(over).every(p=>!p.skipped));
 });
-check("randomized days conserve actual work and borrow deficits when left idle", () => {
+check("randomized days conserve actual work and never count paused time", () => {
   let seed=73191;
   const random=()=>{ seed=(Math.imul(seed,1664525)+1013904223)>>>0; return seed/2**32; };
   for(let trial=0;trial<300;trial++) {
@@ -857,7 +824,7 @@ check("randomized days conserve actual work and borrow deficits when left idle",
     for(const begin of [s, canTrackWork(s)&&unfinished.length ? actOnTracking(s,{type:"start"},"test-device",s.cursor) : s]) {
       const end=advanceTracking(begin,dayEnd(begin)).state;
       if(begin.mode==="idle") {
-        near(end.workMs,s.workMs); near(borrowedMs(end),available);
+        near(end.workMs,s.workMs); near(idleLeftMs(end),0); assert.equal(end.carryMs,undefined);
         assert.equal(end.mode,"idle"); continue;
       }
       assert.ok(Math.abs(end.workMs-s.workMs-available)<0.01,JSON.stringify({trial,available,plan}));
@@ -998,25 +965,26 @@ await pg.query("UPDATE tracking SET state=$1 WHERE user_id=$2",[JSON.stringify(b
 const loaded=await loadTracking("timer-alice");
 assert.equal(loaded.mode,"idle"); near(loaded.workMs,90*MIN); assert.equal("restMs" in loaded,false); count++;
 await pg.query("DELETE FROM users WHERE id = $1",["timer-alice"]); assert.equal(await loadTracking("timer-alice"),null); count++;
-// Two devices crossing midnight share one persisted carry balance, not two debts.
+// Two devices crossing midnight share one persisted fresh day, without debt.
 await pg.query("INSERT INTO users (id,username,username_lower,password_hash,created_at) VALUES ($1,$1,$1,'test',$2)", ["timer-carry", new Date(T).toISOString()]);
 const lateStart = await commandTracking("timer-carry", 0, { type: "start" }, "desktop", "UTC", tasks, "18:00", PLAN, T + 160 * MIN);
 const nextMorning = T + 24 * 60 * MIN;
 const [rolled, duplicate] = await Promise.all([readAccountTracking("timer-carry", nextMorning), readAccountTracking("timer-carry", nextMorning)]);
-assert.deepEqual(duplicate, rolled); near(rolled.carryMs, 10 * MIN);
+assert.deepEqual(duplicate, rolled); assert.equal(rolled.carryMs, undefined);
 assert.equal(rolled.revision, lateStart.revision + 1); assert.equal(rolled.controllerId, "desktop"); count++;
 assert.deepEqual(await readAccountTracking("timer-carry", nextMorning + MIN), rolled);
 assert.deepEqual(await loadTracking("timer-carry"), rolled); count++;
 await assert.rejects(commandTracking("timer-carry", lateStart.revision, { type: "reset" }, "stale", "UTC", tasks, "18:00", PLAN, nextMorning), TrackingConflict);
 assert.deepEqual(await loadTracking("timer-carry"), rolled); count++;
 const carryReset = await commandTracking("timer-carry", rolled.revision, { type: "reset" }, "phone", "UTC", tasks, "18:00", PLAN, nextMorning + MIN);
-near(carryReset.carryMs, 10 * MIN); assert.equal(carryReset.mode, "idle");
-assert.deepEqual(dayBudget(carryReset), { workMs: 460 * MIN, idleMs: 140 * MIN, carriedMs: 10 * MIN }); count++;
+assert.equal(carryReset.carryMs, undefined); assert.equal(carryReset.mode, "idle");
+assert.deepEqual(dayBudget(carryReset), { workMs: 450 * MIN, idleMs: 150 * MIN }); count++;
 // An old client state upgrades at one revision-checked checkpoint.
-const preBorrowing = { ...fresh(), revision: carryReset.revision }; delete preBorrowing.carryMs;
+const preBorrowing = borrowingSnapshot({ revision: carryReset.revision, cursor: T + 120 * MIN, workMs: 90 * MIN, taskMs: { first: 90 * MIN }, controllerId: "desktop" });
 await pg.query("UPDATE tracking SET state=$1 WHERE user_id=$2", [JSON.stringify(preBorrowing), "timer-carry"]);
 const [upgradeA, upgradeB] = await Promise.all([readAccountTracking("timer-carry", T + 160 * MIN), readAccountTracking("timer-carry", T + 160 * MIN)]);
-assert.deepEqual(upgradeA, upgradeB); near(upgradeA.carryMs, 0); near(upgradeA.workMs, 0);
+assert.deepEqual(upgradeA, upgradeB); assert.equal(upgradeA.carryMs, undefined); near(upgradeA.workMs, 90 * MIN);
+assert.deepEqual(upgradeA.taskMs, preBorrowing.taskMs); assert.equal(upgradeA.controllerId, "desktop"); assert.equal(upgradeA.idlePolicyVersion, 2);
 assert.equal(upgradeA.revision, carryReset.revision + 1);
 assert.deepEqual(await readAccountTracking("timer-carry", T + 161 * MIN), upgradeA); count++;
 await pg.query("DELETE FROM users WHERE id=$1", ["timer-carry"]);

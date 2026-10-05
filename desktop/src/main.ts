@@ -45,7 +45,7 @@ let lastShellUpdate = "";
 let suspended = false;
 let onBattery = false;
 const notifications = new Set<Notification>();
-const stats = { publishes: 0, sends: 0 };
+const stats = { publishes: 0, sends: 0, timerWakeups: 0 };
 let icons: Record<string, NativeImage>;
 let settings: Settings = { ...defaults };
 let controllerId = "";
@@ -95,7 +95,7 @@ function schedule(view: DesktopState) {
   }
   const next = eventTimes.find(t => t > s.cursor);
   clearTimeout(wakeTimer);
-  wakeTimer = setTimeout(() => engine.tick(), wakeDelay(visible && hasLiveCountdown(s), next === undefined ? null : next - s.cursor));
+  wakeTimer = setTimeout(() => { stats.timerWakeups++; engine.tick(); }, wakeDelay(visible && hasLiveCountdown(s), next === undefined ? null : next - s.cursor));
   // A nearer foreground deadline can shorten an existing background wait;
   // ordinary repainting must never postpone a scheduled server refresh.
   const due = Date.now() + syncDelay(s.mode !== "idle", visible, onBattery);
@@ -197,7 +197,7 @@ function trayMenu() {
   const menu = Menu.buildFromTemplate([
     { label: `${m.label}: ${m.title.slice(0, 65)}`, enabled: false },
     { label: `Worked ${formatDuration(v.state.workMs)} · Work left ${formatDuration(m.workLeft)}`, enabled: false },
-    { label: v.connected ? (m.borrowed >= 1000 ? `Borrowed ${formatDuration(m.borrowed)} from future idle time` : `Idle left ${formatDuration(m.idleLeft)}`) : "Offline — reconnect to sync", enabled: false },
+    { label: v.connected ? `Idle left ${formatDuration(m.idleLeft)}` : "Offline — reconnect to sync", enabled: false },
     { type: "separator" },
     { label: v.state.mode === "idle" ? "Start working" : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode === "idle" ? m.canStart : m.canPause), click: () => void toggle() },
     { label: "Track a task", enabled: v.ready && !v.busy, submenu: m.entries.filter(p => p.weight > 0 && !p.doneToday).slice(0, 50).map(p => ({ label: `${p.task.title.slice(0, 60)} · ${formatDuration(p.remainingMs)} left`, type: "radio" as const, checked: p.task.id === v.state.taskId, click: () => void engine.command({ type: "start", taskId: p.task.id }).catch(() => {}) })) },

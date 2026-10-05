@@ -23,8 +23,8 @@ release should be signed with the project's own code-signing certificate.
 - Alerts follow the device that last started, paused or reset tracking, avoiding a
   second set of PC alerts for a timer controlled from the phone or website.
   Until any device has, idle reminders alert everywhere.
-- Once today's idle time runs out, the clock drains tomorrow's idle time, then
-  later days'. Borrowed time carries across midnight and syncs across clients.
+- Once today's idle time runs out, the timer shows Paused and the remaining work
+  clock freezes until Start working or Track. Nothing is borrowed from other days.
   Tracking never starts on its own, and Pause is always available while working.
 - Quitting does **not** pause an account timer. Pause tracking first if finished.
 
@@ -33,7 +33,7 @@ release should be signed with the project's own code-signing certificate.
 Hidden renderers are background-throttled and receive no live state broadcasts.
 The mini window is created only when opened and freed when hidden. Visible active
 work and idle countdowns update once per second with no continuous animation;
-completed/out-of-day displays do not need a one-second loop. Background
+paused-after-idle, completed and out-of-day displays do not need a one-second loop. Background
 timer wakeups are scheduled for task and idle-time transitions or a one-minute heartbeat,
 not a one-second loop. Account polling is 5 seconds when visible/active on AC,
 15 seconds active in the background on AC, 30 seconds active on battery, and

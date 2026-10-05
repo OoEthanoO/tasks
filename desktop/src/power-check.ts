@@ -3,7 +3,7 @@ import { addDays, toKey } from "../../lib/dates";
 import type { TrackerEngine } from "./engine";
 
 /** How often the shell did work, so a CPU figure can be read against its cause. */
-export type PowerStats = { publishes: number; sends: number };
+export type PowerStats = { publishes: number; sends: number; timerWakeups: number };
 
 type Options = {
   main: BrowserWindow;
@@ -79,7 +79,7 @@ export async function runPowerCheck(o: Options) {
     for (const [pid, now] of used()) cpu[now.type] = (cpu[now.type] ?? 0) + (now.seconds - (start.get(pid)?.seconds ?? 0)) * 1000;
     const total = Object.values(cpu).reduce((a, b) => a + b, 0);
     results.push({ scenario: name, cpuMsPerMin: perMinute(total), ...Object.fromEntries(Object.entries(cpu).map(([k, v]) => [k, perMinute(v)])),
-      publishesPerMin: perMinute(o.stats.publishes - before.publishes), ipcSendsPerMin: perMinute(o.stats.sends - before.sends) });
+      publishesPerMin: perMinute(o.stats.publishes - before.publishes), ipcSendsPerMin: perMinute(o.stats.sends - before.sends), timerWakeupsPerMin: perMinute(o.stats.timerWakeups - before.timerWakeups) });
   }
   console.log("POWER_CHECK " + JSON.stringify(results));
 }

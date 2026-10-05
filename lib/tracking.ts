@@ -4,14 +4,10 @@ import { compareListOrder } from "./grouping";
 import { DEFAULT_PLAN, DayPlan, samePlan, sanitizePlan } from "./plan";
 import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 
-export const RESET_PROGRESS_CONFIRMATION = "Clear all of today’s tracked work? Tracking will pause on your synced devices, and time already passed today will count as idle. Your tasks, work day settings and any work carried over from earlier days stay unchanged. This cannot be undone.";
+export const RESET_PROGRESS_CONFIRMATION = "Clear all of today’s tracked work? Tracking will pause on your synced devices, and time already passed today will count as idle. Your tasks and work day settings stay unchanged. This cannot be undone.";
 const EPSILON = 1;
-const MAX_CARRY_MS = Number.MAX_SAFE_INTEGER;
 const formatters = new Map<string, Intl.DateTimeFormat>();
 const wallCache = new Map<string, number>();
-// Cache future allowances so a visible second-by-second clock does not walk
-// the calendar on every repaint. Settings and timezone are part of the key.
-const futureIdleCache = new Map<string, { totals: number[]; dates: string[] }>();
 
 /**
  * One timestamp-based session, not one counter per device. Only work is
@@ -28,11 +24,9 @@ export type TrackingState = {
   endTime: string;
   /** Start time and work:idle ratio. Absent on timers from before them, which use the default. */
   plan?: DayPlan;
-  /**
-   * Work carried in from earlier days: the idle time they borrowed past their
-   * own allowance. It takes the place of this day's idle time, and whatever
-   * this day cannot hold passes on to the next. Absent marks a pre-carry timer.
-   */
+  /** Checkpointed manual-only tracking, with no borrowed idle or carried work. */
+  idlePolicyVersion?: 2;
+  /** Legacy input only. Preserve elapsed work under its old goal once, then remove. */
   carryMs?: number;
   cursor: number;
   tasks: Task[];
@@ -135,96 +129,35 @@ export function dayStart(state: Pick<TrackingState, "dayKey" | "timeZone" | "pla
   return wallClock(state.dayKey, dayPlan(state).startTime, state.timeZone);
 }
 type DayFields = Pick<TrackingState, "dayKey" | "endTime" | "timeZone" | "plan">;
-/** A day's start–end window split by the ratio, before any carried work. */
-function planBudget(state: DayFields): { workMs: number; idleMs: number } {
+/** A day's start–end window split by the ratio. No work or idle carries between days. */
+export function dayBudget(state: DayFields): { workMs: number; idleMs: number } {
   const window = Math.max(0, dayEnd(state) - dayStart(state));
   const { workParts, idleParts } = dayPlan(state);
   const workMs = Math.round(window * workParts / (workParts + idleParts));
   return { workMs, idleMs: window - workMs };
 }
-/**
- * The day's work goal and idle allowance: the start–end window split by the
- * ratio, with work carried in from earlier days taking the place of idle time.
- */
-export function dayBudget(state: DayFields & Pick<TrackingState, "carryMs">): { workMs: number; idleMs: number; carriedMs: number } {
-  const base = planBudget(state);
+/** Only for checkpointing work already in progress when retiring the borrowing policy. */
+function legacyBorrowingBudget(state: TrackingState): { workMs: number; idleMs: number } {
+  const base = dayBudget(state);
   const carriedMs = Math.min(state.carryMs ?? 0, base.idleMs);
-  return { workMs: base.workMs + carriedMs, idleMs: base.idleMs - carriedMs, carriedMs };
+  return { workMs: base.workMs + carriedMs, idleMs: base.idleMs - carriedMs };
 }
-/** Work still to track today. Idling never shrinks it: idle time past the allowance is borrowed from tomorrow instead. */
+/** Work still to track today. Pausing never logs work or spends a future day's time. */
 export function workLeftMs(state: TrackingState): number {
   return Math.max(0, dayBudget(state).workMs - state.workMs);
 }
 /**
  * Idle time still allowed: the allowance minus every untracked minute since
- * the day started. Work left plus idle left is the time left in the day.
- * Negative once idle time is borrowed from later days.
+ * the day started, stopping at zero. Once it is exhausted, the timer stays
+ * paused until Start or Track; unfinished work does not carry into tomorrow.
  */
 export function idleLeftMs(state: TrackingState, now = state.cursor): number {
   const elapsed = Math.max(0, Math.min(now, dayEnd(state)) - dayStart(state));
-  return dayBudget(state).idleMs - Math.max(0, elapsed - state.workMs);
+  return Math.max(0, dayBudget(state).idleMs - Math.max(0, elapsed - state.workMs));
 }
 /** Whether work can be tracked now: inside the day, with work left to do. */
 export function canTrackWork(state: TrackingState, now = state.cursor): boolean {
   return now >= dayStart(state) && now < dayEnd(state) && workLeftMs(state) > EPSILON;
-}
-/** Work is owed only while a task is open; with nothing to work on, nothing carries over. */
-function owesWork(state: TrackingState): boolean {
-  return state.tasks.some(t => !t.completed);
-}
-/**
- * Idle time borrowed from the days after this one: carried work too big for
- * this day's idle time, plus untracked time past today's allowance while work
- * is owed. At the day's end it is carried into the next day as work.
- */
-export function borrowedMs(state: TrackingState, now = state.cursor): number {
-  const passOn = (state.carryMs ?? 0) - dayBudget(state).carriedMs;
-  const overdraft = owesWork(state) ? Math.max(0, -idleLeftMs(state, now)) : 0;
-  return passOn + overdraft;
-}
-function laterDay(dayKey: string, days: number): string {
-  const [y, m, d] = dayKey.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
-}
-/**
- * Once today's idle time is used, untracked time comes out of later days'
- * idle time: tomorrow's, then the day after's, and so on. The day being drawn
- * on and how much of its idle time is left, or null while today's lasts.
- */
-export function idleSource(state: TrackingState, now = state.cursor): { dayKey: string; days: number; idleLeftMs: number } | null {
-  if (idleLeftMs(state, now) > 0 || !owesWork(state) || !canTrackWork(state, now)) return null;
-  const borrowed = borrowedMs(state, now);
-  const key = JSON.stringify([state.dayKey, state.timeZone, state.endTime, dayPlan(state)]);
-  let cached = futureIdleCache.get(key);
-  if (!cached) {
-    if (futureIdleCache.size >= 8) futureIdleCache.clear();
-    cached = { totals: [0], dates: [] };
-    futureIdleCache.set(key, cached);
-  }
-  // Bound only the date label lookup, never the carried balance. Very distant
-  // debt is displayed as an accumulating borrowed-time balance instead.
-  while (cached.totals[cached.totals.length - 1] <= borrowed && cached.dates.length < 3660) {
-    const dayKey = laterDay(state.dayKey, cached.dates.length + 1);
-    const { idleMs } = planBudget({ ...state, dayKey });
-    if (idleMs <= 0) return null;
-    cached.dates.push(dayKey);
-    cached.totals.push(cached.totals[cached.totals.length - 1] + idleMs);
-  }
-  if (cached.totals[cached.totals.length - 1] <= borrowed) return null;
-  let low = 1, high = cached.dates.length;
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-    if (cached.totals[mid] <= borrowed) low = mid + 1; else high = mid;
-  }
-  return { dayKey: cached.dates[low - 1], days: low, idleLeftMs: cached.totals[low] - borrowed };
-}
-/** "tomorrow", a weekday within the week, or a date further out. */
-export function borrowedDayName(source: { dayKey: string; days: number }): string {
-  if (source.days === 1) return "tomorrow";
-  const date = new Date(`${source.dayKey}T12:00:00Z`);
-  return source.days < 7
-    ? new Intl.DateTimeFormat("en", { weekday: "long", timeZone: "UTC" }).format(date)
-    : new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(date);
 }
 /** Under half the idle allowance is left (or none was), work remains and there is a task to start: time to start. */
 export function shouldStartWorking(state: TrackingState, now = state.cursor): boolean {
@@ -256,9 +189,9 @@ export function trackingConfigKey(tasks: Task[], endTime: string, plan: DayPlan 
 export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), plan: DayPlan = DEFAULT_PLAN, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): TrackingState {
   timeZone = validTimeZone(timeZone);
   return {
-    version: 1, allocationVersion: 2, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
+    version: 1, allocationVersion: 2, idlePolicyVersion: 2, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
     endTime, plan: { ...plan }, unweighted, minimumEnabled, minimumMinutes: sanitizeMinimumMinutes(minimumMinutes),
-    cursor: now, tasks, taskMs: {}, workMs: 0, carryMs: 0, mode: "idle", taskId: null, controllerId: null,
+    cursor: now, tasks, taskMs: {}, workMs: 0, mode: "idle", taskId: null, controllerId: null,
   };
 }
 
@@ -280,6 +213,9 @@ function waterLevel(open: { weight: number; trackedMs: number }[], available: nu
 
 /** Each task's share of the day's work goal, as daily targets. */
 export function taskProgress(state: TrackingState): TaskProgress[] {
+  return allocateTaskProgress(state, workLeftMs(state));
+}
+function allocateTaskProgress(state: TrackingState, available: number): TaskProgress[] {
   const minimumMs = sanitizeMinimumMinutes(state.minimumMinutes) * 60_000;
   const entries = state.tasks.map((task, index) => ({
     task, index, weight: taskWeight(task, state.dayKey, state.unweighted),
@@ -294,7 +230,7 @@ export function taskProgress(state: TrackingState): TaskProgress[] {
     const level = waterLevel(byRatio.filter(e => receives[e.index]), available);
     for (const e of open) if (receives[e.index]) remaining[e.index] = Math.max(0, e.weight * level - e.trackedMs);
   };
-  pour(workLeftMs(state));
+  pour(available);
   // In both modes, least important first (lowest weight; among equal weights, lowest
   // on the list), skip each task whose day would total under the minimum. Its share goes
   // only to the tasks above it, never sideways to less urgent ones, and the
@@ -361,7 +297,7 @@ function select(state: TrackingState, task: TaskProgress | undefined) {
  * same pure projection runs on the server, in the browser and after iOS wakes
  * up. No heartbeat or background JavaScript is needed to keep time accurately.
  */
-function integrateTracking(original: TrackingState, now: number, progressFor: typeof taskProgress): { state: TrackingState; events: TrackingEvent[] } {
+function integrateTracking(original: TrackingState, now: number, progressFor: typeof taskProgress, budgetFor: (state: TrackingState) => { workMs: number; idleMs: number } = dayBudget): { state: TrackingState; events: TrackingEvent[] } {
   const state: TrackingState = { ...original, taskMs: { ...original.taskMs }, mode: original.mode === "work" ? "work" : "idle" };
   const events: TrackingEvent[] = [];
   const emit = (type: TrackingEvent["type"], title: string, body: string, taskId = "", at = state.cursor) => {
@@ -371,10 +307,11 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
   };
   if (!Number.isFinite(now) || now < state.cursor) return { state, events };
   // Never restart automatically on a new day, even if a client slept overnight.
-  if (trackingDay(now, state.timeZone) !== state.dayKey) return rollOver(state, now, progressFor);
-  state.carryMs ??= 0;
+  if (trackingDay(now, state.timeZone) !== state.dayKey) {
+    return { state: { ...createTracking(state.tasks, state.endTime, state.timeZone, now, dayPlan(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId: state.controllerId }, events };
+  }
   const start = dayStart(state), end = dayEnd(state);
-  const { workMs: goal, idleMs: allowance } = dayBudget(state);
+  const { workMs: goal, idleMs: allowance } = budgetFor(state);
   const until = Math.min(now, end);
   // Each pass ends at a task, goal, idle-allowance or day boundary.
   for (let guard = 0; guard < state.tasks.length * 2 + 20; guard++) {
@@ -417,63 +354,42 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
       // millisecond below half, not while exactly half remains.
       const halfAt = Math.floor(runsOut - allowance / 2) + 1, soonAt = runsOut - 5 * 60_000;
       const crosses = (at: number) => at > state.cursor && at <= until;
-      const from = () => { const source = idleSource(state, runsOut); return source ? borrowedDayName(source) : "tomorrow"; };
       if (allowance > 0 && crosses(halfAt)) {
         emit("idle-half", "Time to start working", `Less than half of today’s idle time is left. ${formatDuration(goal - state.workMs)} of work is left.`, "", halfAt);
       }
       if (crosses(soonAt)) {
-        emit("idle-soon", "Idle time ends in 5 minutes", `After that, idle time comes out of ${from()}’s, and work you don’t finish today carries over.`, "", soonAt);
+        emit("idle-soon", "Idle time ends in 5 minutes", "Tracking will stay paused until you choose Start working or Track. Work is only counted while you track it.", "", soonAt);
       }
       if (crosses(runsOut)) {
-        emit("idle-out", "Today’s idle time is used", `Idle time now comes out of ${from()}’s. ${formatDuration(goal - state.workMs)} of work is left today.`, "", runsOut);
+        emit("idle-out", "Idle time is up — tracking paused", `Choose Start working or Track to resume. ${formatDuration(goal - state.workMs)} of work is left today.`, "", runsOut);
       }
     }
-    // Past the allowance, idle time is borrowed from later days; nothing is forced.
+    // Past the allowance, remain paused. Only an explicit Start/Track logs work.
     state.cursor = until;
     break;
   }
   if (now >= end && state.mode === "work") {
     state.cursor = Math.max(state.cursor, end);
     select(state, undefined);
-    const carried = borrowedMs(state, end);
-    emit("day-end", "Work day complete", carried > EPSILON
-      ? `Tracking has stopped for today. ${formatDuration(carried)} of work carries over to tomorrow.`
-      : "Tracking has stopped for today.");
+    emit("day-end", "Work day complete", "Tracking has stopped for today.");
   }
   state.cursor = now;
   return { state, events: events.sort((a, b) => a.at - b.at) };
 }
 
-/**
- * A new day starts paused, with the old day's borrowed idle time carried in
- * as work: whatever was left at its end, plus the whole work goal of every
- * day in between that went untracked.
- */
-function rollOver(original: TrackingState, now: number, progressFor: typeof taskProgress): { state: TrackingState; events: TrackingEvent[] } {
-  const state: TrackingState = { ...createTracking(original.tasks, original.endTime, original.timeZone, now, dayPlan(original), original.unweighted, original.minimumEnabled, original.minimumMinutes), revision: original.revision, controllerId: original.controllerId };
-  // Do not retrospectively charge missed days from before this feature existed.
-  if (original.carryMs === undefined) return { state, events: [] };
-  const end = dayEnd(original);
-  const finished = end > original.cursor && trackingDay(end, original.timeZone) === original.dayKey
-    ? integrateTracking(original, end, progressFor) : { state: original, events: [] };
-  let carry = borrowedMs(finished.state, end);
-  const today = trackingDay(now, original.timeZone);
-  for (let dayKey = laterDay(original.dayKey, 1); dayKey < today; dayKey = laterDay(dayKey, 1)) {
-    if (carry <= 0 && !owesWork(original)) break;
-    const missed: TrackingState = { ...finished.state, dayKey, carryMs: carry, workMs: 0, taskMs: {}, mode: "idle", taskId: null };
-    carry = borrowedMs(missed, dayEnd(missed));
-  }
-  state.carryMs = carry;
-  // Yesterday's alerts must not replay when a client wakes on a new day.
-  return { state, events: [] };
-}
-
 export function advanceTracking(original: TrackingState, now: number): { state: TrackingState; events: TrackingEvent[] } {
-  if (original.allocationVersion === 2) return integrateTracking(original, now, taskProgress);
-  // Old snapshots may be hours behind the live display. Integrate that elapsed
-  // work with the old rule first; only future time uses the corrected targets.
-  const result = integrateTracking(original, now, legacyTaskProgress);
+  if (original.allocationVersion === 2 && original.idlePolicyVersion === 2 && original.carryMs === undefined) return integrateTracking(original, now, taskProgress);
+  // Old snapshots can lag behind the display. First checkpoint actual elapsed
+  // work using its old allocation/goal, then discard debt, never logged work.
+  const budgetFor = original.idlePolicyVersion === 2 ? dayBudget : legacyBorrowingBudget;
+  const progressFor = original.allocationVersion === 2
+    ? (state: TrackingState) => allocateTaskProgress(state, Math.max(0, budgetFor(state).workMs - state.workMs))
+    : legacyTaskProgress;
+  const result = integrateTracking(original, now, progressFor, budgetFor);
+  if (!Number.isFinite(now) || now < original.cursor) return result;
   result.state.allocationVersion = 2;
+  result.state.idlePolicyVersion = 2;
+  delete result.state.carryMs;
   if (result.state.mode === "work") select(result.state, workingTask(result.state));
   return result;
 }
@@ -481,7 +397,7 @@ export function advanceTracking(original: TrackingState, now: number): { state: 
 /**
  * Preferences default to the timer's own, so task/end-time edits keep them.
  * A plan change keeps time already worked; the goal and allowance are simply
- * recalculated, so a smaller allowance can start borrowing at once.
+ * recalculated. Exhausting the idle allowance never starts tracking.
  */
 export function configureTracking(original: TrackingState, tasks: Task[], endTime: string, now: number, plan: DayPlan = dayPlan(original), unweighted = original.unweighted ?? false, minimumEnabled = original.minimumEnabled ?? true, minimumMinutes = original.minimumMinutes ?? DEFAULT_MINIMUM_MINUTES): TrackingState {
   const state = advanceTracking(original, now).state;
@@ -498,8 +414,7 @@ export function actOnTracking(original: TrackingState, action: TrackingAction, c
   if (action.type === "reset") {
     // A new checkpoint prevents any pre-reset elapsed time from being replayed.
     // The persistence layer increments the revision, just as for start/pause.
-    // Work carried over from earlier days is not today's progress, so it stays.
-    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, dayPlan(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId, ...(state.carryMs ? { carryMs: state.carryMs } : {}) };
+    return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, dayPlan(state), state.unweighted, state.minimumEnabled, state.minimumMinutes), revision: state.revision, controllerId };
   }
   if (action.type === "pause") {
     select(state, undefined);
@@ -544,6 +459,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   const s = value as TrackingState & Record<string, unknown>;
   if (s.version !== 1 || !Number.isSafeInteger(s.revision) || s.revision < 0 || !Number.isFinite(s.cursor) || s.cursor < 0 || s.cursor > 8.64e15) return null;
   if (s.allocationVersion !== undefined && s.allocationVersion !== 2) return null;
+  if (s.idlePolicyVersion !== undefined && s.idlePolicyVersion !== 2) return null;
   if (s.unweighted !== undefined && typeof s.unweighted !== "boolean") return null;
   if (s.minimumEnabled !== undefined && typeof s.minimumEnabled !== "boolean") return null;
   if (s.minimumMinutes !== undefined && (typeof s.minimumMinutes !== "number" || sanitizeMinimumMinutes(s.minimumMinutes) !== s.minimumMinutes)) return null;
@@ -554,7 +470,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (!["idle", "work", "rest"].includes(s.mode)) return null;
   if (s.taskId !== null && typeof s.taskId !== "string") return null;
   if (s.chosen !== undefined && s.chosen !== true) return null;
-  if (s.carryMs !== undefined && (typeof s.carryMs !== "number" || !Number.isFinite(s.carryMs) || s.carryMs < 0 || s.carryMs > MAX_CARRY_MS)) return null;
+  if (s.carryMs !== undefined && (typeof s.carryMs !== "number" || !Number.isFinite(s.carryMs) || s.carryMs < 0 || s.carryMs > Number.MAX_SAFE_INTEGER)) return null;
   if (s.controllerId !== null && typeof s.controllerId !== "string") return null;
   if ([s.workMs, ...Object.values(s.taskMs)].some(v => !Number.isFinite(v) || v < 0 || v > 86_400_000)) return null;
   // Snapshots from before priorities existed carry none; those weigh as low.

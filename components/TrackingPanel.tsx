@@ -102,7 +102,7 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, pl
             <p className="setting-help">{("notificationHelp" in t && typeof t.notificationHelp === "string") ? t.notificationHelp : "Browser alerts need this page open. Phone alerts can fire while locked. Alerts follow the device that last started, paused or reset tracking; until one has, every device alerts."}</p>
           </div>
           <div className="setting-section">
-            <p className="tracking-explainer">Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. Daily progress resets at midnight; borrowed idle carries over as work.</p>
+            <p className="tracking-explainer">Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. When idle time runs out, tracking stays paused until you start. Each day starts fresh at midnight.</p>
             <button type="button" className="btn btn-ghost reset-progress" disabled={!t.ready || t.busy} onClick={() => setConfirmReset(true)}>Reset today’s progress…</button>
           </div>
           <p className="settings-save-note">Settings save automatically.</p>

@@ -264,7 +264,7 @@ export function tasksWithoutPriority(raw: unknown): Set<string> {
  * anything on its own.
  */
 export function isEmptyState(state: AppState): boolean {
-  return state.tasks.length === 0 && state.schedule === null && !(state.tracking && (state.tracking.workMs > 0 || (state.tracking.carryMs ?? 0) > 0 || state.tracking.mode !== "idle"));
+  return state.tasks.length === 0 && state.schedule === null && !(state.tracking && (state.tracking.workMs > 0 || state.tracking.mode !== "idle"));
 }
 
 /**
@@ -291,7 +291,6 @@ export function summarizeState(state: AppState): string {
   }
   if (state.schedule) parts.push("a saved schedule");
   if (state.tracking && state.tracking.workMs > 0) parts.push("today's tracked time");
-  if ((state.tracking?.carryMs ?? 0) > 0) parts.push("carried-over work");
 
   if (parts.length === 0) return "nothing";
   if (parts.length === 1) return parts[0];

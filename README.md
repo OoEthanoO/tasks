@@ -204,36 +204,35 @@ Reaching a target alerts you and moves on to the next unfinished task down the
 list. Each task also has a Track button; a task picked with it stays until its
 target is met, then the list resumes. There are no breaks: pause whenever you like.
 
-Every minute of the work day that you are not tracking is **idle** time, counted
-down from the allowance, so work left plus idle left always equals the time left
-in the day. Once less than half of the allowance is left and work remains, the
+Every minute of the work day that you are not tracking uses **idle** time, counted
+down from the allowance to zero. Once less than half of the allowance is left and work remains, the
 app advises you to start working. Five minutes before the allowance runs out it
-warns you; when it runs out, further idle time drains tomorrow's idle allowance,
-then the following day's, and so on. The countdown names the day it is drawing
-from, and a Borrowed stat shows the total. Tracking never starts on its own,
-and you can always pause. Once all
+warns you; when it runs out, the timer shows **Paused** and the remaining work
+clock stays frozen until you choose **Start working** or **Track**. No time is
+borrowed from another day. Tracking never starts on its own, and you can always
+pause. If you use more than the idle allowance, there may not be enough time
+left to finish the day's work goal; untracked time never counts as work. Once all
 of the work time is tracked, tracking stops, Start is unavailable and the rest
 of the day is idle. Before the start time nothing counts and tracking cannot
 start.
 
 The start, end and split sit together under **Day settings** and follow your
 account to every device. Changing them mid-day keeps the work already tracked
-and recalculates the goal and the allowance, so a smaller allowance can start
-borrowing at once. Timers saved by older apps keep their tracked work; a break in
+and recalculates the goal and the allowance, so a smaller allowance can leave
+no idle time remaining. Timers saved by older apps keep their tracked work; a break in
 progress becomes idle time.
 
-Daily tracked counters reset at midnight; the new day begins idle. Borrowed idle
-survives as carried work: it replaces the next day's idle allowance with work,
-and any excess passes to subsequent days. Only configured work-day hours count,
-including days the app is closed while tasks remain open; overnight time does
-not add debt. Finishing all work or having no open tasks stops new borrowing.
+Daily tracked counters reset at midnight; the new day begins idle with its normal
+work goal and idle allowance. Neither unfinished work nor used-up idle time
+carries over. Upgrading an older borrowing timer discards its debt, but preserves
+today's total and per-task work, including elapsed work from a running session.
 The first device starting an account timer establishes its time zone, which all
-clients share. Upgrading an old timer does not retroactively charge prior days.
+clients share.
 
 Use **Reset today’s progress** to start fresh without waiting for midnight.
 After confirmation, it clears all of today's tracked work and pauses the shared
-timer. Time already passed today still counts as idle, so a late reset can start
-borrowing. Carried work, tasks, permanent completion and the work day settings stay
+timer. Time already passed today still counts as idle, so a late reset can leave
+no idle time remaining. Tasks, permanent completion and the work day settings stay
 unchanged. The reset cannot be undone.
 
 Signed-in users share one timestamp-based session in a separate Postgres row.
@@ -247,8 +246,8 @@ allocation is preserved before the corrected calculation starts. Refresh web
 clients and install the latest mobile build to use the same calculation everywhere.
 
 Enable alerts to receive task completion, the advice to start working at half the
-idle allowance, a warning five minutes before idle time runs out, when borrowing
-starts, and the end of today's work. The button reads the device's current permission
+idle allowance, a warning five minutes before idle time runs out, when idle time
+is used up, and the end of today's work. The button reads the device's current permission
 on launch and on returning to the app, so its status survives refreshes and
 reflects permission changes in settings. iOS schedules these with the operating system;
 web notifications require the page to remain open. Alerts belong to the device

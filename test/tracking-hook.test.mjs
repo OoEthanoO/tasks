@@ -162,27 +162,39 @@ try {
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 guest minimum toggle persistence scenario passed");
 
-// A legacy guest must persist the carry-policy checkpoint even without a
-// command, so a restart cannot treat the next day as a fresh migration again.
+// Persist the no-borrowing checkpoint without a command, preserving today's
+// work on both the first load and a remount. Tomorrow starts without old debt.
 const beforeBorrowing = createTracking(tasks, "18:00", "UTC", start, PLAN);
-delete beforeBorrowing.carryMs;
+delete beforeBorrowing.idlePolicyVersion;
+beforeBorrowing.carryMs = 60 * minute;
+beforeBorrowing.workMs = 40 * minute;
+beforeBorrowing.taskMs = { a: 30 * minute, b: 10 * minute };
+beforeBorrowing.cursor = start + 40 * minute;
 Date.now = () => start + 160 * minute;
 saved = JSON.stringify(beforeBorrowing);
 tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
 try {
   await tracker.flush();
-  assert.equal(JSON.parse(saved).carryMs, 0);
-  assert.equal(tracker.value.state.mode, "idle"); assert.equal(tracker.value.state.workMs, 0);
+  assert.equal(JSON.parse(saved).carryMs, undefined);
+  assert.equal(JSON.parse(saved).idlePolicyVersion, 2);
+  assert.equal(tracker.value.state.mode, "idle"); assert.equal(tracker.value.state.workMs, 40 * minute);
+  assert.deepEqual(tracker.value.state.taskMs, beforeBorrowing.taskMs);
+  tracker.unmount();
+  tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
+  await tracker.flush();
+  assert.equal(tracker.value.state.workMs, 40 * minute);
+  assert.deepEqual(tracker.value.state.taskMs, beforeBorrowing.taskMs);
   tracker.unmount();
   Date.now = () => start + 24 * 60 * minute;
   tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
   await tracker.flush();
-  assert.equal(JSON.parse(saved).carryMs, 450 * minute);
+  assert.equal(JSON.parse(saved).carryMs, undefined);
+  assert.equal(tracker.value.remainingWorkMs, 450 * minute);
   assert.equal(tracker.value.state.workMs, 0); assert.equal(tracker.value.state.mode, "idle");
   await tracker.value.command({ type: "reset" }); await tracker.flush();
-  assert.equal(JSON.parse(saved).carryMs, 450 * minute);
+  assert.equal(JSON.parse(saved).carryMs, undefined);
 } finally { tracker.unmount(); Date.now = realNow; }
-console.log("1 guest carry upgrade, rollover, remount and reset scenario passed");
+console.log("1 data-preserving guest no-borrowing upgrade, remount and rollover scenario passed");
 
 // Poll responses used to reset both the offset and the repaint phase, causing
 // seconds to repeat or skip as response latency changed. Fake only scheduling;
