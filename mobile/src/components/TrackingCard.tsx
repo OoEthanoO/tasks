@@ -100,7 +100,7 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, pla
       <Text style={s.hint}>Alerts follow the device that last started, paused or reset tracking; until one has, every device alerts. Open this app to refresh alerts after changing the timer elsewhere.</Text>
     </View>
     <View style={s.settingsSection}>
-      <Text style={s.explainer}>Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. When idle time runs out, tracking stays paused until you start. Each day starts fresh at midnight.</Text>
+      <Text style={s.explainer}>Remaining targets shrink to fit the time until your day ends. Only explicit tracking adds worked time; pausing never does. Time already logged stays unchanged. Each day starts fresh at midnight.</Text>
       <Btn tone="ghost" label="Reset today’s progress…" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} />
     </View>
     </View>}

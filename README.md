@@ -196,7 +196,7 @@ The work day runs from its **start** (default 09:00) to its **end** (default
 divides that window into the day's work time and idle allowance: 09:00–23:00 at
 1:1 is seven hours of each; at 2:1 it is 9h20m of work and 4h40m of idle time.
 
-Work time counts down only while you track it. Start takes the first unfinished
+Worked time increases only while you track it. Start takes the first unfinished
 daily target in list order (nearest due date, then creation order); weight
 decides how much time a task gets, not when. The timer keeps following the
 list, so a task added or moved above the current one takes over at once.
@@ -207,11 +207,13 @@ target is met, then the list resumes. There are no breaks: pause whenever you li
 Every minute of the work day that you are not tracking uses **idle** time, counted
 down from the allowance to zero. Once less than half of the allowance is left and work remains, the
 app advises you to start working. Five minutes before the allowance runs out it
-warns you; when it runs out, the timer shows **Paused** and the remaining work
-clock stays frozen until you choose **Start working** or **Track**. No time is
-borrowed from another day. Tracking never starts on its own, and you can always
-pause. If you use more than the idle allowance, there may not be enough time
-left to finish the day's work goal; untracked time never counts as work. Once all
+warns you; when it runs out, the timer shows **Paused** until you choose
+**Start working** or **Track**. Remaining work is the smaller of the untracked
+work goal and the time until the day's end. After idle is used up, the available
+work clock and unfinished task targets shrink as time passes, even while paused;
+this never adds tracked work. Targets rebalance by weight using only that available
+time, and already logged work stays unchanged. Nothing is borrowed from another
+day. Tracking never starts on its own, and you can always pause. Once all
 of the work time is tracked, tracking stops, Start is unavailable and the rest
 of the day is idle. Before the start time nothing counts and tracking cannot
 start.
@@ -226,6 +228,7 @@ Daily tracked counters reset at midnight; the new day begins idle with its norma
 work goal and idle allowance. Neither unfinished work nor used-up idle time
 carries over. Upgrading an older borrowing timer discards its debt, but preserves
 today's total and per-task work, including elapsed work from a running session.
+The same checkpoint protects running fixed-goal timers when upgrading to end-capped targets.
 The first device starting an account timer establishes its time zone, which all
 clients share.
 

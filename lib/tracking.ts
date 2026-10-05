@@ -26,6 +26,8 @@ export type TrackingState = {
   plan?: DayPlan;
   /** Checkpointed manual-only tracking, with no borrowed idle or carried work. */
   idlePolicyVersion?: 2;
+  /** Checkpointed allocation that fits remaining work before the day's end. */
+  workLimitVersion?: 1;
   /** Legacy input only. Preserve elapsed work under its old goal once, then remove. */
   carryMs?: number;
   cursor: number;
@@ -142,9 +144,11 @@ function legacyBorrowingBudget(state: TrackingState): { workMs: number; idleMs: 
   const carriedMs = Math.min(state.carryMs ?? 0, base.idleMs);
   return { workMs: base.workMs + carriedMs, idleMs: base.idleMs - carriedMs };
 }
-/** Work still to track today. Pausing never logs work or spends a future day's time. */
-export function workLeftMs(state: TrackingState): number {
-  return Math.max(0, dayBudget(state).workMs - state.workMs);
+/** Remaining targets fit the time still available; shrinking a target never logs work. */
+export function workLeftMs(state: TrackingState, now = state.cursor): number {
+  const planned = Math.max(0, dayBudget(state).workMs - state.workMs);
+  const available = Math.max(0, dayEnd(state) - Math.max(now, dayStart(state)));
+  return Math.min(planned, available);
 }
 /**
  * Idle time still allowed: the allowance minus every untracked minute since
@@ -157,7 +161,7 @@ export function idleLeftMs(state: TrackingState, now = state.cursor): number {
 }
 /** Whether work can be tracked now: inside the day, with work left to do. */
 export function canTrackWork(state: TrackingState, now = state.cursor): boolean {
-  return now >= dayStart(state) && now < dayEnd(state) && workLeftMs(state) > EPSILON;
+  return now >= dayStart(state) && now < dayEnd(state) && workLeftMs(state, now) > EPSILON;
 }
 /** Under half the idle allowance is left (or none was), work remains and there is a task to start: time to start. */
 export function shouldStartWorking(state: TrackingState, now = state.cursor): boolean {
@@ -178,7 +182,11 @@ export function remainingWorkTime(state: TrackingState): number {
   return workLeftMs(state);
 }
 export function workBudget(state: TrackingState): number {
-  return dayBudget(state).workMs;
+  return state.workMs + workLeftMs(state);
+}
+/** Keep the planned idle allowance, but shrink unfinished work to fit the cutoff. */
+function cappedBudget(state: TrackingState): { workMs: number; idleMs: number } {
+  return { workMs: workBudget(state), idleMs: dayBudget(state).idleMs };
 }
 
 /** Fingerprint of everything that shapes the timer; any change means reconfiguring it. */
@@ -189,7 +197,7 @@ export function trackingConfigKey(tasks: Task[], endTime: string, plan: DayPlan 
 export function createTracking(tasks: Task[], endTime: string, timeZone = localTimeZone(), now = Date.now(), plan: DayPlan = DEFAULT_PLAN, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): TrackingState {
   timeZone = validTimeZone(timeZone);
   return {
-    version: 1, allocationVersion: 2, idlePolicyVersion: 2, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
+    version: 1, allocationVersion: 2, idlePolicyVersion: 2, workLimitVersion: 1, revision: 0, dayKey: trackingDay(now, timeZone), timeZone,
     endTime, plan: { ...plan }, unweighted, minimumEnabled, minimumMinutes: sanitizeMinimumMinutes(minimumMinutes),
     cursor: now, tasks, taskMs: {}, workMs: 0, mode: "idle", taskId: null, controllerId: null,
   };
@@ -297,7 +305,7 @@ function select(state: TrackingState, task: TaskProgress | undefined) {
  * same pure projection runs on the server, in the browser and after iOS wakes
  * up. No heartbeat or background JavaScript is needed to keep time accurately.
  */
-function integrateTracking(original: TrackingState, now: number, progressFor: typeof taskProgress, budgetFor: (state: TrackingState) => { workMs: number; idleMs: number } = dayBudget): { state: TrackingState; events: TrackingEvent[] } {
+function integrateTracking(original: TrackingState, now: number, progressFor: typeof taskProgress, budgetFor: (state: TrackingState) => { workMs: number; idleMs: number } = cappedBudget): { state: TrackingState; events: TrackingEvent[] } {
   const state: TrackingState = { ...original, taskMs: { ...original.taskMs }, mode: original.mode === "work" ? "work" : "idle" };
   const events: TrackingEvent[] = [];
   const emit = (type: TrackingEvent["type"], title: string, body: string, taskId = "", at = state.cursor) => {
@@ -330,14 +338,15 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
       }
       if (goal - state.workMs <= EPSILON) {
         select(state, undefined);
-        emit("work-complete", "Today’s work is done", `You tracked all ${formatDuration(goal)} of today’s work. The rest of the day is idle time.`);
+        if (state.cursor + EPSILON >= end) emit("day-end", "Work day complete", "Tracking has stopped for today.");
+        else emit("work-complete", "Today’s work is done", `You tracked all ${formatDuration(goal)} of today’s work. The rest of the day is idle time.`);
       } else if (!state.taskId) {
         select(state, nextTask(state, progressFor));
       }
       if (completion) {
         // Describe the actual next step in the completion alert.
         const next = state.tasks.find(t => t.id === state.taskId);
-        completion.body += state.cursor >= end ? " Tracking has stopped for today."
+        completion.body += state.cursor + EPSILON >= end ? " Tracking has stopped for today."
           : next ? ` Now tracking ${next.title}.` : " Today’s work is done.";
       }
       continue;
@@ -378,10 +387,10 @@ function integrateTracking(original: TrackingState, now: number, progressFor: ty
 }
 
 export function advanceTracking(original: TrackingState, now: number): { state: TrackingState; events: TrackingEvent[] } {
-  if (original.allocationVersion === 2 && original.idlePolicyVersion === 2 && original.carryMs === undefined) return integrateTracking(original, now, taskProgress);
+  if (original.allocationVersion === 2 && original.idlePolicyVersion === 2 && original.workLimitVersion === 1 && original.carryMs === undefined) return integrateTracking(original, now, taskProgress);
   // Old snapshots can lag behind the display. First checkpoint actual elapsed
   // work using its old allocation/goal, then discard debt, never logged work.
-  const budgetFor = original.idlePolicyVersion === 2 ? dayBudget : legacyBorrowingBudget;
+  const budgetFor = original.workLimitVersion === 1 ? cappedBudget : original.idlePolicyVersion === 2 ? dayBudget : legacyBorrowingBudget;
   const progressFor = original.allocationVersion === 2
     ? (state: TrackingState) => allocateTaskProgress(state, Math.max(0, budgetFor(state).workMs - state.workMs))
     : legacyTaskProgress;
@@ -389,6 +398,7 @@ export function advanceTracking(original: TrackingState, now: number): { state: 
   if (!Number.isFinite(now) || now < original.cursor) return result;
   result.state.allocationVersion = 2;
   result.state.idlePolicyVersion = 2;
+  result.state.workLimitVersion = 1;
   delete result.state.carryMs;
   if (result.state.mode === "work") select(result.state, workingTask(result.state));
   return result;
@@ -460,6 +470,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   if (s.version !== 1 || !Number.isSafeInteger(s.revision) || s.revision < 0 || !Number.isFinite(s.cursor) || s.cursor < 0 || s.cursor > 8.64e15) return null;
   if (s.allocationVersion !== undefined && s.allocationVersion !== 2) return null;
   if (s.idlePolicyVersion !== undefined && s.idlePolicyVersion !== 2) return null;
+  if (s.workLimitVersion !== undefined && s.workLimitVersion !== 1) return null;
   if (s.unweighted !== undefined && typeof s.unweighted !== "boolean") return null;
   if (s.minimumEnabled !== undefined && typeof s.minimumEnabled !== "boolean") return null;
   if (s.minimumMinutes !== undefined && (typeof s.minimumMinutes !== "number" || sanitizeMinimumMinutes(s.minimumMinutes) !== s.minimumMinutes)) return null;

@@ -166,6 +166,7 @@ console.log("1 guest minimum toggle persistence scenario passed");
 // work on both the first load and a remount. Tomorrow starts without old debt.
 const beforeBorrowing = createTracking(tasks, "18:00", "UTC", start, PLAN);
 delete beforeBorrowing.idlePolicyVersion;
+delete beforeBorrowing.workLimitVersion;
 beforeBorrowing.carryMs = 60 * minute;
 beforeBorrowing.workMs = 40 * minute;
 beforeBorrowing.taskMs = { a: 30 * minute, b: 10 * minute };
@@ -195,6 +196,35 @@ try {
   assert.equal(JSON.parse(saved).carryMs, undefined);
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 data-preserving guest no-borrowing upgrade, remount and rollover scenario passed");
+
+const fixedGoal = createTracking(tasks, "18:00", "UTC", start, PLAN);
+delete fixedGoal.workLimitVersion;
+Object.assign(fixedGoal, { mode: "work", taskId: "a", workMs: 140 * minute, taskMs: { a: 140 * minute }, cursor: start + 400 * minute, controllerId: "test-device" });
+Date.now = () => start + 450 * minute;
+saved = JSON.stringify(fixedGoal);
+let capWrites = 0;
+const capAdapter = { ...persistentAdapter, write: async value => { saved = value; capWrites++; } };
+tracker = mount(capAdapter, { tasks, endTime: "18:00" });
+try {
+  await tracker.flush();
+  assert.equal(capWrites, 1);
+  assert.equal(JSON.parse(saved).workLimitVersion, 1);
+  assert.equal(tracker.value.state.workMs, 190 * minute);
+  assert.deepEqual(tracker.value.state.taskMs, { a: 190 * minute });
+  assert.equal(tracker.value.remainingWorkMs, 150 * minute);
+  tracker.unmount();
+  tracker = mount(capAdapter, { tasks, endTime: "18:00" });
+  await tracker.flush();
+  assert.equal(capWrites, 1, "remount must not repeat the allocation checkpoint");
+  assert.deepEqual(tracker.value.state.taskMs, { a: 190 * minute });
+  await tracker.value.command({ type: "pause" }); await tracker.flush();
+  Date.now = () => start + 460 * minute;
+  await tracker.value.refresh(); await tracker.flush();
+  assert.equal(tracker.value.state.workMs, 190 * minute);
+  assert.equal(tracker.value.remainingWorkMs, 140 * minute);
+  assert.equal(tracker.value.state.mode, "idle");
+} finally { tracker.unmount(); Date.now = realNow; }
+console.log("1 guest capped-target migration and paused-time regression scenario passed");
 
 // Poll responses used to reset both the offset and the repaint phase, causing
 // seconds to repeat or skip as response latency changed. Fake only scheduling;

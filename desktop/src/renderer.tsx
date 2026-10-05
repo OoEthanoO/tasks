@@ -32,7 +32,7 @@ function Mini() {
     <h1 title={m.title}>{m.title}</h1>
     <div className="mini-clock">{formatDuration(m.remaining, true)}</div>
     <p className="mini-sub">{view.state.mode === "work" ? `Work time left${m.current ? ` · ${formatDuration(m.current.remainingMs)} on this task` : ""}`
-      : m.paused ? "Work time left · paused until you choose Start working or Track"
+      : m.paused ? "Time available · targets shrink; no work is being tracked"
       : m.advise ? "Under half of today’s idle time left · start working now"
       : m.label === "Idle" ? (m.canStart ? "Idle time left · tracking stays paused when it runs out" : "Idle time left · add a task to track work") : "Nothing to track right now."}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current target progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>

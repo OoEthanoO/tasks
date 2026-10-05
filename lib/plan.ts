@@ -2,8 +2,9 @@
  * How a work day is laid out: when it starts (the end time is its own,
  * older setting) and how it divides into work and idle time. Between start
  * and end, every minute not tracked as work counts as idle, so the day's work
- * goal is its length times the work share of the ratio — 1:1 by default (and
+ * planned goal is its length times the work share of the ratio — 1:1 by default (and
  * recommended), so a 9:00–23:00 day holds 7 hours of work and 7 of idle time.
+ * Remaining work is capped by the time until the end; the plan never erases logged time.
  *
  * A preference like the end time: stored with the account (or on the device
  * for guests) and copied into the shared timer so every device agrees.

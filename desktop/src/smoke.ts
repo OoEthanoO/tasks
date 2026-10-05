@@ -136,10 +136,10 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
       const beforeStats = { ...stats };
       await sleep(3200);
       const after = await readSeconds(w, selector);
-      assert.equal(after, before, `${selector} keeps work time frozen until explicit tracking`);
+      assert.ok(before - after >= 2 && before - after <= 4, `${selector} caps available work by the cutoff: ${before} -> ${after}`);
       // Focus/power changes legitimately publish a fresh snapshot. Check the
       // actual timer wakeups, not these unrelated desktop events.
-      assert.equal(stats.timerWakeups, beforeStats.timerWakeups, "a visible paused timer needs no per-second wakeups");
+      assert.ok(stats.timerWakeups - beforeStats.timerWakeups >= 2 && stats.timerWakeups - beforeStats.timerWakeups <= 4, "available work updates each second while visible");
       assert.equal(engine.view().state.mode, "idle"); assert.equal(engine.view().state.workMs, 0);
       const text = await w.webContents.executeJavaScript("document.body.innerText");
       assert.match(text, /Paused|PAUSED/);
@@ -151,7 +151,7 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
     await sleep(2200);
     assert.equal(stats.publishes, before.publishes, "hidden idle returns to the low-power wake schedule");
     assert.equal(stats.sends, before.sends, "hidden renderers receive no countdown IPC");
-    console.log("COUNTDOWN CHECK PASS: main and mini count down today's idle, then freeze while paused; hidden windows stay quiet.");
+    console.log("COUNTDOWN CHECK PASS: main and mini count down idle, then available work without tracking; hidden windows stay quiet.");
   }
   await assert.rejects(mini.webContents.executeJavaScript("window.desktop.api({path:'/api/auth/me',method:'GET'})"));
   // Opt-in native delivery probe. The normal smoke run remains silent. Only

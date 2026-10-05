@@ -112,7 +112,7 @@ test("native idle reminders are emitted once without starting work or any render
   assert.deepEqual(x.notifications.map(e => [e.type, e.at]), [["idle-half", T + 195 * MIN + 1], ["idle-soon", T + 385 * MIN], ["idle-out", T + 390 * MIN]]);
   assert.equal(x.engine.view().state.mode, "idle");
   assert.equal(x.engine.view().state.workMs, 0);
-  let m = statusModel(x.engine.view()); assert.equal(m.label, "Paused"); assert.equal(m.idleLeft, 0); assert.equal(m.remaining, 390 * MIN);
+  let m = statusModel(x.engine.view()); assert.equal(m.label, "Paused"); assert.equal(m.idleLeft, 0); assert.equal(m.remaining, 380 * MIN);
   await x.engine.command({ type: "start" });
   m = statusModel(x.engine.view()); assert.equal(m.canPause, true);
   await x.engine.command({ type: "pause" }); assert.equal(x.engine.view().state.mode, "idle");
@@ -160,7 +160,7 @@ test("exhausted idle stays paused through a desktop restart with no debt tomorro
   const x = setup(JSON.parse(JSON.stringify(saved))); x.now = saved.cursor;
   await x.engine.identity(null);
   assert.equal(statusModel(x.engine.view()).label, "Paused");
-  assert.equal(statusModel(x.engine.view()).remaining, 60 * MIN);
+  assert.equal(statusModel(x.engine.view()).remaining, 50 * MIN);
   await x.engine.command({ type: "start" });
   assert.equal(statusModel(x.engine.view()).canPause, true);
   for (let i = 0; i < 50; i++) { x.now += MIN; x.engine.tick(); }
@@ -177,6 +177,7 @@ test("exhausted idle stays paused through a desktop restart with no debt tomorro
 test("desktop removes old debt once without losing today's per-task work", async () => {
   const saved = createTracking([task], "23:00", "UTC", T, PLAN);
   delete saved.idlePolicyVersion;
+  delete saved.workLimitVersion;
   Object.assign(saved, { carryMs: 30 * MIN, workMs: 45 * MIN, taskMs: { a: 45 * MIN }, cursor: T + 90 * MIN, controllerId: "windows_test" });
   const x = setup(saved); x.now = T + 100 * MIN; await x.engine.identity(null); x.engine.tick();
   assert.equal(x.written?.idlePolicyVersion, 2);
@@ -192,6 +193,21 @@ test("disabled alerts do not notify but keep in-app status", async () => {
   const x = setup(createTracking([task], "23:00", "UTC", T, PLAN)); await x.engine.identity(null); x.engine.settings.alerts = false;
   x.now = T + 195 * MIN - 500; x.engine.tick(); x.now += 1000; x.engine.tick();
   assert.equal(x.notifications.length, 0); assert.match(x.engine.view().message!, /start working/i);
+});
+test("desktop checkpoints a running fixed-goal timer once, then shrinks targets without logging idle", async () => {
+  const saved = createTracking([task, { ...task, id: "b" }], "23:00", "UTC", T, PLAN);
+  delete saved.workLimitVersion;
+  Object.assign(saved, { mode: "work", taskId: "a", workMs: 120 * MIN, taskMs: { a: 120 * MIN }, cursor: T + 600 * MIN, controllerId: "windows_test" });
+  const x = setup(saved); x.now = T + 650 * MIN; await x.engine.identity(null); x.engine.tick();
+  assert.equal(x.written?.workLimitVersion, 1);
+  assert.equal(x.written?.workMs, 170 * MIN); assert.deepEqual(x.written?.taskMs, { a: 170 * MIN });
+  assert.equal(statusModel(x.engine.view()).remaining, 130 * MIN);
+  const reopened = setup(x.written); reopened.now = x.now; await reopened.engine.identity(null);
+  await reopened.engine.command({ type: "pause" }); reopened.now += 10 * MIN; reopened.engine.tick();
+  assert.equal(reopened.engine.view().state.workMs, 170 * MIN);
+  assert.deepEqual(reopened.engine.view().state.taskMs, { a: 170 * MIN });
+  assert.equal(statusModel(reopened.engine.view()).remaining, 120 * MIN);
+  assert.equal(statusModel(reopened.engine.view()).label, "Paused");
 });
 test("a daily target completion alerts once at its exact boundary", async () => {
   // A four-minute day: two minutes of work, all for Code.
@@ -322,11 +338,11 @@ test("checkpoint recovery covers idle reminders, finished work and day end", asy
   // 10:00–18:00 split 1:1: four hours each of work and idle time.
   const idle = createTracking([task], "18:00", "UTC", T, PLAN);
   const working = actOnTracking(idle, { type: "start" }, "windows_test", T);
-  // Behind on work at 17:59, so the day ends before it is done.
+  // Behind at 17:59: the target shrinks to the last minute, completing at cutoff.
   const late: TrackingState = { ...idle, mode: "work", taskId: "a", cursor: T + 479 * MIN };
   const cases: [TrackingState, number, string[]][] = [
     [idle, 120, ["idle-half"]], [idle, 235, ["idle-soon"]], [idle, 240, ["idle-out"]],
-    [working, 240, ["task-complete", "work-complete"]], [late, 480, ["day-end"]],
+    [working, 240, ["task-complete", "work-complete"]], [late, 480, ["task-complete", "day-end"]],
   ];
   for (const [initial, minutes, types] of cases) {
     const fixture = await accountBeforeBoundary(initial, T + minutes * MIN); const { x } = fixture;
@@ -486,7 +502,7 @@ test("visible idle countdowns tick each second without increasing hidden wakeups
     assert.equal(wakeDelay(true && hasLiveCountdown(state), null), 1000);
     assert.equal(wakeDelay(false && hasLiveCountdown(state), null), 60_000);
   }
-  assert.equal(hasLiveCountdown(paused), false, "an exhausted, paused clock needs no per-second wakeups");
+  assert.equal(hasLiveCountdown(paused), true, "available work shrinks toward the cutoff without logging any work");
   assert.equal(syncDelay(false, true, true), 30_000, "visible idle on battery does not poll every second");
   assert.equal(syncDelay(false, false, true), 60_000);
   const done = advanceTracking(working, T + 390 * MIN).state;
@@ -508,9 +524,10 @@ test("taskbar model covers before the day, idle, working, paused and day end", a
   m = statusModel(x.engine.view()); assert.equal(m.label, "Idle"); assert.equal(m.advise, true);
   x.now += 3 * 60 * MIN; x.engine.tick();
   m = statusModel(x.engine.view()); assert.equal(m.label, "Paused"); assert.equal(m.idleLeft, 0);
-  assert.equal(m.remaining, 375 * MIN); assert.match(m.windowTitle, /work left/);
+  assert.equal(m.remaining, 360 * MIN); assert.match(m.windowTitle, /work left/);
   x.now += 1000; x.engine.tick();
-  assert.equal(statusModel(x.engine.view()).remaining, m.remaining);
+  assert.equal(statusModel(x.engine.view()).remaining, m.remaining - 1000);
+  assert.equal(x.engine.view().state.workMs, 0);
   x.now = dayEnd(x.engine.view().state) + 1000; x.engine.tick();
-  m = statusModel(x.engine.view()); assert.equal(m.label, "Day complete"); assert.equal(m.workLeft, 375 * MIN); assert.equal(m.canStart, false);
+  m = statusModel(x.engine.view()); assert.equal(m.label, "Day complete"); assert.equal(m.workLeft, 0); assert.equal(m.canStart, false);
 });
