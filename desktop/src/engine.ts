@@ -29,7 +29,7 @@ function checkpointEvents(previous: TrackingState, next: TrackingState): { event
   if (expected.mode !== next.mode || expected.taskId !== next.taskId || expected.allocationVersion !== next.allocationVersion) return rejected;
   const equalTime = (a: number, b: number) => Math.abs(a - b) <= 1;
   // Only work is counted; idle time is derived from the clock.
-  if (!equalTime(expected.workMs, next.workMs)) return rejected;
+  if (!equalTime(expected.workMs, next.workMs) || !equalTime(expected.carryMs ?? 0, next.carryMs ?? 0)) return rejected;
   for (const id of new Set([...Object.keys(expected.taskMs), ...Object.keys(next.taskMs)])) {
     const time = (s: TrackingState) => Object.hasOwn(s.taskMs, id) ? s.taskMs[id] : 0;
     if (!equalTime(time(expected), time(next))) return rejected;
@@ -37,8 +37,8 @@ function checkpointEvents(previous: TrackingState, next: TrackingState): { event
   const changedNextStep = projected.state.mode !== next.mode || projected.state.taskId !== next.taskId;
   const task = next.tasks.find(t => t.id === next.taskId);
   const nextStep = next.mode === "work" && task ? `Now tracking ${task.title}.` : "Tracking is paused.";
-  return { confirmed: true, events: projected.events.map(event => changedNextStep && (event.type === "task-complete" || event.type === "idle-out")
-    ? { ...event, body: `${event.type === "task-complete" ? "A daily target was reached. " : ""}Targets were updated. ${nextStep}` }
+  return { confirmed: true, events: projected.events.map(event => changedNextStep && event.type === "task-complete"
+    ? { ...event, body: `A daily target was reached. Targets were updated. ${nextStep}` }
     : event) };
 }
 // This runs in Electron's main process, not a background Chromium tab. Timers
@@ -253,7 +253,7 @@ export class TrackerEngine {
       this.snapshot = state;
       // Checkpoint on transitions and once per active minute; timestamps preserve all
       // intervening elapsed time if the app is restarted between checkpoints.
-      if (events.length || state.dayKey !== this.guest.dayKey || (state.mode !== "idle" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
+      if (events.length || this.guest.carryMs === undefined || state.dayKey !== this.guest.dayKey || (state.mode !== "idle" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
     }
     this.publish();
   }

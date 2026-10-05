@@ -22,8 +22,10 @@ release should be signed with the project's own code-signing certificate.
   needed for Windows notification identity.
 - Alerts follow the device that last started, paused or reset tracking, avoiding a
   second set of PC alerts for a timer controlled from the phone or website.
-  Until any device has, idle reminders and the automatic start alert everywhere.
-- Once idle time runs out, Pause is disabled until today's work is done.
+  Until any device has, idle reminders alert everywhere.
+- Once today's idle time runs out, the clock drains tomorrow's idle time, then
+  later days'. Borrowed time carries across midnight and syncs across clients.
+  Tracking never starts on its own, and Pause is always available while working.
 - Quitting does **not** pause an account timer. Pause tracking first if finished.
 
 ### Battery and notification boundaries

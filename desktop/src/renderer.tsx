@@ -31,12 +31,13 @@ function Mini() {
     <div className="mini-state"><i className="status-dot" />{m.label}<span>{!view.connected ? "OFFLINE" : view.accountId ? "SYNCED" : "THIS PC"}</span></div>
     <h1 title={m.title}>{m.title}</h1>
     <div className="mini-clock">{formatDuration(m.remaining, true)}</div>
-    <p className="mini-sub">{m.forced ? "Idle time used · work until today’s work is done"
-      : view.state.mode === "work" ? `Work time left${m.current ? ` · ${formatDuration(m.current.remainingMs)} on this task` : ""}`
+    <p className="mini-sub">{view.state.mode === "work" ? `Work time left${m.current ? ` · ${formatDuration(m.current.remainingMs)} on this task` : ""}`
+      : m.from ? `Idle time left from ${m.from} · start working when ready`
+      : m.borrowing ? "Idle time borrowed from future days"
       : m.advise ? "Under half of today’s idle time left · start working now"
-      : m.label === "Idle" ? (m.canStart ? "Idle time left · work starts when it runs out" : "Idle time left · add a task to track work") : "Nothing to track right now."}</p>
+      : m.label === "Idle" ? (m.canStart ? "Idle time left · further idle comes from tomorrow" : "Idle time left · add a task to track work") : "Nothing to track right now."}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current target progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>
-    <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(m.workLeft)}</strong></div><div><span>IDLE LEFT</span><strong>{formatDuration(m.idleLeft)}</strong></div></div>
+    <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(m.workLeft)}</strong></div><div><span>{m.borrowed >= 1000 ? "BORROWED" : "IDLE LEFT"}</span><strong>{formatDuration(m.borrowed >= 1000 ? m.borrowed : m.idleLeft)}</strong></div></div>
     <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || (view.state.mode === "idle" ? !m.canStart : !m.canPause)} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start working" : "Pause tracking"}</button><button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button></div>
     {(error || view.error || view.message) && <p role="status" className="mini-message" title={error || view.error || view.message || ""}>{error || view.error || view.message}</p>}
   </main>;

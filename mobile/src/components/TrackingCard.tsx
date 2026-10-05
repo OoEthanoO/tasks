@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Pressable, Switch, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { canTrackWork, dayBudget, dayEnd, dayStart, formatDuration, idleLeftMs, RESET_PROGRESS_CONFIRMATION, shouldStartWorking, workLeftMs, workRequired } from "../../../lib/tracking";
+import { formatDuration, RESET_PROGRESS_CONFIRMATION } from "../../../lib/tracking";
+import { describeFocus } from "../../../lib/focus";
 import { clampWhole, DayPlan, sanitizeClockTime, SPLIT_PARTS } from "../../../lib/plan";
 import { MINIMUM_MINUTES } from "../../../lib/minimum";
 import { Tracker } from "../useTracking";
@@ -41,40 +42,23 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, pla
   const [confirmReset, setConfirmReset] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
-  const current = t.progress.find(p => p.task.id === state.taskId);
-  const working = state.mode === "work";
-  const before = state.cursor < dayStart(state), ended = state.cursor >= dayEnd(state);
-  const workLeft = workLeftMs(state), idleLeft = Math.max(0, idleLeftMs(state)), budget = dayBudget(state);
-  const done = !before && workLeft <= 0;
-  const forced = working && workRequired(state);
-  const advise = shouldStartWorking(state);
-  const canStart = canTrackWork(state) && t.progress.some(p => p.weight > 0 && !p.doneToday);
-  const label = !t.ready ? "LOADING TIMER…" : before ? "BEFORE YOUR DAY" : ended ? "DAY COMPLETE" : done ? "WORK DONE"
-    : working ? (forced ? "WORKING · IDLE TIME USED" : "WORKING ON") : "IDLE";
-  const title = working ? current?.task.title ?? "Working" : before ? `Your day starts at ${plan.startTime}.`
-    : ended ? "You’re done for today." : done ? "Today’s work is done." : "Idle time";
-  // Counts down whichever budget is being spent; before the day, the goal.
-  const clock = before ? budget.workMs : working || done ? workLeft : idleLeft;
-  const hint = !t.ready ? "" : before ? `${formatDuration(budget.workMs)} of work and ${formatDuration(budget.idleMs)} of idle time today.`
-    : ended ? "Tracking has stopped for today." : done ? "All of today’s work is tracked. The rest of the day is idle time."
-    : forced ? "Idle time is used up, so tracking continues until today’s work is done."
-    : working ? `Work time left today${current ? ` · ${formatDuration(current.remainingMs)} left on this task` : ""}`
-    : canStart ? "Idle time left. When it runs out, work starts on its own." : "Idle time left. Add a task to have work to track.";
+  const f = describeFocus(state, t.progress, t.ready);
+  const working = f.working;
   return <Card>
     <CardHead title="Today’s focus" />
     <Text style={s.hint}>Work day {plan.startTime}–{endTime}</Text>
-    <Text style={[s.label, !working && { color: c.dim }]}>{label}</Text>
-    <Text style={s.title}>{title}</Text>
-    <Text style={s.clock} accessibilityRole="timer" accessibilityLabel={working || done ? "Work time left today" : before ? "Today’s work goal" : "Idle time left today"}>{formatDuration(clock, true)}</Text>
-    <Text style={s.hint}>{hint}</Text>
-    {advise && <Banner tone="warn">Less than half of today’s idle time is left. Start working now.</Banner>}
-    <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (working ? forced : !canStart)} label={t.busy ? "Syncing…" : working ? "Pause tracking" : "Start working"} onPress={() => void t.command({ type: working ? "pause" : "start" })} />
+    <Text style={[s.label, !working && { color: c.dim }]}>{f.label}</Text>
+    <Text style={s.title}>{f.title}</Text>
+    <Text style={s.clock} accessibilityRole="timer" accessibilityLabel={f.clockLabel}>{formatDuration(f.clock, true)}</Text>
+    <Text style={s.hint}>{f.hint}</Text>
+    {f.advice && <Banner tone="warn">{f.advice}</Banner>}
+    <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (!working && !f.canStart)} label={t.busy ? "Syncing…" : working ? "Pause tracking" : "Start working"} onPress={() => void t.command({ type: working ? "pause" : "start" })} />
     {t.error && <Banner tone="danger" action={<Btn label="Refresh timer" onPress={() => void t.refresh()} />}>{t.error}</Banner>}
     {t.message && <Banner tone="ok" action={<Btn label="Dismiss" onPress={t.dismissMessage} />}>{t.message}</Banner>}
     <View style={s.totals}>
       <View><Text style={s.hint}>Worked today</Text><Text style={s.total}>{formatDuration(state.workMs, true)}</Text></View>
-      <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(workLeft)}</Text></View>
-      <View><Text style={s.hint}>Idle left</Text><Text style={s.total}>{formatDuration(idleLeft)}</Text></View>
+      <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(f.workLeft)}</Text></View>
+      <View><Text style={s.hint}>{f.idleStat.label}</Text><Text style={s.total}>{formatDuration(f.idleStat.value)}</Text></View>
     </View>
     <Pressable style={s.settingsHeader} accessibilityRole="button" accessibilityLabel="Day settings" accessibilityState={{ expanded: settingsOpen }} onPress={() => setSettingsOpen(!settingsOpen)}>
       <View style={{ flex: 1 }}><Text style={s.settingsTitle}>Day settings</Text><Text style={s.hint}>{plan.workParts}:{plan.idleParts} work:idle · {unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</Text></View>
@@ -116,7 +100,7 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, pla
       <Text style={s.hint}>Alerts follow the device that last started, paused or reset tracking; until one has, every device alerts. Open this app to refresh alerts after changing the timer elsewhere.</Text>
     </View>
     <View style={s.settingsSection}>
-      <Text style={s.explainer}>Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. Progress resets at midnight.</Text>
+      <Text style={s.explainer}>Targets divide today’s work time between your tasks. Settings change future targets, never time already logged. Daily progress resets at midnight; borrowed idle carries over as work.</Text>
       <Btn tone="ghost" label="Reset today’s progress…" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} />
     </View>
     </View>}

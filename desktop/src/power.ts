@@ -1,4 +1,4 @@
-import { canTrackWork, idleLeftMs, type TrackingState } from "../../lib/tracking";
+import { canTrackWork, type TrackingState } from "../../lib/tracking";
 
 /** Polling is independent of display refresh. No one-second background loop. */
 export function syncDelay(active: boolean, visible: boolean, battery: boolean): number {
@@ -12,5 +12,5 @@ export function wakeDelay(visible: boolean, nextEventIn: number | null): number 
 }
 /** Idle is a running countdown too; completed and out-of-day displays are static. */
 export function hasLiveCountdown(state: TrackingState): boolean {
-  return canTrackWork(state) && (state.mode === "work" || idleLeftMs(state) > 0);
+  return canTrackWork(state);
 }

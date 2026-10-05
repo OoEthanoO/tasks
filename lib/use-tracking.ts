@@ -98,7 +98,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
           try { saved = raw ? parseTracking(JSON.parse(raw)) : null; } catch { /* reset corrupt guest state */ }
           if (saved) {
             const advanced = advanceTracking(saved, Date.now()).state;
-            if (advanced.dayKey !== saved.dayKey || advanced.allocationVersion !== saved.allocationVersion) {
+            if (advanced.dayKey !== saved.dayKey || advanced.allocationVersion !== saved.allocationVersion || saved.carryMs === undefined) {
               saved = { ...advanced, revision: saved.revision + 1 };
               await adapter.write(JSON.stringify(saved));
             }

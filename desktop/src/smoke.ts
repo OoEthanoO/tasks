@@ -8,6 +8,7 @@ import type { ApiReply } from "./contract";
 import { DIAGNOSTIC_FILE } from "./diagnostics";
 import { desktopIdentity } from "./identity";
 import type { PowerStats } from "./power-check";
+import { idleSource } from "../../lib/tracking";
 
 export async function runSmoke({ main, mini, engine, icons, request, tray, stats }: { main: BrowserWindow; mini: BrowserWindow; engine: TrackerEngine; icons: Record<string, NativeImage>; request: (path: string) => Promise<ApiReply>; tray: Tray; stats: PowerStats }) {
   const ready = async (w: BrowserWindow) => {
@@ -113,13 +114,36 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
       assert.equal(engine.view().state.mode, "idle");
       assert.equal(engine.view().state.workMs, 0);
     }
+    // Also exercise the clock after today's idle allowance is gone. A short
+    // future cutoff and a 20:1 split make this an overdue, still-idle day. This
+    // changes only the disposable smoke profile, never the installed app.
+    const local = new Date();
+    const endMinutes = Math.min(1439, local.getHours() * 60 + local.getMinutes() + 3);
+    const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
+    await main.webContents.executeJavaScript(`window.desktop.configure(${JSON.stringify({ accountId: null, tasks: engine.view().state.tasks, endTime, plan: { startTime: "00:00", workParts: 20, idleParts: 1 } })})`);
+    assert.ok(idleSource(engine.view().state), "smoke fixture is drawing on future idle time");
+    for (const [w, selector] of [[main, ".focus-clock"], [mini, ".mini-clock"]] as const) {
+      main.hide(); mini.hide();
+      w.setOpacity(0); w.setIgnoreMouseEvents(true); w.showInactive();
+      await sleep(250);
+      const sourceBefore = idleSource(engine.view().state);
+      const before = await readSeconds(w, selector);
+      await sleep(3200);
+      const after = await readSeconds(w, selector);
+      const sourceAfter = idleSource(engine.view().state);
+      assert.ok(sourceBefore && sourceAfter);
+      // Crossing into the next future day legitimately resets that day's clock.
+      if (sourceBefore.dayKey === sourceAfter.dayKey) assert.ok(before - after >= 2 && before - after <= 4, `${selector} borrowed clock counts down: ${before} -> ${after}`);
+      assert.equal(engine.view().state.mode, "idle"); assert.equal(engine.view().state.workMs, 0);
+      assert.match(await w.webContents.executeJavaScript("document.body.innerText"), /Borrowed|BORROWED/);
+    }
     main.hide(); mini.hide();
     await sleep(100);
     const before = { ...stats };
     await sleep(2200);
     assert.equal(stats.publishes, before.publishes, "hidden idle returns to the low-power wake schedule");
     assert.equal(stats.sends, before.sends, "hidden renderers receive no countdown IPC");
-    console.log("COUNTDOWN CHECK PASS: main and mini idle clocks advance; hidden windows stay quiet.");
+    console.log("COUNTDOWN CHECK PASS: main and mini clocks advance for today's and borrowed idle; hidden windows stay quiet.");
   }
   await assert.rejects(mini.webContents.executeJavaScript("window.desktop.api({path:'/api/auth/me',method:'GET'})"));
   // Opt-in native delivery probe. The normal smoke run remains silent. Only

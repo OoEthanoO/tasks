@@ -162,6 +162,28 @@ try {
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 guest minimum toggle persistence scenario passed");
 
+// A legacy guest must persist the carry-policy checkpoint even without a
+// command, so a restart cannot treat the next day as a fresh migration again.
+const beforeBorrowing = createTracking(tasks, "18:00", "UTC", start, PLAN);
+delete beforeBorrowing.carryMs;
+Date.now = () => start + 160 * minute;
+saved = JSON.stringify(beforeBorrowing);
+tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
+try {
+  await tracker.flush();
+  assert.equal(JSON.parse(saved).carryMs, 0);
+  assert.equal(tracker.value.state.mode, "idle"); assert.equal(tracker.value.state.workMs, 0);
+  tracker.unmount();
+  Date.now = () => start + 24 * 60 * minute;
+  tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
+  await tracker.flush();
+  assert.equal(JSON.parse(saved).carryMs, 450 * minute);
+  assert.equal(tracker.value.state.workMs, 0); assert.equal(tracker.value.state.mode, "idle");
+  await tracker.value.command({ type: "reset" }); await tracker.flush();
+  assert.equal(JSON.parse(saved).carryMs, 450 * minute);
+} finally { tracker.unmount(); Date.now = realNow; }
+console.log("1 guest carry upgrade, rollover, remount and reset scenario passed");
+
 // Poll responses used to reset both the offset and the repaint phase, causing
 // seconds to repeat or skip as response latency changed. Fake only scheduling;
 // the real hook, projection, and asynchronous adoption still run.
