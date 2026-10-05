@@ -77,7 +77,7 @@ export default function TaskRow({
         {progress && !task.completed && <>
           {progress.skipped ? <>
             <Text style={s.metaText}>{formatDuration(progress.trackedMs)} today</Text>
-            <Text style={s.metaText} accessibilityHint={skippedExplanation(progress.minimumMs)}>Skipped today: under {formatDuration(progress.minimumMs)}</Text>
+            <Text style={s.metaText} accessibilityHint={skippedExplanation(progress.minimumMs)}>Outside the next 7 days</Text>
           </> : <>
             <Text style={s.metaText}>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</Text>
             <Text style={[s.metaText, { color: progress.doneToday ? c.ok : c.accent }]}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</Text>

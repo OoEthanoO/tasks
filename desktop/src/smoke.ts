@@ -8,7 +8,6 @@ import type { ApiReply } from "./contract";
 import { DIAGNOSTIC_FILE } from "./diagnostics";
 import { desktopIdentity } from "./identity";
 import type { PowerStats } from "./power-check";
-import { idleLeftMs } from "../../lib/tracking";
 
 export async function runSmoke({ main, mini, engine, icons, request, tray, stats }: { main: BrowserWindow; mini: BrowserWindow; engine: TrackerEngine; icons: Record<string, NativeImage>; request: (path: string) => Promise<ApiReply>; tray: Tray; stats: PowerStats }) {
   const ready = async (w: BrowserWindow) => {
@@ -26,44 +25,22 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
   const state = await main.webContents.executeJavaScript("({text:document.body.innerText, bridge:typeof window.desktop, node:typeof window.require})");
   assert.equal(state.node, "undefined"); assert.equal(state.bridge, "object");
   assert.match(state.text, /YanTasks/);
-  // Test the actual setting control and its saved guest state, not only IPC.
-  const minimumControl = "document.querySelector('input[aria-describedby=\"minimum-hint\"]')";
+  // Verify retired controls are gone in the actual bundled UI.
   const waitFor = async (expression: string) => {
     for (let i = 0; i < 50; i++) {
       if (await main.webContents.executeJavaScript(expression)) return;
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    throw new Error(`Renderer condition not met: ${expression}`);
+    throw new Error("Renderer condition not met: " + expression);
   };
-  await waitFor(`!!${minimumControl}`);
-  assert.equal(await main.webContents.executeJavaScript("document.querySelector('.day-settings').open"), false, "settings start collapsed so the timer stays prominent");
+  await waitFor("!!document.querySelector('.day-settings')");
+  assert.equal(await main.webContents.executeJavaScript("document.querySelector('.day-settings').open"), false);
   await main.webContents.executeJavaScript("document.querySelector('.day-settings > summary').click()");
-  await waitFor("document.querySelector('.day-settings').open");
-  assert.equal(await main.webContents.executeJavaScript(`${minimumControl}.checked`), true);
-  const minutesControl = "document.querySelector('input[aria-label=\"Minimum daily target in minutes\"]')";
-  await main.webContents.executeJavaScript(`{
-    const input = ${minutesControl}; input.focus();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '15');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }`);
-  // The smoke window is hidden, so DOM focus/blur are not guaranteed to fire.
-  // Let React commit the input draft, then deliver its normal bubbling blur event.
-  await new Promise(resolve => setTimeout(resolve, 50));
-  await main.webContents.executeJavaScript(`${minutesControl}.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))`);
-  await waitFor("localStorage.getItem('yantasks.minimumMinutes.v1') === '15'");
-  await waitFor("window.desktop.snapshot().then(v => v.state.minimumMinutes === 15)");
-  await main.webContents.executeJavaScript(`${minimumControl}.click()`);
-  await waitFor("localStorage.getItem('yantasks.minimumEnabled.v1') === 'false'");
-  await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === false)");
-  main.webContents.reload();
-  await ready(main);
-  await waitFor(`!!${minimumControl} && !${minimumControl}.checked`);
-  await main.webContents.executeJavaScript("document.querySelector('.day-settings > summary').click()");
-  await waitFor(`${minutesControl}?.value === '15'`);
-  await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === false)");
-  await main.webContents.executeJavaScript(`${minimumControl}.click()`);
-  await waitFor("window.desktop.snapshot().then(v => v.state.minimumEnabled === true)");
-  await waitFor("window.desktop.snapshot().then(v => v.state.minimumMinutes === 15)");
+  assert.equal(await main.webContents.executeJavaScript("!!document.querySelector('#start-time,#end-time,#unweighted,#minimum-enabled,input[type=number]')"), false);
+  const options = await main.webContents.executeJavaScript("document.querySelector('.day-settings').innerText");
+  assert.match(options, /Tracking options/); assert.match(options, /Reset today/);
+  main.webContents.reload(); await ready(main);
+  await waitFor("!!document.querySelector('.focus-clock')");
   await assert.rejects(main.webContents.executeJavaScript("window.desktop.api({path:'https://example.com', method:'GET'})"));
   assert.equal((await request("/api/state")).status, 503);
   // Check Electron's real session transport preserves httpOnly cookies. This
@@ -83,7 +60,7 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
     assert.equal((await transport.cookies.get({ url: base }))[0].httpOnly, true);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
   // Exercise the real sandbox/IPC/engine, using only this disposable guest profile.
-  await main.webContents.executeJavaScript(`window.desktop.configure({accountId:null,endTime:'23:59',tasks:[{id:'smoke',title:'Windows smoke test',description:'',dueDate:'2099-01-01',completed:false,createdAt:new Date().toISOString(),completedAt:null}]})`);
+  await main.webContents.executeJavaScript(`window.desktop.configure({accountId:null,endTime:'23:59',tasks:[{id:'smoke',title:'Windows smoke test',description:'',dueDate:${JSON.stringify(engine.view().state.dayKey)},completed:false,createdAt:new Date().toISOString(),completedAt:null}]})`);
   await main.webContents.executeJavaScript("window.desktop.command({type:'start'})");
   assert.equal(engine.view().state.mode, "work");
   main.hide(); mini.hide();
@@ -103,47 +80,31 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
       assert.match(text, /^\d+:\d{2}:\d{2}$/);
       return text.split(":").reduce((seconds: number, part: string) => seconds * 60 + Number(part), 0);
     };
-    // Start this fixture's day at the current minute so the test can run after
-    // the real day's idle allowance is exhausted, without changing system time.
-    const now = new Date();
-    const startTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    await main.webContents.executeJavaScript(`window.desktop.configure(${JSON.stringify({ accountId: null, tasks: engine.view().state.tasks, endTime: "23:59", plan: { startTime, workParts: 1, idleParts: 1 } })})`);
-    assert.ok(idleLeftMs(engine.view().state) > 10_000, "fixture has idle time to count down");
+    await main.webContents.executeJavaScript("window.desktop.command({type:'start'})");
     for (const [w, selector] of [[main, ".focus-clock"], [mini, ".mini-clock"]] as const) {
       main.hide(); mini.hide();
       w.setOpacity(0); w.setIgnoreMouseEvents(true); w.showInactive();
       await sleep(250);
-      const before = await readSeconds(w, selector);
+      const before = await readSeconds(w, selector), loggedBefore = engine.view().state.workMs;
       await sleep(3200);
       const after = await readSeconds(w, selector);
-      assert.ok(before - after >= 2 && before - after <= 4, `${selector} counts down in real time: ${before} -> ${after}`);
-      assert.equal(engine.view().state.mode, "idle");
-      assert.equal(engine.view().state.workMs, 0);
+      assert.ok(before-after>=2 && before-after<=4, selector+" counts down while working");
+      assert.equal(engine.view().state.mode,"work");
+      assert.ok(engine.view().state.workMs>loggedBefore+2000);
     }
-    // Also exercise the clock after today's idle allowance is gone. A short
-    // future cutoff and a 20:1 split make this an overdue, still-idle day. This
-    // changes only the disposable smoke profile, never the installed app.
-    const local = new Date();
-    const endMinutes = Math.min(1439, local.getHours() * 60 + local.getMinutes() + 3);
-    const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
-    await main.webContents.executeJavaScript(`window.desktop.configure(${JSON.stringify({ accountId: null, tasks: engine.view().state.tasks, endTime, plan: { startTime: "00:00", workParts: 20, idleParts: 1 } })})`);
-    assert.equal(idleLeftMs(engine.view().state), 0, "smoke fixture has exhausted today's idle time");
+    await main.webContents.executeJavaScript("window.desktop.command({type:'pause'})");
+    const logged = engine.view().state.workMs;
     for (const [w, selector] of [[main, ".focus-clock"], [mini, ".mini-clock"]] as const) {
       main.hide(); mini.hide();
       w.setOpacity(0); w.setIgnoreMouseEvents(true); w.showInactive();
       await sleep(250);
-      const before = await readSeconds(w, selector);
-      const beforeStats = { ...stats };
+      const before = await readSeconds(w, selector), beforeStats = { ...stats };
       await sleep(3200);
-      const after = await readSeconds(w, selector);
-      assert.ok(before - after >= 2 && before - after <= 4, `${selector} caps available work by the cutoff: ${before} -> ${after}`);
-      // Focus/power changes legitimately publish a fresh snapshot. Check the
-      // actual timer wakeups, not these unrelated desktop events.
-      assert.ok(stats.timerWakeups - beforeStats.timerWakeups >= 2 && stats.timerWakeups - beforeStats.timerWakeups <= 4, "available work updates each second while visible");
-      assert.equal(engine.view().state.mode, "idle"); assert.equal(engine.view().state.workMs, 0);
-      const text = await w.webContents.executeJavaScript("document.body.innerText");
-      assert.match(text, /Paused|PAUSED/);
-      assert.doesNotMatch(text, /Borrowed|BORROWED/);
+      assert.equal(await readSeconds(w,selector),before,"paused work stays fixed");
+      assert.equal(stats.timerWakeups,beforeStats.timerWakeups,"paused windows need no per-second wakeups");
+      assert.equal(engine.view().state.workMs,logged);
+      const text=await w.webContents.executeJavaScript("document.body.innerText");
+      assert.match(text,/Paused|PAUSED/);assert.doesNotMatch(text,/IDLE LEFT|Idle left|Work day starts|Work day ends|Unweighted|Minimum daily target/);
     }
     main.hide(); mini.hide();
     await sleep(100);
@@ -151,7 +112,7 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
     await sleep(2200);
     assert.equal(stats.publishes, before.publishes, "hidden idle returns to the low-power wake schedule");
     assert.equal(stats.sends, before.sends, "hidden renderers receive no countdown IPC");
-    console.log("COUNTDOWN CHECK PASS: main and mini count down idle, then available work without tracking; hidden windows stay quiet.");
+    console.log("COUNTDOWN CHECK PASS: main and mini count down work, pause without logging time, and preserve low-power hidden behavior.");
   }
   await assert.rejects(mini.webContents.executeJavaScript("window.desktop.api({path:'/api/auth/me',method:'GET'})"));
   // Opt-in native delivery probe. The normal smoke run remains silent. Only

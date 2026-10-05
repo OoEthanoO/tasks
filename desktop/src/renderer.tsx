@@ -32,11 +32,9 @@ function Mini() {
     <h1 title={m.title}>{m.title}</h1>
     <div className="mini-clock">{formatDuration(m.remaining, true)}</div>
     <p className="mini-sub">{view.state.mode === "work" ? `Work time left${m.current ? ` · ${formatDuration(m.current.remainingMs)} on this task` : ""}`
-      : m.paused ? "Time available · targets shrink; no work is being tracked"
-      : m.advise ? "Under half of today’s idle time left · start working now"
-      : m.label === "Idle" ? (m.canStart ? "Idle time left · tracking stays paused when it runs out" : "Idle time left · add a task to track work") : "Nothing to track right now."}</p>
+      : m.paused ? "Work remaining · paused until you choose Start working or Track" : "Nothing to track right now."}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current target progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>
-    <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(m.workLeft)}</strong></div><div><span>IDLE LEFT</span><strong>{formatDuration(m.idleLeft)}</strong></div></div>
+    <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>WORK LEFT</span><strong>{formatDuration(m.workLeft)}</strong></div><div><span>DAILY GOAL</span><strong>{formatDuration(m.budgetMs)}</strong></div></div>
     <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || (view.state.mode === "idle" ? !m.canStart : !m.canPause)} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? "Start working" : "Pause tracking"}</button><button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button></div>
     {(error || view.error || view.message) && <p role="status" className="mini-message" title={error || view.error || view.message || ""}>{error || view.error || view.message}</p>}
   </main>;
@@ -60,7 +58,7 @@ function Desktop() {
     <label><input type="checkbox" checked={view.settings.sound} onChange={e => void setting("sound", e.target.checked)} /> Notification sound</label>
     <label><input type="checkbox" checked={view.settings.launchAtLogin} onChange={e => void setting("launchAtLogin", e.target.checked)} /> Launch quietly at Windows sign-in</label>
     <button className="btn btn-ghost" onClick={() => void window.desktop.window("test-alert")}>Send a test alert</button>
-    <p className="hint">Battery-aware: hidden windows stop updating, background sync slows while idle or on battery, and alert wakeups follow task and idle-time boundaries. YanTasks never keeps your PC awake. Alerts require a running app and an awake PC; Windows Do Not Disturb may silence them.</p>
+    <p className="hint">Battery-aware: hidden windows stop updating, background sync slows while idle or on battery, and alert wakeups follow task-completion boundaries. YanTasks never keeps your PC awake. Alerts require a running app and an awake PC; Windows Do Not Disturb may silence them.</p>
     {error && <p className="danger" role="alert">{error}</p>}
   </section>}<Page /></>;
 }

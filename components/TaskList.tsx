@@ -144,7 +144,7 @@ function TaskRow({
         {task.description && <p className="task-desc">{task.description}</p>}
         {progress && !task.completed && progress.skipped && <div className="task-progress">
           <span>{formatDuration(progress.trackedMs)} today</span>
-          <span className="daily-skipped" title={skippedExplanation(progress.minimumMs)}>Skipped today: under {formatDuration(progress.minimumMs)}</span>
+          <span className="daily-skipped" title={skippedExplanation(progress.minimumMs)}>Outside the next 7 days</span>
         </div>}
         {progress && !task.completed && !progress.skipped && <div className="task-progress">
           <span>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</span>

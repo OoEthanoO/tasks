@@ -2,7 +2,7 @@
 
 A local Windows desktop client using the same task interface, account API and
 tracking calculations as the website and iPhone app. Sign in with your existing
-YanTasks account to sync tasks, the work day, tracked work, resets and the current timer.
+YanTasks account to sync tasks, daily targets, tracked work, resets and the current timer.
 Guest data stays on this PC; it does not silently replace account data.
 
 ## Use
@@ -22,22 +22,18 @@ release should be signed with the project's own code-signing certificate.
   needed for Windows notification identity.
 - Alerts follow the device that last started, paused or reset tracking, avoiding a
   second set of PC alerts for a timer controlled from the phone or website.
-  Until any device has, idle reminders alert everywhere.
-- Once today's idle time runs out, the timer shows Paused until Start working or
-  Track. Remaining work and task targets shrink to fit the time before the day
-  ends, without adding tracked work. Nothing is borrowed from other days.
-  Tracking never starts on its own, and Pause is always available while working.
+- The daily goal covers only open tasks due within seven days, each with at least
+  30 weighted minutes. Pausing freezes remaining work. There are no work-day
+  hours, idle allowance or automatic restarts. Daily totals reset at midnight.
 - Quitting does **not** pause an account timer. Pause tracking first if finished.
 
 ### Battery and notification boundaries
 
 Hidden renderers are background-throttled and receive no live state broadcasts.
 The mini window is created only when opened and freed when hidden. Visible active
-work and idle countdowns update once per second with no continuous animation;
-available work after idle runs out also updates while paused, without logging work.
-Completed and out-of-day displays do not need a one-second loop. Background
-timer wakeups are scheduled for task and idle-time transitions or a one-minute heartbeat,
-not a one-second loop. Account polling is 5 seconds when visible/active on AC,
+work countdowns update once per second with no continuous animation. Paused
+and completed displays do not need a one-second loop. Background wakeups follow
+completion boundaries or a one-minute heartbeat, not a one-second loop. Account polling is 5 seconds when visible/active on AC,
 15 seconds active in the background on AC, 30 seconds active on battery, and
 60 seconds paused in the background. Task-list metadata refreshes every 30 seconds
 while visible (and on focus); hidden task lists do not poll. The shell is updated
@@ -89,15 +85,16 @@ npm run smoke -- --packaged
 isolated guest profile with production requests disabled; it verifies both
 sandboxed renderers, bridge restrictions, native icons and hidden-window timer
 controls. The engine tests simulate cross-device changes, conflicts, outages,
-sleep, idle-time transitions and battery scheduling. Run root `npm test` and
+sleep, daily-goal transitions and battery scheduling. Run root `npm test` and
 `npm run build` when changing shared files.
 
 `npm run smoke -- --power-check` adds a short hidden-idle CPU sample (not a
 battery-life benchmark). `--packaged` checks the built executable rather than
 the development Electron runtime.
-`--countdown-check` verifies that the real main and mini idle countdowns advance
-without manual ticks, then checks that hidden windows stop frequent wakeups and
-receive no countdown updates. Its visible test windows are transparent and click-through.
+`--countdown-check` verifies that the real main and mini work countdowns advance
+without manual ticks and freeze while paused, then checks that hidden windows
+stop frequent wakeups and receive no countdown updates. Its visible test windows
+are transparent and click-through.
 Development runs use a separate `YanTasks Development` profile and Windows app
 ID. Smoke runs use `YanTasks Test`; neither shares the installed app's shell
 identity, so an Electron development shortcut cannot replace its taskbar/search
