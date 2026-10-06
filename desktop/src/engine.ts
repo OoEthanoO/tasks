@@ -1,5 +1,6 @@
 import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import { sanitizeState } from "../../lib/app-state";
+import { samePlan } from "../../lib/plan";
 import type { ApiReply, DesktopState, GuestConfig, Settings } from "./contract";
 import { defaults } from "./contract";
 import type { AlertDiagnostic, Suppression } from "./diagnostics";
@@ -23,11 +24,11 @@ function checkpointEvents(previous: TrackingState, next: TrackingState): { event
   const projected = advanceTracking(previous, next.cursor);
   const rejected = { events: projected.events, confirmed: false };
   if (next.cursor <= previous.cursor || next.dayKey !== previous.dayKey || next.timeZone !== previous.timeZone ||
-      next.controllerId !== previous.controllerId) return rejected;
+      next.controllerId !== previous.controllerId || !samePlan(dayPlan(previous), dayPlan(next))) return rejected;
   const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, dayPlan(next), next.unweighted, next.minimumEnabled, next.minimumMinutes);
   if (expected.mode !== next.mode || expected.taskId !== next.taskId || expected.allocationVersion !== next.allocationVersion || expected.idlePolicyVersion !== next.idlePolicyVersion || expected.workLimitVersion !== next.workLimitVersion || expected.workOnlyVersion !== next.workOnlyVersion || expected.coverageVersion !== next.coverageVersion) return rejected;
   const equalTime = (a: number, b: number) => Math.abs(a - b) <= 1;
-  // Only explicit work is counted.
+  // Only work is counted; idle time is derived from the clock.
   if (!equalTime(expected.workMs, next.workMs) || !equalTime(expected.carryMs ?? 0, next.carryMs ?? 0)) return rejected;
   for (const id of new Set([...Object.keys(expected.taskMs), ...Object.keys(next.taskMs)])) {
     const time = (s: TrackingState) => Object.hasOwn(s.taskMs, id) ? s.taskMs[id] : 0;
@@ -165,7 +166,8 @@ export class TrackerEngine {
   private deliver(events: TrackingEvent[], after: number, now: number, suppression: Suppression | null, source: AlertDiagnostic["source"]) {
     for (const event of events) {
       if (event.at <= after || event.at > now || this.delivered.has(event.id)) continue;
-      const reason = suppression;
+      // An idle warning predicted before a checkpoint that shows work is under way is stale.
+      const reason = suppression ?? (source !== "tick" && this.snapshot.mode === "work" && (event.type === "idle-half" || event.type === "idle-soon") ? "checkpoint-replaced" : null);
       this.trace({ kind: reason || !this.settings.alerts ? "alert-skipped" : "alert-requested", source,
         eventId: event.id, eventType: event.type, eventAt: event.at, revision: this.snapshot.revision,
         ...(reason || !this.settings.alerts ? { reason: reason ?? "alerts-disabled" } : {}) });

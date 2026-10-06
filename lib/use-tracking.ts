@@ -3,7 +3,7 @@ import type * as React from "react";
 import { api, ApiError } from "./remote";
 import { Task } from "./types";
 import type { DayPlan } from "./plan";
-import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, idleLeftMs, localTimeZone, ownsAlerts, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
 
 export const TRACKING_KEY = "yantasks.tracking.v1";
 // Poll responses and UI ticks share one second boundary. A response arriving
@@ -214,6 +214,6 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       } catch { setPermission("Alerts unavailable — check device settings"); }
     }, [controller]);
 
-    return { state, progress, budgetMs: workBudget(state), remainingWorkMs: remainingWorkTime(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
+    return { state, progress, budgetMs: workBudget(state), remainingWorkMs: remainingWorkTime(state), idleLeftMs: idleLeftMs(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
   };
 }

@@ -58,7 +58,7 @@ export type AppState = {
   recommendation: Recommendation | null;
   schedule: Schedule | null;
   endTime: string;
-  /** Retired start/ratio preference, preserved for migration and older clients only. */
+  /** When the work day starts and how it splits into work and idle. A preference, like the end time. */
   plan: DayPlan;
   /** Ignore due-date and priority multipliers without changing the tasks. */
   unweighted: boolean;

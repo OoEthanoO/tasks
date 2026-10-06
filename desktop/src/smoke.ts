@@ -8,7 +8,7 @@ import type { ApiReply } from "./contract";
 import { DIAGNOSTIC_FILE } from "./diagnostics";
 import { desktopIdentity } from "./identity";
 import type { PowerStats } from "./power-check";
-import { workLeftMs } from "../../lib/tracking";
+import { idleLeftMs } from "../../lib/tracking";
 
 export async function runSmoke({ main, mini, engine, icons, request, tray, stats }: { main: BrowserWindow; mini: BrowserWindow; engine: TrackerEngine; icons: Record<string, NativeImage>; request: (path: string) => Promise<ApiReply>; tray: Tray; stats: PowerStats }) {
   const ready = async (w: BrowserWindow) => {
@@ -103,8 +103,12 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
       assert.match(text, /^\d+:\d{2}:\d{2}$/);
       return text.split(":").reduce((seconds: number, part: string) => seconds * 60 + Number(part), 0);
     };
-    await main.webContents.executeJavaScript(`window.desktop.configure(${JSON.stringify({ accountId: null, tasks: engine.view().state.tasks, endTime: "23:59" })})`);
-    assert.ok(workLeftMs(engine.view().state) > 10_000, "fixture has work capacity to count down");
+    // Start this fixture's day at the current minute so the test can run after
+    // the real day's idle allowance is exhausted, without changing system time.
+    const now = new Date();
+    const startTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    await main.webContents.executeJavaScript(`window.desktop.configure(${JSON.stringify({ accountId: null, tasks: engine.view().state.tasks, endTime: "23:59", plan: { startTime, workParts: 1, idleParts: 1 } })})`);
+    assert.ok(idleLeftMs(engine.view().state) > 10_000, "fixture has idle time to count down");
     for (const [w, selector] of [[main, ".focus-clock"], [mini, ".mini-clock"]] as const) {
       main.hide(); mini.hide();
       w.setOpacity(0); w.setIgnoreMouseEvents(true); w.showInactive();
@@ -116,12 +120,14 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
       assert.equal(engine.view().state.mode, "idle");
       assert.equal(engine.view().state.workMs, 0);
     }
-    // A short future cutoff still only reduces available work, never logs it.
+    // Also exercise the clock after today's idle allowance is gone. A short
+    // future cutoff and a 20:1 split make this an overdue, still-idle day. This
+    // changes only the disposable smoke profile, never the installed app.
     const local = new Date();
     const endMinutes = Math.min(1439, local.getHours() * 60 + local.getMinutes() + 3);
     const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
     await main.webContents.executeJavaScript(`window.desktop.configure(${JSON.stringify({ accountId: null, tasks: engine.view().state.tasks, endTime, plan: { startTime: "00:00", workParts: 20, idleParts: 1 } })})`);
-    assert.ok(workLeftMs(engine.view().state) > 0);
+    assert.equal(idleLeftMs(engine.view().state), 0, "smoke fixture has exhausted today's idle time");
     for (const [w, selector] of [[main, ".focus-clock"], [mini, ".mini-clock"]] as const) {
       main.hide(); mini.hide();
       w.setOpacity(0); w.setIgnoreMouseEvents(true); w.showInactive();
@@ -137,7 +143,7 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
       assert.equal(engine.view().state.mode, "idle"); assert.equal(engine.view().state.workMs, 0);
       const text = await w.webContents.executeJavaScript("document.body.innerText");
       assert.match(text, /Paused|PAUSED/);
-      assert.doesNotMatch(text, /Borrowed|BORROWED|Idle left|IDLE LEFT|Work : idle|Work day starts/);
+      assert.doesNotMatch(text, /Borrowed|BORROWED/);
     }
     main.hide(); mini.hide();
     await sleep(100);
@@ -145,7 +151,7 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
     await sleep(2200);
     assert.equal(stats.publishes, before.publishes, "hidden idle returns to the low-power wake schedule");
     assert.equal(stats.sends, before.sends, "hidden renderers receive no countdown IPC");
-    console.log("COUNTDOWN CHECK PASS: main and mini count down available work without tracking; hidden windows stay quiet.");
+    console.log("COUNTDOWN CHECK PASS: main and mini count down idle, then available work without tracking; hidden windows stay quiet.");
   }
   await assert.rejects(mini.webContents.executeJavaScript("window.desktop.api({path:'/api/auth/me',method:'GET'})"));
   // Opt-in native delivery probe. The normal smoke run remains silent. Only

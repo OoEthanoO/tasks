@@ -23,7 +23,7 @@
 .mini-progress { height: 3px; background: var(--line); border-radius: 3px; overflow: hidden; }
 .mini-progress > span { display: block; height: 100%; background: #4ade80; }
 .mode-rest .mini-progress > span { background: #7dd3fc; }
-.mini-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 17px 0; }
+.mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 17px 0; }
 .mini-stats span { font-size: 9px; color: var(--text-faint); display: block; letter-spacing: 1px; margin-bottom: 5px; }
 .mini-stats strong { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mini-actions { display: flex; gap: 10px; }

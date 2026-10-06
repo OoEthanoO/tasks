@@ -14,7 +14,7 @@ release should be signed with the project's own code-signing certificate.
 - Closing the main window keeps the timer and native alerts running in the tray.
 - Click the tray icon to toggle the draggable, always-on-top mini tracker.
 - Right-click it to pause/resume, switch tasks, open the task list or quit.
-- The taskbar icon shows a working/paused overlay and progress. Hover it
+- The taskbar icon shows a working/idle overlay and progress. Hover it
   for thumbnail controls. Windows does not provide an app-defined text panel
   inside the standard taskbar; the mini tracker and tray tooltip show the stats.
 - Windows settings in the app include alert sound, a test alert, and optional
@@ -22,19 +22,21 @@ release should be signed with the project's own code-signing certificate.
   needed for Windows notification identity.
 - Alerts follow the device that last started, paused or reset tracking, avoiding a
   second set of PC alerts for a timer controlled from the phone or website.
-- Set an end time. Work left and task targets use all remaining time until it.
-  Pausing never records work, but available time still counts down. There are
-  no rest or idle allowances or reminders. Tracking stops at the end time.
+  Until any device has, idle reminders alert everywhere.
+- Once today's idle time runs out, the timer shows Paused until Start working or
+  Track. Remaining work and task targets shrink to fit the time before the day
+  ends, without adding tracked work. Nothing is borrowed from other days.
+  Tracking never starts on its own, and Pause is always available while working.
 - Quitting does **not** pause an account timer. Pause tracking first if finished.
 
 ### Battery and notification boundaries
 
 Hidden renderers are background-throttled and receive no live state broadcasts.
 The mini window is created only when opened and freed when hidden. Visible active
-work-capacity countdowns update once per second, including while paused,
-without logging work or using continuous animation.
+work and idle countdowns update once per second with no continuous animation;
+available work after idle runs out also updates while paused, without logging work.
 Completed and out-of-day displays do not need a one-second loop. Background
-timer wakeups are scheduled for task completions and end-time transitions or a one-minute heartbeat,
+timer wakeups are scheduled for task and idle-time transitions or a one-minute heartbeat,
 not a one-second loop. Account polling is 5 seconds when visible/active on AC,
 15 seconds active in the background on AC, 30 seconds active on battery, and
 60 seconds paused in the background. Task-list metadata refreshes every 30 seconds
@@ -87,13 +89,13 @@ npm run smoke -- --packaged
 isolated guest profile with production requests disabled; it verifies both
 sandboxed renderers, bridge restrictions, native icons and hidden-window timer
 controls. The engine tests simulate cross-device changes, conflicts, outages,
-sleep, end-time transitions and battery scheduling. Run root `npm test` and
+sleep, idle-time transitions and battery scheduling. Run root `npm test` and
 `npm run build` when changing shared files.
 
 `npm run smoke -- --power-check` adds a short hidden-idle CPU sample (not a
 battery-life benchmark). `--packaged` checks the built executable rather than
 the development Electron runtime.
-`--countdown-check` verifies that the real main and mini work-capacity countdowns advance
+`--countdown-check` verifies that the real main and mini idle countdowns advance
 without manual ticks, then checks that hidden windows stop frequent wakeups and
 receive no countdown updates. Its visible test windows are transparent and click-through.
 Development runs use a separate `YanTasks Development` profile and Windows app

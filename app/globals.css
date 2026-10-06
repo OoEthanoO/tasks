@@ -1216,7 +1216,7 @@ select {
 .tracking-card .focus-clock { font-size: clamp(42px, 5vw, 60px); line-height: 1.15; }
 .tracking-card .focus-action { min-height: 48px; margin: 18px 0 12px; }
 .break-preview { color: var(--text-dim); font-size: 12px; line-height: 1.6; padding: 10px 12px; background: var(--bg-elev-2); border-radius: 8px; margin: 0 0 14px; }
-.tracking-card .tracking-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 18px 0; margin: 8px 0; border-top: 1px solid var(--line-soft); }
+.tracking-card .tracking-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 18px 0; margin: 8px 0; border-top: 1px solid var(--line-soft); }
 .tracking-card .tracking-totals strong { font-size: clamp(15px, 2vw, 18px); }
 .day-settings { border-top: 1px solid var(--line-soft); }
 .day-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 17px 0 2px; cursor: pointer; list-style: none; }
