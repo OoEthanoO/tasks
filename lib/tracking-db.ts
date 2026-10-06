@@ -1,4 +1,6 @@
-import { DEFAULT_MINIMUM_MINUTES } from "./minimum";
+import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
+import { sanitizeEndTime } from "./app-state";
+import { sanitizePlan } from "./plan";
 import { ensureSchema, getSql } from "./sql";
 import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, parseTracking, trackingConfigKey, trackingDay, TrackingAction, TrackingState } from "./tracking";
 import { Task } from "./types";
@@ -37,7 +39,7 @@ export async function commandTracking(userId: string, revision: number, action: 
 export async function configureAccountTracking(userId: string, tasks: Task[], endTime: string, plan: DayPlan, now = Date.now(), unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): Promise<void> {
   for (let attempt = 0; attempt < 8; attempt++) {
     const previous = await loadTracking(userId);
-    if (!previous || trackingConfigKey(previous.tasks, previous.endTime, dayPlan(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes)) return;
+    if (!previous || (previous.coverageVersion === undefined && trackingConfigKey(previous.tasks, previous.endTime, dayPlan(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes))) return;
     try {
       await replace(userId, previous, configureTracking(previous, tasks, endTime, now, plan, unweighted, minimumEnabled, minimumMinutes));
       return;
@@ -50,8 +52,17 @@ export async function configureAccountTracking(userId: string, tasks: Task[], en
 export async function readAccountTracking(userId: string, now = Date.now()): Promise<TrackingState | null> {
   for (let attempt = 0; attempt < 8; attempt++) {
     const previous = await loadTracking(userId);
-    if (!previous || (previous.dayKey === trackingDay(now, previous.timeZone) && previous.allocationVersion === 2 && previous.idlePolicyVersion === 2 && previous.workLimitVersion === 1 && previous.coverageVersion === 1 && previous.coverageDays !== undefined && previous.carryMs === undefined)) return previous;
-    try { return await replace(userId, previous, advanceTracking(previous, now).state); }
+    if (!previous || (previous.dayKey === trackingDay(now, previous.timeZone) && previous.allocationVersion === 2 && previous.idlePolicyVersion === 2 && previous.workLimitVersion === 1 && previous.coverageVersion === undefined && previous.carryMs === undefined)) return previous;
+    let restored = previous;
+    if (previous.coverageVersion === 1) {
+      // The range-based release ignored these settings but left the account's
+      // preferences intact. Restore them without editing tasks or history.
+      const [prefs] = await getSql().query<{ end_time: string; day_plan: string | null; unweighted: boolean; minimum_enabled: boolean; minimum_minutes: number }>(
+        "SELECT end_time, day_plan, unweighted, minimum_enabled, minimum_minutes FROM prefs WHERE user_id = $1", [userId],
+      );
+      if (prefs) restored = { ...previous, endTime: sanitizeEndTime(prefs.end_time), plan: sanitizePlan(prefs.day_plan ? JSON.parse(prefs.day_plan) : null), unweighted: prefs.unweighted === true, minimumEnabled: prefs.minimum_enabled !== false, minimumMinutes: sanitizeMinimumMinutes(prefs.minimum_minutes) };
+    }
+    try { return await replace(userId, previous, advanceTracking(restored, now).state); }
     catch (error) { if (!(error instanceof TrackingConflict)) throw error; }
   }
   throw new TrackingConflict();

@@ -1,58 +1,111 @@
 "use client";
-import { useEffect, useId, useState } from "react";
-import { coverageDays, formatDuration, MAX_COVERAGE_DAYS, parseCoverageDaysInput, RESET_PROGRESS_CONFIRMATION } from "@/lib/tracking";
+import { useEffect, useState } from "react";
+import { formatDuration, RESET_PROGRESS_CONFIRMATION } from "@/lib/tracking";
 import { describeFocus } from "@/lib/focus";
+import { clampWhole, DayPlan, SPLIT_PARTS } from "@/lib/plan";
+import { MINIMUM_MINUTES } from "@/lib/minimum";
 import { Tracker } from "./useTracking";
 import ConfirmDialog from "./ConfirmDialog";
 
-export default function TrackingPanel({ tracker: t }: { tracker: Tracker }) {
+/** A whole-number field that commits on blur or Enter, so typing "25" never saves a passing "2". */
+function WholeInput({ label, value, range, onCommit }: { label: string; value: number; range: { min: number; max: number }; onCommit: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const next = draft.trim() === "" ? value : clampWhole(Number(draft), range, value);
+    setDraft(String(next));
+    if (next !== value) onCommit(next);
+  };
+  return <input type="number" className="input time-input minutes-input" aria-label={label} inputMode="numeric"
+    min={range.min} max={range.max} step={1} value={draft} onChange={e => setDraft(e.target.value)} onBlur={commit}
+    onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} />;
+}
+
+export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, plan, onPlanChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
+  tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; plan: DayPlan; onPlanChange: (value: DayPlan) => void;
+  unweighted: boolean; onUnweightedChange: (value: boolean) => void;
+  minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
+  minimumMinutes: number; onMinimumMinutesChange: (value: number) => void;
+}) {
   const [confirmReset, setConfirmReset] = useState(false);
-  const daysId = useId();
-  const [daysDraft, setDaysDraft] = useState(() => String(coverageDays(t.state)));
-  const days = coverageDays(t.state), draft = parseCoverageDaysInput(daysDraft);
-  useEffect(() => { setDaysDraft(String(days)); }, [days, t.ready]);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
-  const s = t.state, f = describeFocus(s, t.progress, t.ready);
+  const s = t.state;
+  const f = describeFocus(s, t.progress, t.ready);
+  const working = f.working;
+  // What the settings mean for an ordinary day, shown beside them.
+  const minutesOf = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+  const dayMinutes = Math.max(0, minutesOf(endTime) - minutesOf(plan.startTime));
+  const workMinutes = Math.round(dayMinutes * plan.workParts / (plan.workParts + plan.idleParts));
+  const plannedWork = dayMinutes
+    ? `${formatDuration(workMinutes * 60_000)} of work and ${formatDuration((dayMinutes - workMinutes) * 60_000)} of idle time a day.`
+    : "The work day must start before it ends.";
   return (
-    <section className={`card tracking-card${f.working ? "" : " is-idle"}`}>
-      <div className="card-head"><h2 className="card-title">Today’s focus</h2><span className="focus-cutoff">Due through {f.cutoff}</span></div>
+    <section className={`card tracking-card${working ? "" : " is-idle"}`}>
+      <div className="card-head"><h2 className="card-title">Today’s focus</h2><span className="focus-cutoff">{plan.startTime}–{endTime}</span></div>
       <div className="focus-label">{f.label}</div>
       <h3 className="focus-title">{f.title}</h3>
-      <div className="focus-clock" role="timer" aria-label={f.clockLabel}>{formatDuration(f.clock, true)}</div>
+      <div className="focus-clock" role="timer" aria-label={f.clockLabel}>
+        {formatDuration(f.clock, true)}
+      </div>
       <p className="hint">{f.hint}</p>
+      {f.advice && <div className="banner warn start-advice" role="status">{f.advice}</div>}
       <button type="button" className="btn btn-primary focus-action"
-        disabled={!t.ready || t.busy || (!f.working && !f.canStart)} onClick={() => void t.command({ type: f.working ? "pause" : "start" })}>
-        {t.busy ? "Syncing…" : f.working ? "Pause tracking" : "Start working"}
+        disabled={!t.ready || t.busy || (!working && !f.canStart)} onClick={() => void t.command({ type: working ? "pause" : "start" })}>
+        {t.busy ? "Syncing…" : working ? "Pause tracking" : "Start working"}
       </button>
       {t.error && <div className="banner danger" role="alert">{t.error} <button className="btn btn-ghost" onClick={() => void t.refresh()}>Refresh timer</button></div>}
       {t.message && <div className="banner ok" role="status">{t.message}<button className="icon-btn" aria-label="Dismiss timer alert" onClick={t.dismissMessage}>×</button></div>}
       <div className="tracking-totals">
         <div><span>Worked today</span><strong>{formatDuration(s.workMs, true)}</strong></div>
         <div><span>Work left</span><strong>{t.ready ? formatDuration(f.workLeft) : "—"}</strong></div>
-        <div><span>Daily goal</span><strong>{t.ready ? formatDuration(f.budgetMs) : "—"}</strong></div>
+        <div><span>{f.idleStat.label}</span><strong>{t.ready ? formatDuration(f.idleStat.value) : "—"}</strong></div>
       </div>
-      <p className="tracking-explainer">Weighted time for {f.includedCount} open {f.includedCount === 1 ? "task" : "tasks"} due {f.rangeLabel}{f.days > 0 ? ", including overdue tasks." : "."} Every included task gets at least 30 minutes. Later tasks are excluded.</p>
       <details className="day-settings">
-        <summary><span><strong>Tracking options</strong><span className="settings-summary">{days} {days === 1 ? "day" : "days"} ahead · Alerts and progress</span></span></summary>
+        <summary>
+          <span><strong>Day settings</strong><span className="settings-summary">{plan.workParts}:{plan.idleParts} work:idle · {unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</span></span>
+        </summary>
         <div className="settings-body">
-          <form onSubmit={e => { e.preventDefault(); if (t.ready && !t.busy && draft !== null && draft !== days) void t.command({ type: "set-coverage-days", days: draft }); }}>
+          <div className="setting-row">
+            <label htmlFor="start-time"><strong>Work day starts</strong><span className="setting-help">{t.ready ? s.timeZone : "Local time"}</span></label>
+            <input id="start-time" type="time" className="input time-input" value={plan.startTime} onChange={e => e.target.value && onPlanChange({ ...plan, startTime: e.target.value })} />
+          </div>
+          <div className="setting-row">
+            <label htmlFor="end-time"><strong>Work day ends</strong><span className="setting-help">Tracking stops here.</span></label>
+            <input id="end-time" type="time" className="input time-input" value={endTime} onChange={e => e.target.value && onEndTimeChange(e.target.value)} />
+          </div>
+          <div className="setting-section">
             <div className="setting-row">
-              <label htmlFor={daysId}><strong>Days ahead</strong><span className="setting-help">Include tasks due this many days from today.</span></label>
-              <div className="duration-field">
-                <input id={daysId} aria-label="Days ahead" aria-describedby={`${daysId}-help`} aria-invalid={draft === null} type="number" inputMode="numeric" min={0} max={MAX_COVERAGE_DAYS} step={1} className="minutes-input" value={daysDraft} disabled={!t.ready || t.busy} onChange={e => setDaysDraft(e.target.value)} />
-                <button type="submit" className="btn btn-ghost" aria-label="Apply days ahead" disabled={!t.ready || t.busy || draft === null || draft === days}>{draft === days ? "Saved" : "Apply"}</button>
-              </div>
+              <label><strong>Work : idle</strong><span className="setting-help">Untracked time is idle. 1:1 is recommended.</span></label>
             </div>
-            <p className="setting-help" id={`${daysId}-help`}>{draft === null ? `Enter a whole number from 0 to ${MAX_COVERAGE_DAYS}. ` : ""}Default: 3. Set 0 for today and overdue tasks only. Changes sync across devices and preserve tracked work.</p>
-          </form>
+            <div className="break-durations split-fields">
+              <label><span>Work</span><span className="duration-field"><WholeInput label="Work parts of the ratio" value={plan.workParts} range={SPLIT_PARTS} onCommit={workParts => onPlanChange({ ...plan, workParts })} /></span></label>
+              <label><span>Idle</span><span className="duration-field"><WholeInput label="Idle parts of the ratio" value={plan.idleParts} range={SPLIT_PARTS} onCommit={idleParts => onPlanChange({ ...plan, idleParts })} /></span></label>
+            </div>
+            <p className="break-preview day-preview">{plannedWork}</p>
+          </div>
+          <div className="setting-section">
+            <div className="setting-row">
+              <label htmlFor="unweighted"><strong>Unweighted</strong><span className="setting-help" id="unweighted-hint">Give every open task equal weight.</span></label>
+              <input id="unweighted" className="setting-check" type="checkbox" checked={unweighted} onChange={e => onUnweightedChange(e.target.checked)} aria-describedby="unweighted-hint" />
+            </div>
+            <div className="setting-row">
+              <label htmlFor="minimum-enabled"><strong>Daily minimum</strong><span className="setting-help" id="minimum-hint">Redistribute targets below this length.</span></label>
+              <input id="minimum-enabled" className="setting-check" type="checkbox" checked={minimumEnabled} onChange={e => onMinimumChange(e.target.checked)} aria-describedby="minimum-hint" />
+            </div>
+            <div className="setting-duration">
+              <WholeInput label="Minimum daily target in minutes" value={minimumMinutes} range={MINIMUM_MINUTES} onCommit={onMinimumMinutesChange} />
+              <span>min per task</span><span className="setting-note">{minimumEnabled ? "First eligible task is always kept." : "Off — your value is saved for later."}</span>
+            </div>
+          </div>
           <div className="setting-section">
             <button type="button" className="btn btn-ghost" onClick={() => void t.enableNotifications()}>{t.permission}</button>
-            <p className="setting-help">{("notificationHelp" in t && typeof t.notificationHelp === "string") ? t.notificationHelp : "Browser alerts need this page open. Phone alerts can fire while locked. Completion alerts follow the device that last started, paused or reset tracking."}</p>
+            <p className="setting-help">{("notificationHelp" in t && typeof t.notificationHelp === "string") ? t.notificationHelp : "Browser alerts need this page open. Phone alerts can fire while locked. Alerts follow the device that last started, paused or reset tracking; until one has, every device alerts."}</p>
           </div>
           <div className="setting-section">
-            <p className="tracking-explainer">Work is counted only while tracking. Task edits recalculate future targets without changing logged time. Daily totals reset at midnight ({s.timeZone}).</p>
+            <p className="tracking-explainer">Remaining targets shrink to fit the time until your day ends. Only explicit tracking adds worked time; pausing never does. Time already logged stays unchanged. Each day starts fresh at midnight.</p>
             <button type="button" className="btn btn-ghost reset-progress" disabled={!t.ready || t.busy} onClick={() => setConfirmReset(true)}>Reset today’s progress…</button>
           </div>
+          <p className="settings-save-note">Settings save automatically.</p>
         </div>
       </details>
       {confirmReset && <ConfirmDialog title="Reset today’s progress?" body={RESET_PROGRESS_CONFIRMATION} confirmLabel="Reset progress" cancelLabel="Keep progress" onCancel={() => setConfirmReset(false)} onConfirm={() => { setConfirmReset(false); void t.command({ type: "reset" }); }} />}

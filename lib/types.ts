@@ -58,9 +58,9 @@ export type AppState = {
   recommendation: Recommendation | null;
   schedule: Schedule | null;
   endTime: string;
-  /** Retired preferences retained for old-client storage compatibility; ignored by coverage targets. */
+  /** When the work day starts and how it splits into work and idle. A preference, like the end time. */
   plan: DayPlan;
-  /** Legacy-only; current targets always use due-date and priority weights. */
+  /** Ignore due-date and priority multipliers without changing the tasks. */
   unweighted: boolean;
   minimumEnabled: boolean;
   minimumMinutes: number;

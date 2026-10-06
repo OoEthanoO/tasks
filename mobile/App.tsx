@@ -16,7 +16,7 @@ import { formatDueDate, todayKey } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
-import { canTrackWork, configureTracking, taskProgress } from "../lib/tracking";
+import { canTrackWork, taskProgress } from "../lib/tracking";
 import { useTracking } from "./src/useTracking";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
@@ -383,7 +383,7 @@ function YanTasks() {
   }, [account, flushRemote]);
   const tracker = useTracking(tasks, endTime, plan, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
   const today = tracker.state.dayKey;
-  const entries = taskProgress(configureTracking(tracker.state, tasks, endTime, tracker.state.cursor));
+  const entries = taskProgress({ ...tracker.state, tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes });
   const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
   const maxProbability = Math.max(0, ...entries.map(e => e.probability));
   useEffect(() => {
@@ -506,7 +506,7 @@ function YanTasks() {
           </Banner>
         )}
 
-        <TrackingCard tracker={tracker} />
+        <TrackingCard tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} plan={plan} onPlanChange={setPlan} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
 
         <Card>
           <CardHead

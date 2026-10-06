@@ -1,23 +1,30 @@
-import { canTrackWork, coverageCutoff, coverageDays, coverageLabel, formatDuration, workBudget, workLeftMs, type TaskProgress, type TrackingState } from "./tracking";
+import { canTrackWork, dayBudget, dayEnd, dayPlan, dayStart, formatDuration, idleLeftMs, shouldStartWorking, workLeftMs, type TaskProgress, type TrackingState } from "./tracking";
 
-/** Shared focus presentation for web, Windows and iPhone. */
+/** What the focus card shows, shared by the web and iPhone apps so their wording stays in step. */
 export function describeFocus(s: TrackingState, progress: TaskProgress[], ready: boolean) {
   const current = progress.find(p => p.task.id === s.taskId);
   const working = s.mode === "work";
-  const workLeft = workLeftMs(s), budgetMs = workBudget(s);
-  const includedCount = progress.filter(p => p.weight > 0).length;
-  const days = coverageDays(s), rangeLabel = coverageLabel(days);
-  const done = workLeft <= 1;
+  const before = s.cursor < dayStart(s), ended = s.cursor >= dayEnd(s);
+  const budget = dayBudget(s), workLeft = workLeftMs(s), idleLeft = Math.max(0, idleLeftMs(s));
+  const done = !before && workLeft <= 0;
   const canStart = canTrackWork(s) && progress.some(p => p.weight > 0 && !p.doneToday);
-  const paused = !working && !done;
-  const label = !ready ? "LOADING TIMER…" : working ? "WORKING ON" : !includedCount ? "NOTHING DUE SOON" : done ? "WORK DONE" : "PAUSED";
-  const title = working ? current?.task.title ?? "Working" : !includedCount ? "Your selected date range is clear."
-    : done ? "Today’s targets are complete." : "Ready when you are.";
-  const hint = !ready ? "" : working ? `Work time left today${current ? ` · ${formatDuration(current.remainingMs)} left on this task` : ""}`
-    : !includedCount ? `Add a task due ${rangeLabel}, or increase Days ahead in Tracking options.`
-    : done ? "All allocated work is tracked. Tomorrow’s targets reset at midnight."
-    : "Start working or choose Track on a task. Pausing does not use up work time.";
-  return { working, paused, canStart, label, title, clock: workLeft,
-    clockLabel: paused ? "Work remaining — paused" : "Work remaining today",
-    hint, workLeft, budgetMs, includedCount, days, rangeLabel, cutoff: coverageCutoff(s) };
+  const paused = !working && !before && !ended && !done && idleLeft <= 0;
+  const label = !ready ? "LOADING TIMER…" : before ? "BEFORE YOUR DAY" : ended ? "DAY COMPLETE" : done ? "WORK DONE"
+    : working ? "WORKING ON" : paused ? "PAUSED" : "IDLE";
+  const title = working ? current?.task.title ?? "Working" : before ? `Your day starts at ${dayPlan(s).startTime}.`
+    : ended ? "You’re done for today." : done ? "Today’s work is done." : paused ? "Ready when you are." : "Idle time";
+  // Once idle is used, the available work shrinks toward the cutoff without logging time.
+  const clock = before ? budget.workMs : working || done || paused ? workLeft : idleLeft;
+  const clockLabel = paused ? "Work time available — not tracking" : working || done ? "Work time left today" : before ? "Today’s work goal" : "Idle time left today";
+  const hint = !ready ? "" : before ? `${formatDuration(budget.workMs)} of work and ${formatDuration(budget.idleMs)} of idle time today.`
+    : ended ? "Tracking has stopped for today. Tomorrow starts fresh."
+    : done ? "All of today’s work is tracked. The rest of the day is idle time."
+    : working ? `Work time left today${current ? ` · ${formatDuration(current.remainingMs)} left on this task` : ""}`
+    : paused ? "No work is being tracked. Targets shrink to fit the time until your day ends. Choose Start working or Track when you’re ready."
+    : canStart ? "Idle time left. When it runs out, tracking stays paused until you start working." : "Idle time left. Add a task to have work to track.";
+  const advice = !shouldStartWorking(s) ? null
+    : paused ? "Today’s idle time is used up. Start working now."
+    : "Less than half of today’s idle time is left. Start working now.";
+  const idleStat = { label: "Idle left", value: idleLeft };
+  return { working, paused, canStart, label, title, clock, clockLabel, hint, advice, workLeft, idleStat };
 }

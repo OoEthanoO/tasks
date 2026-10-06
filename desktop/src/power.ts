@@ -10,7 +10,7 @@ export function wakeDelay(visible: boolean, nextEventIn: number | null): number 
   const display = visible ? 1000 : 60_000;
   return Math.max(100, Math.min(display, nextEventIn === null ? Infinity : nextEventIn + 25));
 }
-/** Only active work needs a visible per-second countdown; paused goals are fixed. */
+/** Idle and end-capped work both count down, even while no work is being logged. */
 export function hasLiveCountdown(state: TrackingState): boolean {
-  return state.mode === "work" && canTrackWork(state);
+  return canTrackWork(state);
 }

@@ -6,7 +6,7 @@ import AuthDialog from "@/components/AuthDialog";
 import QuickAdd from "@/components/QuickAdd";
 import TrackingPanel from "@/components/TrackingPanel";
 import { useTracking } from "@/components/useTracking";
-import { canTrackWork, configureTracking, taskProgress } from "@/lib/tracking";
+import { canTrackWork, taskProgress } from "@/lib/tracking";
 import TaskList from "@/components/TaskList";
 import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
@@ -381,7 +381,7 @@ export default function Page() {
   }, [account, flushRemote]);
   const tracker = useTracking(tasks, endTime, plan, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
   const today = tracker.state.dayKey;
-  const entries = taskProgress(configureTracking(tracker.state, tasks, endTime, tracker.state.cursor));
+  const entries = taskProgress({ ...tracker.state, tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes });
   const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
   const maxProbability = Math.max(0, ...entries.map(e => e.probability));
 
@@ -532,7 +532,7 @@ export default function Page() {
 
       <div className="columns">
         <div className="stack focus-column">
-          <TrackingPanel tracker={tracker} />
+          <TrackingPanel tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} plan={plan} onPlanChange={setPlan} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
         </div>
         <section className="card">
           <div className="card-head">
@@ -640,7 +640,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               <code>×4</code>.
             </div>
             <div>
-              Days ahead in Tracking options chooses which open tasks receive work time: 3 days by default, with an inclusive cutoff and overdue tasks always included. Choose any whole number from 0 to 365; 0 includes only today and overdue tasks. The daily goal is the smallest whole-minute budget that gives each included task at least 30 minutes while balancing targets by due-date and priority weights. Later tasks are excluded. There is no work-day start, end, work:idle ratio, or unweighted mode. Work counts only while tracking; pausing does not reduce your targets. Task and date-range edits recalculate future targets without changing logged work. The setting syncs across devices and survives resets. Daily tracked counters reset at midnight in the shared timer’s time zone.
+              Open tasks divide tracked work in proportion to their weights. Unweighted mode gives every open task weight 1. With the daily minimum enabled, a task whose share would come to under your chosen minimum is skipped for the day, and its time is redistributed to higher-weight tasks, or earlier tasks in the list when weights are equal. The first eligible task is never skipped, so a short day can still be used. Choose a minimum from 1 to 1,440 minutes (30 by default), or turn it off to include smaller shares in either weighting mode. The work day runs from your start time to your end time and divides into work and idle time by your ratio (1:1 recommended). Untracked time within the work day uses idle time; below half the allowance you will be advised to start. When it runs out, the timer stays Paused until you choose Start working or Track. Remaining work and unfinished task targets shrink to fit the time until your day ends. This never adds worked time or changes work already logged. Tracking never starts on its own, and you can always pause. No time is borrowed from other days. Daily tracked counters reset at midnight, and each day starts with its normal work goal and idle allowance.
             </div>
           </div>
         </div>

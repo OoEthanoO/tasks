@@ -1,5 +1,4 @@
 /**
- * Legacy day/idle settings: retained only for compatibility and elapsed-work migration.
  * How a work day is laid out: when it starts (the end time is its own,
  * older setting) and how it divides into work and idle time. Between start
  * and end, every minute not tracked as work counts as idle, so the day's work

@@ -3,7 +3,7 @@ import type * as React from "react";
 import { api, ApiError } from "./remote";
 import { Task } from "./types";
 import type { DayPlan } from "./plan";
-import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, idleLeftMs, localTimeZone, ownsAlerts, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
 
 export const TRACKING_KEY = "yantasks.tracking.v1";
 // Poll responses and UI ticks share one second boundary. A response arriving
@@ -98,7 +98,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
           try { saved = raw ? parseTracking(JSON.parse(raw)) : null; } catch { /* reset corrupt guest state */ }
           if (saved) {
             const advanced = advanceTracking(saved, Date.now()).state;
-            if (advanced.dayKey !== saved.dayKey || advanced.allocationVersion !== saved.allocationVersion || advanced.idlePolicyVersion !== saved.idlePolicyVersion || advanced.workLimitVersion !== saved.workLimitVersion || advanced.coverageVersion !== saved.coverageVersion || advanced.coverageDays !== saved.coverageDays || saved.carryMs !== undefined) {
+            if (advanced.dayKey !== saved.dayKey || advanced.allocationVersion !== saved.allocationVersion || advanced.idlePolicyVersion !== saved.idlePolicyVersion || advanced.workLimitVersion !== saved.workLimitVersion || advanced.coverageVersion !== saved.coverageVersion || saved.carryMs !== undefined) {
               saved = { ...advanced, revision: saved.revision + 1 };
               await adapter.write(JSON.stringify(saved));
             }
@@ -214,6 +214,6 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       } catch { setPermission("Alerts unavailable — check device settings"); }
     }, [controller]);
 
-    return { state, progress, budgetMs: workBudget(state), remainingWorkMs: remainingWorkTime(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
+    return { state, progress, budgetMs: workBudget(state), remainingWorkMs: remainingWorkTime(state), idleLeftMs: idleLeftMs(state), ready: ready && !!controller, busy, error, message, permission, command, refresh, enableNotifications, dismissMessage: () => setMessage(null) };
   };
 }
