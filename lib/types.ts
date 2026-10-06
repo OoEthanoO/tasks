@@ -2,7 +2,7 @@ import { DateKey } from "./dates";
 import type { TrackingState } from "./tracking";
 import type { DayPlan } from "./plan";
 
-/** Scales a task's due-date weight: low ×1, medium ×2, high ×4. */
+/** Retired metadata, read only for compatibility with old clients and migrations. */
 export type Priority = "low" | "medium" | "high";
 
 export type Task = {

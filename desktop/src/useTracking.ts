@@ -1,6 +1,6 @@
 import { DEFAULT_MINIMUM_MINUTES } from "../../lib/minimum";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createTracking, remainingWorkTime, taskProgress, trackingConfigKey, workBudget, type TrackingAction } from "../../lib/tracking";
+import { createTracking, taskProgress, trackingConfigKey, type TrackingAction } from "../../lib/tracking";
 import type { Task } from "../../lib/types";
 import type { DayPlan } from "../../lib/plan";
 import { defaults, type DesktopState } from "./contract";
@@ -44,12 +44,13 @@ export function useTracking(tasks: Task[], endTime: string, plan: DayPlan, accou
     catch (e) { setError(e instanceof Error ? e.message : "Could not update tracking."); }
   }, [beforeCommand]);
   return {
-    state: view.state, progress: taskProgress(view.state), budgetMs: workBudget(view.state), remainingWorkMs: remainingWorkTime(view.state),
+    state: view.state, progress: taskProgress(view.state),
     ready: enabled && view.ready && view.accountId === accountId, busy: view.busy, error: localError ?? view.error, message: view.message,
-    permission: view.settings.alerts ? "Windows alerts enabled" : "Enable Windows alerts",
-    notificationHelp: "Alerts continue in the system tray while this PC is awake. They follow the device that last started, paused or reset tracking; until one has, every device alerts. Windows Do Not Disturb can silence them.",
+    permission: view.settings.alerts ? "Windows alerts enabled" : "Windows alerts disabled",
+    // Shared UI renders this as a read-only Windows status. Keep its hook
+    // contract without changing the user's saved notification preference.
+    enableNotifications: async () => {},
     command, refresh: async () => { setError(null); await window.desktop.refresh(); },
-    enableNotifications: async () => { await window.desktop.settings({ alerts: true }); await window.desktop.window("test-alert"); },
     dismissMessage: () => { void window.desktop.window("dismiss"); },
   };
 }

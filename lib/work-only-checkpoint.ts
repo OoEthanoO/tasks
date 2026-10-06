@@ -1,4 +1,4 @@
-import type { TaskProgress, TrackingState } from "./tracking";
+import type { TaskProgress, TrackingState } from "./legacy-tracking";
 import { compareListOrder } from "./grouping";
 
 /** Attribute an in-flight work-only interval before restoring day/ratio limits.

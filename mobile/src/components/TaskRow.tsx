@@ -1,162 +1,103 @@
 import { Pressable, Text, View } from "react-native";
-import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
+import { DateKey, formatDueDate } from "../../../lib/dates";
 import { dueBucket } from "../../../lib/grouping";
 import { TaskProgress, formatDuration } from "../../../lib/tracking";
-import { Btn } from "./ui";
-import {
-  WeightedTask,
-  formatProbability,
-} from "../../../lib/weights";
-import { radius, themed, useStyles, useTheme } from "../theme";
+import { Task } from "../../../lib/types";
+import { themed, useStyles, useTheme } from "../theme";
 
 export default function TaskRow({
-  entry,
+  task,
   today,
-  maxProbability,
   progress,
   active,
-  trackingDisabled,
-  onTrack,
   onToggle,
   onEdit,
 }: {
-  entry: WeightedTask;
+  task: Task;
   today: DateKey;
-  maxProbability: number;
   progress?: TaskProgress;
   active: boolean;
-  trackingDisabled: boolean;
-  onTrack: () => void;
   onToggle: () => void;
   onEdit: () => void;
 }) {
   const { c } = useTheme();
   const s = useStyles(styles);
-  const { task, weight, probability } = entry;
-  const DUE_COLOR = { overdue: c.danger, today: c.warn, upcoming: c.dim, done: c.faint };
-  const dueColor = DUE_COLOR[dueBucket(task, today)];
-
-  const barWidth =
-    maxProbability > 0 ? Math.max(3, (probability / maxProbability) * 100) : 0;
+  const dueColor = { overdue: c.danger, today: c.warn, upcoming: c.dim, done: c.faint }[dueBucket(task, today)];
 
   return (
-    <Pressable
-      onPress={onEdit}
-      accessibilityRole="button"
-      accessibilityLabel={`Edit ${task.title}`}
-      style={({ pressed }) => [s.row, active && !task.completed && { borderLeftWidth: 3, borderLeftColor: c.accent, paddingLeft: 10, backgroundColor: c.elev2 }, pressed && { backgroundColor: c.elev2 }]}
-    >
+    <View style={[s.row, active && !task.completed && s.active]}>
       <Pressable
         onPress={onToggle}
-        hitSlop={10}
         accessibilityRole="checkbox"
         accessibilityState={{ checked: task.completed }}
-        accessibilityLabel={
-          task.completed ? `Reopen ${task.title}` : `Complete ${task.title}`
-        }
-        style={[s.check, task.completed && s.checkDone]}
+        accessibilityLabel={task.completed ? `Reopen ${task.title}` : `Complete ${task.title}`}
+        style={({ pressed }) => [s.checkTarget, pressed && s.pressed]}
       >
-        {task.completed ? <Text style={s.checkMark}>✓</Text> : null}
+        <View style={[s.check, task.completed && s.checkDone]}>
+          {task.completed && <Text style={s.checkMark}>✓</Text>}
+        </View>
       </Pressable>
 
       <View style={s.main}>
-        <Text
-          style={[s.title, task.completed && s.titleDone]}
-          numberOfLines={2}
-        >
+        <Text style={[s.title, task.completed && s.titleDone]} numberOfLines={2}>
           {task.title}
         </Text>
-        {task.description ? (
-          <Text style={s.desc} numberOfLines={2}>
-            {task.description}
-          </Text>
-        ) : null}
-        {progress && !task.completed && <>
-          <Text style={s.metaText}>{formatDuration(progress.trackedMs)} worked today</Text>
-          <Text style={[s.metaText, { color: active ? c.accent : c.dim }]}>{active ? `${formatDuration(progress.remainingMs)} until pause` : progress.partialTurn ? `Turn paused · ${formatDuration(progress.remainingMs)} left` : `Rotation #${progress.queuePosition}`}</Text>
-          <Btn label={active ? "Tracking" : "Track"} disabled={trackingDisabled || active} onPress={onTrack} />
-        </>}
+        {task.description ? <Text style={s.desc} numberOfLines={2}>{task.description}</Text> : null}
         <View style={s.meta}>
-          <Text style={[s.metaText, { color: dueColor }]}>
-            {formatDueDate(task.dueDate, today)}
-          </Text>
-          {!task.completed && (
-            <>
-              <Text style={s.sep}>·</Text>
-              <Text style={s.metaText}>{describeDelta(task.dueDate, today)}</Text>
-              <Text style={s.sep}>·</Text>
-              <Text style={s.metaText}>{weight.toFixed(2)}× rotation weight</Text>
-            </>
-          )}
+          <Text style={[s.metaText, { color: dueColor }]}>{formatDueDate(task.dueDate, today)}</Text>
+          {progress && <Text style={s.metaText}>· {formatDuration(progress.trackedMs)} total</Text>}
         </View>
-      </View>
-
-      <View style={s.prob}>
-        <Text
-          style={[s.probValue, probability <= 0 && { color: c.faint }]}
-          accessibilityLabel={
-            task.completed
-              ? "Completed tasks are never picked"
-              : `${formatProbability(probability)} long-run share when following the rotation, not a daily quota`
-          }
-        >
-          {task.completed ? "—" : formatProbability(probability)}
-        </Text>
-        {!task.completed && (
-          <View style={s.probBar}>
-            <View style={[s.probFill, { width: `${barWidth}%` }]} />
-          </View>
+        {progress && !task.completed && (active || progress.partialTurn) && (
+          <Text style={[s.metaText, active && s.currentTurn]}>
+            {active ? "Tracking" : "Paused"} · {formatDuration(progress.remainingMs, true)} left of {formatDuration(progress.turnDurationMs, true)}
+          </Text>
         )}
       </View>
-    </Pressable>
+
+      <Pressable
+        onPress={onEdit}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit ${task.title}`}
+        style={({ pressed }) => [s.edit, pressed && s.pressed]}
+      >
+        <Text style={s.editText}>Edit</Text>
+      </Pressable>
+    </View>
   );
 }
 
-const styles = themed((c) => ({
+const styles = themed(c => ({
   row: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 12,
+    gap: 8,
     paddingVertical: 12,
-    paddingHorizontal: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: "transparent",
     borderBottomWidth: 1,
     borderBottomColor: c.lineSoft,
   },
+  active: { borderLeftColor: c.accent, backgroundColor: c.elev2 },
+  checkTarget: { width: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   check: {
     width: 22,
     height: 22,
     borderRadius: 6,
     borderWidth: 1.5,
     borderColor: c.line,
-    marginTop: 2,
     alignItems: "center",
     justifyContent: "center",
   },
   checkDone: { backgroundColor: c.accent, borderColor: c.accent },
   checkMark: { color: c.onAccent, fontSize: 13, fontWeight: "800", lineHeight: 16 },
-  main: { flex: 1, gap: 3 },
+  main: { flex: 1, minWidth: 0, gap: 4 },
   title: { color: c.text, fontSize: 16, fontWeight: "600" },
   titleDone: { color: c.faint, textDecorationLine: "line-through" },
   desc: { color: c.dim, fontSize: 13, lineHeight: 18 },
-  meta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 },
-  metaText: { color: c.faint, fontSize: 12 },
-  // Accent, not warn/danger: those already mean "due today" and "overdue".
-  priority: { color: c.accentText },
-  priorityHigh: { fontWeight: "700" },
-  sep: { color: c.line, fontSize: 12 },
-  prob: { alignItems: "flex-end", gap: 5, minWidth: 56 },
-  probValue: {
-    color: c.text,
-    fontSize: 14,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"],
-  },
-  probBar: {
-    width: 48,
-    height: 3,
-    borderRadius: radius.sm,
-    backgroundColor: c.line,
-    overflow: "hidden",
-  },
-  probFill: { height: 3, backgroundColor: c.accent },
+  meta: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  metaText: { color: c.faint, fontSize: 12, lineHeight: 18 },
+  currentTurn: { color: c.accentText },
+  edit: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
+  editText: { color: c.accentText, fontSize: 13, fontWeight: "600" },
+  pressed: { opacity: 0.7 },
 }));

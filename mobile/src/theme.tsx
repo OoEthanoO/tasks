@@ -1,12 +1,8 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ReactNode,
   createContext,
-  useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
 } from "react";
 import {
   ImageStyle,
@@ -17,10 +13,7 @@ import {
 } from "react-native";
 import {
   ColorScheme,
-  THEME_KEY,
-  ThemePreference,
   resolveColorScheme,
-  sanitizeThemePreference,
 } from "../../lib/theme";
 
 export type Palette = {
@@ -125,48 +118,22 @@ type ThemeValue = {
   /** The live palette. Named `c` so call sites read as they did before. */
   c: Palette;
   scheme: ColorScheme;
-  preference: ThemePreference;
-  setPreference: (preference: ThemePreference) => void;
 };
 
 const ThemeContext = createContext<ThemeValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // Null until the OS says, which `resolveColorScheme` reads as "stay dark".
-  // This only reports anything at all because app.json asks for "automatic".
+  // Follow the device appearance; leave any saved legacy preference untouched.
+  // app.json already enables automatic appearance for the native app.
   const system = useColorScheme();
-  const [preference, setStored] = useState<ThemePreference>("system");
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(THEME_KEY);
-        if (!cancelled) setStored(sanitizeThemePreference(raw));
-      } catch {
-        // Device storage unavailable — this session follows the system.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const setPreference = useCallback((next: ThemePreference) => {
-    setStored(next);
-    AsyncStorage.setItem(THEME_KEY, next).catch(() => {
-      // The choice still holds for this session.
-    });
-  }, []);
-
   const scheme = resolveColorScheme(
-    preference,
+    "system",
     system === "light" || system === "dark" ? system : null,
   );
 
   const value = useMemo(
-    () => ({ c: palettes[scheme], scheme, preference, setPreference }),
-    [scheme, preference, setPreference],
+    () => ({ c: palettes[scheme], scheme }),
+    [scheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

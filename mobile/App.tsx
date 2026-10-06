@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AppState as RNAppState,
   Platform,
@@ -12,22 +12,22 @@ import {
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "../lib/app-state";
 import { DayPlan, DEFAULT_PLAN } from "../lib/plan";
-import { formatDueDate, todayKey } from "../lib/dates";
+import { formatDueDate } from "../lib/dates";
 import { ApiError, api, setApiBase } from "../lib/remote";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
-import { canTrackWork, taskProgress } from "../lib/tracking";
+import { taskProgress } from "../lib/tracking";
+import { DEFAULT_PRIORITY } from "../lib/weights";
 import { useTracking } from "./src/useTracking";
 import AccountSheet from "./src/components/AccountSheet";
 import AuthSheet from "./src/components/AuthSheet";
 import TrackingCard from "./src/components/TrackingCard";
 import TaskListView from "./src/components/TaskListView";
 import TaskSheet, { TaskDraft } from "./src/components/TaskSheet";
-import ThemeChip from "./src/components/ThemeChip";
 import { Banner, Btn, Card, CardHead } from "./src/components/ui";
 import { API_BASE } from "./src/config";
 import { guestStore, newId } from "./src/store";
-import { ThemeProvider, radius, themed, useStyles, useTheme } from "./src/theme";
+import { ThemeProvider, themed, useStyles, useTheme } from "./src/theme";
 
 setApiBase(API_BASE);
 
@@ -47,6 +47,7 @@ function YanTasks() {
 
   const [ready, setReady] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  // Round-trip saved legacy preferences without exposing them as controls.
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
@@ -384,8 +385,6 @@ function YanTasks() {
   const tracker = useTracking(tasks, endTime, plan, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
   const today = tracker.state.dayKey;
   const entries = taskProgress({ ...tracker.state, tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes });
-  const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
-  const maxProbability = Math.max(0, ...entries.map(e => e.probability));
   useEffect(() => {
     const sub = RNAppState.addEventListener("change", next => { if (next === "active") void tracker.refresh(); });
     return () => sub.remove();
@@ -397,7 +396,8 @@ function YanTasks() {
       title: draft.title,
       description: draft.description,
       dueDate: draft.dueDate,
-      priority: draft.priority,
+      // Inert compatibility field for older clients and stored task records.
+      priority: DEFAULT_PRIORITY,
       completed: false,
       createdAt: new Date().toISOString(),
       completedAt: null,
@@ -423,7 +423,7 @@ function YanTasks() {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const updateTask = useCallback((id: string, patch: Partial<Task>) => {
+  const updateTask = useCallback((id: string, patch: TaskDraft) => {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
 
@@ -452,8 +452,6 @@ function YanTasks() {
             {ready ? formatDueDate(today, today) + " · " + fullDate(today) : "…"}
           </Text>
         </View>
-
-        <ThemeChip />
 
         <Pressable
           onPress={() => (account ? setAccountSheet(true) : setAuthSheet("signin"))}
@@ -506,38 +504,24 @@ function YanTasks() {
           </Banner>
         )}
 
-        <TrackingCard tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} plan={plan} onPlanChange={setPlan} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
+        <TrackingCard tracker={tracker} />
 
         <Card>
           <CardHead
             title={ready && openCount > 0 ? `Tasks · ${openCount} open` : "Tasks"}
-            right={
-              <Text style={s.restHint}>
-                Long-run turn share
-              </Text>
-            }
           />
 
           {ready ? (
             <TaskListView
-              entries={table.entries}
+              entries={entries}
               today={today}
-              maxProbability={maxProbability}
-              progress={entries}
-              activeId={tracker.state.taskId}
-              trackingDisabled={!tracker.ready || tracker.busy || !canTrackWork(tracker.state)}
-              onTrack={id => void tracker.command({ type: "start", taskId: id })}
+              showProgress={tracker.ready}
+              activeId={tracker.ready && tracker.state.mode === "work" ? tracker.state.taskId : null}
               onToggle={toggleTask}
               onEdit={setEditing}
             />
           ) : (
             <Text style={s.loading}>Loading…</Text>
-          )}
-
-          {ready && tasks.length > 0 && (
-            <View style={s.stats}>
-              <Text style={s.stat}>Every open task gets turns · no future-date cutoff</Text>
-            </View>
           )}
         </Card>
       </ScrollView>
@@ -546,9 +530,12 @@ function YanTasks() {
         onPress={() => setAdding(true)}
         accessibilityRole="button"
         accessibilityLabel="New task"
+        accessibilityState={{ disabled: !ready }}
+        disabled={!ready}
         style={({ pressed }) => [
           s.fab,
           { bottom: insets.bottom + 24 },
+          !ready && { opacity: 0.45 },
           pressed && { opacity: 0.8 },
         ]}
       >
@@ -652,18 +639,7 @@ const styles = themed((c) => ({
   dot: { width: 7, height: 7, borderRadius: 4 },
   accountText: { color: c.text, fontSize: 13, fontWeight: "600" },
   scroll: { padding: 14 },
-  restHint: { color: c.faint, fontSize: 12 },
   loading: { color: c.dim, textAlign: "center", paddingVertical: 24 },
-  stats: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 14,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: c.lineSoft,
-  },
-  stat: { color: c.faint, fontSize: 12, fontVariant: ["tabular-nums"] },
   fab: {
     position: "absolute",
     right: 20,

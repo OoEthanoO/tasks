@@ -29,7 +29,7 @@ await build({ ...common, entryPoints: ["src/preload.ts"], outfile: "dist/preload
 await build({
   ...common, entryPoints: ["src/renderer.tsx"], outfile: "dist/renderer.js", platform: "browser", format: "iife", target: "chrome140", minify: true,
   jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' },
-  alias: { "@/components/useTracking": path.join(root, "src/useTracking.ts"), "@": path.resolve(root, ".."), "react": path.join(root, "node_modules/react"), "react-dom": path.join(root, "node_modules/react-dom") },
+  alias: { "next/link": path.join(root, "src/link.tsx"), "@/components/useTracking": path.join(root, "src/useTracking.ts"), "@": path.resolve(root, ".."), "react": path.join(root, "node_modules/react"), "react-dom": path.join(root, "node_modules/react-dom") },
 });
 await copyFile("src/index.html", "dist/index.html");
 console.log("Windows app built with the shared web UI and tracking model.");

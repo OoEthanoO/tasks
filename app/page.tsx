@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import AccountMenu from "@/components/AccountMenu";
 import AuthDialog from "@/components/AuthDialog";
 import QuickAdd from "@/components/QuickAdd";
@@ -8,14 +9,12 @@ import TrackingPanel from "@/components/TrackingPanel";
 import { useTracking } from "@/components/useTracking";
 import { canTrackWork, taskProgress } from "@/lib/tracking";
 import TaskList from "@/components/TaskList";
-import ThemeToggle from "@/components/ThemeToggle";
 import { DEFAULT_END_TIME, emptyState, shouldOfferMigration } from "@/lib/app-state";
 import { DayPlan, DEFAULT_PLAN } from "@/lib/plan";
-import { formatDueDate, todayKey } from "@/lib/dates";
 import { ApiError, api, getStateRefreshInterval } from "@/lib/remote";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
-import { AppState, Priority, Recommendation, Schedule, Task, User } from "@/lib/types";
+import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -27,6 +26,7 @@ const SAVE_DEBOUNCE_MS = 500;
 export default function Page() {
   const [ready, setReady] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  // Keep older preferences in storage while the rotation UI no longer exposes them.
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [endTime, setEndTime] = useState(DEFAULT_END_TIME);
@@ -382,17 +382,15 @@ export default function Page() {
   const tracker = useTracking(tasks, endTime, plan, account?.id ?? null, ready && !authLoading, beforeTrack, unweighted, minimumEnabled, minimumMinutes);
   const today = tracker.state.dayKey;
   const entries = taskProgress({ ...tracker.state, tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes });
-  const table = { entries, taskTotal: entries.reduce((sum, e) => sum + e.weight, 0) };
-  const maxProbability = Math.max(0, ...entries.map(e => e.probability));
 
   const addTask = useCallback(
-    (input: { title: string; description: string; dueDate: string; priority: Priority }) => {
+    (input: { title: string; description: string; dueDate: string }) => {
       const task: Task = {
         id: newId(),
         title: input.title,
         description: input.description,
         dueDate: input.dueDate,
-        priority: input.priority,
+        priority: "low",
         completed: false,
         createdAt: new Date().toISOString(),
         completedAt: null,
@@ -425,10 +423,10 @@ export default function Page() {
   }, []);
 
   // Global hotkeys. Typing in a field always wins over a shortcut.
-  const modalOpen = quickAddOpen || authDialog !== null;
+  const modalOpen = quickAddOpen || authDialog !== null || helpOpen;
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.defaultPrevented || e.repeat || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
 
       const target = e.target as HTMLElement | null;
       const typing =
@@ -448,10 +446,12 @@ export default function Page() {
       const key = e.key.toLowerCase();
       if (key === "q") {
         e.preventDefault();
-        setQuickAddOpen(true);
+        if (ready) setQuickAddOpen(true);
       } else if (key === "g") {
         e.preventDefault();
-        void tracker.command({ type: tracker.state.mode === "idle" ? "start" : "pause" });
+        if (tracker.ready && !tracker.busy && (tracker.state.mode === "work" || canTrackWork(tracker.state))) {
+          void tracker.command({ type: tracker.state.mode === "work" ? "pause" : "start" });
+        }
       } else if (e.key === "?") {
         e.preventDefault();
         setHelpOpen((v) => !v);
@@ -460,7 +460,7 @@ export default function Page() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [modalOpen, tracker.command, tracker.state.mode]);
+  }, [modalOpen, ready, tracker.command, tracker.state, tracker.ready, tracker.busy]);
 
   // Notices are informational; they should not pile up.
   useEffect(() => {
@@ -478,13 +478,8 @@ export default function Page() {
           <h1>
             YanTasks<span className="dot">.</span>
           </h1>
-          <span className="tagline">deadline-paced work</span>
         </div>
         <div className="topbar-actions">
-          <span className="today-chip">
-            {ready ? formatDueDate(today, today) + " · " + formatFullDate(today) : "…"}
-          </span>
-          <ThemeToggle />
           <AccountMenu
             user={account}
             loading={authLoading}
@@ -495,21 +490,6 @@ export default function Page() {
             onSignOut={() => void signOut()}
             onDeleteAccount={() => void deleteAccount()}
           />
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => setHelpOpen(true)}
-            title="Keyboard shortcuts"
-          >
-            <span className="kbd">?</span>
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => setQuickAddOpen(true)}
-          >
-            New task <span className="kbd">Q</span>
-          </button>
         </div>
       </header>
 
@@ -530,29 +510,23 @@ export default function Page() {
         </div>
       )}
 
-      <div className="columns">
-        <div className="stack focus-column">
-          <TrackingPanel tracker={tracker} endTime={endTime} onEndTimeChange={setEndTime} plan={plan} onPlanChange={setPlan} unweighted={unweighted} onUnweightedChange={setUnweighted} minimumEnabled={minimumEnabled} onMinimumChange={setMinimumEnabled} minimumMinutes={minimumMinutes} onMinimumMinutesChange={setMinimumMinutes} />
-        </div>
+      <div className="stack">
+        <TrackingPanel tracker={tracker} />
         <section className="card">
           <div className="card-head">
             <h2 className="card-title">
-              Tasks {ready && openCount > 0 && <span>· {openCount} open</span>}
+              Tasks {ready && openCount > 0 && <span>· {openCount}</span>}
             </h2>
-            <span className="hint">
-              Long-run turn share
-            </span>
+            <button type="button" className="btn" disabled={!ready} aria-keyshortcuts="Q" onClick={() => setQuickAddOpen(true)}>
+              New task
+            </button>
           </div>
 
           {ready ? (
             <TaskList
-              entries={table.entries}
+              entries={entries}
               today={today}
-              maxProbability={maxProbability}
-              progress={entries}
-              activeId={tracker.state.taskId}
-              trackingDisabled={!tracker.ready || tracker.busy || !canTrackWork(tracker.state)}
-              onTrack={id => void tracker.command({ type: "start", taskId: id })}
+              activeId={tracker.state.mode === "work" ? tracker.state.taskId : null}
               onToggle={toggleTask}
               onDelete={deleteTask}
               onUpdate={updateTask}
@@ -564,13 +538,19 @@ export default function Page() {
           {ready && tasks.length > 0 && (
             <div className="stats">
               <span>
-                Every open task gets turns · no future-date cutoff
+                Due date order · tracked time carries across days
               </span>
             </div>
           )}
         </section>
 
       </div>
+
+      <footer className="app-footer">
+        <button type="button" className="btn btn-ghost" onClick={() => setHelpOpen(true)}>Keyboard shortcuts</button>
+        <Link href="/support">Support</Link>
+        <Link href="/privacy">Privacy</Link>
+      </footer>
 
       {quickAddOpen && (
         <QuickAdd onCreate={addTask} onClose={() => setQuickAddOpen(false)} />
@@ -593,15 +573,32 @@ export default function Page() {
 }
 
 function HelpPanel({ onClose }: { onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const previous = document.activeElement;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, []);
+
   return (
-    <div
-      className="overlay"
+    <dialog
+      ref={dialogRef}
+      className="help-panel"
+      aria-labelledby="shortcuts-title"
+      onCancel={e => { e.preventDefault(); onClose(); }}
+      onKeyDown={e => e.stopPropagation()}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="help-panel">
-        <h2>Keyboard shortcuts</h2>
+        <div className="card-head">
+          <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close keyboard shortcuts">×</button>
+        </div>
         <ul className="help-list">
           <li>
             <span className="kbd">Q</span> New task — type the name, trail it with a date
@@ -619,39 +616,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
             <span className="kbd">?</span> This panel
           </li>
         </ul>
-        <div className="stats" style={{ marginTop: 18 }}>
-          <div className="formula">
-            <div>
-              <strong style={{ color: "var(--text-dim)" }}>Pacing, not a deadline guarantee</strong>
-            </div>
-            <div>
-              Every unfinished task adds <code>60 minutes / (days until due + 1)</code> to today’s recommendation. Overdue tasks count as due today. Round the sum up to 30 minutes, capped at 3 hours. Every day uses this same rule.
-            </div>
-            <div>
-              Work in 30-minute turns. At each turn boundary, tracking pauses and you choose the suggested task or continue the same one. Only ticking the checkbox completes a task.
-            </div>
-            <div>
-              All open tasks stay eligible. Rotation weight is <code>1 + 1 / (days until due + 1)</code>, between 1× and 2×. The task with the least weight-adjusted tracked time goes next.
-            </div>
-            <div>
-              Rotation history carries across days; daily work counters reset at midnight. Existing priority values are saved for compatibility but no longer affect turns.
-            </div>
-            <div>
-              Paused time never becomes work or debt. There is no idle allowance or school-day setting. Task changes can update the recommendation, but simply waiting does not. Bedtime is only used for outing advice; extra work is always your choice.
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+        <p className="hint">Turns advance automatically each hour. Check a task’s box when it is complete.</p>
+    </dialog>
   );
-}
-
-function formatFullDate(key: string): string {
-  const [y, m, d] = key.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  return date.toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
 }

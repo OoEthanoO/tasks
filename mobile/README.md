@@ -1,7 +1,7 @@
 # YanTasks — mobile
 
 The phone client for [tasks.ethanyanxu.com](https://tasks.ethanyanxu.com). Same
-account, same database, same deadline pacing: this app imports `../lib` directly rather
+account, same database, same one-hour rotation: this app imports `../lib` directly rather
 than reimplementing any of it, so the rotation and timestamp-based work timer
 exist in exactly one place.
 
@@ -49,9 +49,9 @@ phone.
 
 | Concern | Where |
 | --- | --- |
-| Weights, tracking, date parsing, state coercion | `../lib` (shared with the web app) |
+| Ordered rotation, tracking, date parsing, state coercion | `../lib` (shared with the web app) |
 | API client | `../lib/remote.ts`, pointed at an absolute base by `src/config.ts` |
-| Guest storage | `src/store.ts` — AsyncStorage, same four keys the web app uses in `localStorage` |
+| Guest storage | `src/store.ts` — AsyncStorage, matching the web app's persisted fields |
 | Screen, sync loop, account flows | `App.tsx` — mirrors `app/page.tsx` |
 
 Metro is configured (`metro.config.js`) to watch the repo root so `../lib`
@@ -67,12 +67,20 @@ The existing EAS configuration is retained as a manual fallback.
 
 ## Timer alerts
 
-Enable alerts in the focus card. `expo-notifications` schedules the next
-30-minute turn, daily-recommendation or midnight boundary with iOS. Tracking
-pauses at the boundary and waits for an explicit choice. A new native build
-is required to use the updated shared pacing calculation and interface. Open the app after changing tracking on
+Start picks a task automatically and moves through one-hour turns until Pause.
+Tracked totals carry across days. New tasks begin at zero and catch up in
+one-hour turns before the normal ordered rounds resume; totals of 2h, 0h, 2h
+give the middle task two one-hour turns. A fractional catch-up gap gets a shorter
+turn so it cannot exceed the preceding task's total. Pause saves an unfinished
+turn. Tracking continues across midnight; only the daily counter resets.
+
+Enable alerts directly below the tracker. `expo-notifications` schedules
+upcoming turn changes for the next 24 hours (at most 48 alerts) with iOS. Open the
+app after changing tracking on
 another device so iOS can replace any old scheduled alerts. Time itself is
-computed from the shared server timestamps and does not rely on notifications.
+computed by the shared tracker from timestamps and does not rely on notifications.
+The interface follows the system appearance. Legacy preferences and task
+priorities remain stored for compatibility but have no controls in the app.
 
 The local-notifications entitlement mod runs after `expo-notifications` to omit
 the unused APNs entitlement. Local timer alerts do not register push tokens or

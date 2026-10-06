@@ -17,8 +17,7 @@ export interface DesktopBridge {
   configure(config: GuestConfig): Promise<void>;
   command(action: TrackingAction): Promise<void>;
   refresh(): Promise<void>;
-  settings(value: Partial<Settings>): Promise<void>;
-  window(action: "main" | "mini" | "hide-mini" | "test-alert" | "dismiss"): Promise<void>;
+  window(action: "main" | "mini" | "hide-mini" | "test-alert" | "dismiss" | "support" | "privacy"): Promise<void>;
   subscribe(listener: (state: DesktopState) => void): () => void;
 }
 declare global { interface Window { desktop: DesktopBridge } }

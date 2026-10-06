@@ -2,10 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { TrackerEngine } from "../src/engine";
 import { statusModel } from "../src/model";
-import { hasLiveCountdown, syncDelay, wakeDelay } from "../src/power";
+import { eventScheduleKey, hasLiveCountdown, syncDelay, wakeDelay } from "../src/power";
 import { trustedPage, validateAction, validateApi } from "../src/security";
-import { actOnTracking, advanceTracking, configureTracking, createTracking, dayEnd, dayPlan, taskProgress, workBudget, type TrackingEvent, type TrackingState } from "../../lib/tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, taskProgress, TURN_MS, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import { createTracking as legacyCreate } from "../../lib/legacy-tracking";
+import { createTracking as pacedCreate } from "../../lib/paced-tracking";
+import { TRACKING_UPDATE_REQUIRED } from "../../lib/tracking-protocol";
 import type { Task } from "../../lib/types";
 import type { DayPlan } from "../../lib/plan";
 import type { ApiReply } from "../src/contract";
@@ -20,214 +22,48 @@ test("installed Windows identity matches the installer and never aliases develop
   const smoke = desktopIdentity(false, true);
   assert.equal(new Set([APP_ID, development.appId, smoke.appId]).size, 3);
   assert.equal(new Set(["YanTasks", development.name, smoke.name]).size, 3);
-  assert.deepEqual(desktopIdentity(true, true), smoke, "packaged smoke must also stay isolated");
+  assert.deepEqual(desktopIdentity(true, true), smoke);
 });
 
 const T = Date.parse("2026-09-15T10:00:00Z");
 const MIN = 60_000;
-// The test runner uses UTC. The work day starts at T, split 1:1, so no idle time is used yet.
+const HOUR = 60 * MIN;
+// Retired data is deliberately kept in fixtures to exercise backwards compatibility.
 const PLAN: DayPlan = { startTime: "10:00", workParts: 1, idleParts: 1 };
 const task: Task = { id: "a", title: "Code", description: "", dueDate: "2026-09-16", priority: "low", completed: false, createdAt: new Date(T).toISOString(), completedAt: null };
-function setup(saved?: TrackingState) {
-  let now = T;
+const second: Task = { ...task, id: "b", title: "Expo", createdAt: new Date(T + 1).toISOString() };
+const third: Task = { ...task, id: "c", title: "Read", createdAt: new Date(T + 2).toISOString() };
+
+function setup(saved?: TrackingState, initialNow = T) {
+  let now = initialNow;
   const notifications: TrackingEvent[] = [];
   const diagnostics: AlertDiagnostic[] = [];
   let written: TrackingState | undefined;
+  let writes = 0;
   const requests: { path: string; method?: string; body?: any }[] = [];
   let respond = async (_path: string, _method?: string, _body?: unknown): Promise<ApiReply> => ({ status: 503, body: {} });
-  const engine = new TrackerEngine({ now: () => now, notify: e => notifications.push(e), diagnostic: e => diagnostics.push(e), saveGuest: s => { written = structuredClone(s); }, publish: () => {}, request: async (path, method, body) => { requests.push({ path, method, body }); return respond(path, method, body); } }, "windows_test", saved);
-  return { engine, notifications, diagnostics, requests, set now(value: number) { now = value; }, get now() { return now; }, get written() { return written; }, response(fn: typeof respond) { respond = fn; } };
+  const engine = new TrackerEngine({
+    now: () => now, notify: e => notifications.push(e), diagnostic: e => diagnostics.push(e),
+    saveGuest: s => { written = structuredClone(s); writes++; }, publish: () => {},
+    request: async (path, method, body) => { requests.push({ path, method, body }); return respond(path, method, body); },
+  }, "windows_test", saved);
+  return { engine, notifications, diagnostics, requests,
+    set now(value: number) { now = value; }, get now() { return now; },
+    get written() { return written; }, get writes() { return writes; },
+    response(fn: typeof respond) { respond = fn; },
+  };
 }
-// 10:00–23:00 split 1:1: 6h30m of work and 6h30m of idle time.
-function configure(x: ReturnType<typeof setup>) { x.engine.configure({ tasks: [task], endTime: "23:00", plan: { ...PLAN }, accountId: null }); }
-
-test("desktop rollback checkpoints coverage work once and preserves it after restart", async () => {
-  const tasks = [task, { ...task, id: "b" }];
-  const saved: TrackingState = { ...legacyCreate(tasks, "23:00", "UTC", T, PLAN), coverageVersion: 1, coverageDays: 3, coverageGoalMs: 100 * MIN, mode: "work", taskId: "a", controllerId: "windows_test" };
-  const x = setup(saved); x.now = T + 70 * MIN; await x.engine.identity(null); x.engine.tick();
-  assert.equal(x.written?.coverageVersion, undefined); assert.equal(x.written?.coverageGoalMs, undefined);
-  assert.equal(x.written?.workMs, 70 * MIN); assert.deepEqual(x.written?.taskMs, { a: 50 * MIN, b: 20 * MIN });
-  assert.equal(x.written?.controllerId, "windows_test"); assert.equal(x.notifications.length, 0);
-  const reopened = setup(x.written); reopened.now = x.now; await reopened.engine.identity(null); reopened.engine.tick();
-  assert.deepEqual(reopened.engine.view().state.taskMs, x.written?.taskMs);
-  reopened.now += MIN; reopened.engine.tick(); assert.equal(reopened.engine.view().state.workMs, 71 * MIN);
-});
-
-test("desktop work-only rollback persists paused and active history exactly once", async () => {
-  for (const mode of ["idle", "work"] as const) {
-    const saved: TrackingState = { ...legacyCreate([task, { ...task, id: "b" }], "12:00", "UTC", T, PLAN),
-      workOnlyVersion: 1, mode, taskId: mode === "work" ? "a" : null, controllerId: "windows_test" };
-    const x = setup(saved); x.now = T + 70 * MIN; await x.engine.identity(null); x.engine.tick();
-    assert.ok(x.written); assert.equal(x.written.workOnlyVersion, undefined);
-    assert.equal(x.written.workMs, mode === "work" ? 70 * MIN : 0);
-    assert.deepEqual(x.written.taskMs, mode === "work" ? { a: 60 * MIN, b: 10 * MIN } : {});
-    assert.equal(x.written.mode, "idle", "restored goal is already met, or the timer was paused");
-    assert.equal(x.written.controllerId, "windows_test"); assert.equal(x.notifications.length, 0);
-    const reopened = setup(x.written); reopened.now = x.now; await reopened.engine.identity(null); reopened.engine.tick();
-    assert.deepEqual(reopened.engine.view().state.taskMs, x.written.taskMs);
-    assert.equal(reopened.written, undefined, "restart cannot reapply the migration");
-  }
-});
-
-test("retired weighting settings cannot exclude distant tasks or change their rotation", async () => {
-
-  const tasks = [task, { ...task, id: "b", dueDate: "2026-09-25", priority: "high" as const }];
-  const config = { tasks, endTime: "23:00", plan: PLAN, accountId: null };
-  const x=setup(); x.engine.configure(config); await x.engine.command({type:"start"});
-  x.now+=MIN; x.engine.configure({...config,unweighted:true});
-  assert.equal(x.engine.view().state.workMs,MIN);
-  assert.deepEqual(taskProgress(x.engine.view().state).map(p=>p.weight),[1.5,1+1/11]);
-  await x.engine.command({type:"pause"});
-  const reopened=setup(x.written); reopened.now=x.now; await reopened.engine.identity(null);
-  assert.equal(reopened.engine.view().state.workMs,MIN);
-
-});
-
-test("a retired daily minimum cannot remove tasks from the paced queue", async () => {
-
-  const tasks=[task,{...task,id:"b",dueDate:"2030-01-01"}];
-  const x=setup(); x.engine.configure({tasks,endTime:"10:20",plan:PLAN,accountId:null,minimumMinutes:1440});
-  await x.engine.command({type:"start"}); x.now+=MIN;
-  x.engine.configure({tasks,endTime:"10:20",plan:PLAN,accountId:null,minimumEnabled:false});
-  assert.ok(taskProgress(x.engine.view().state).every(p=>!p.skipped && p.weight>0));
-  await x.engine.command({type:"pause"});
-  const reopened=setup(x.written); reopened.now=x.now; await reopened.engine.identity(null);
-  assert.equal(reopened.engine.view().state.workMs,MIN);
-
-});
-test("an account without a timer inherits both allocation preferences", async () => {
-  const x = setup();
-  x.response(async path => ({ status: 200, body: path === "/api/tracking"
-    ? { tracking: null, serverNow: x.now }
-    : { state: { tasks: [task], endTime: "23:00", unweighted: true, minimumEnabled: false, minimumMinutes: 15 } } }));
-  await x.engine.identity("user");
-  assert.equal(x.engine.view().state.unweighted, true);
-  assert.equal(x.engine.view().state.minimumEnabled, false);
-  assert.equal(x.engine.view().state.minimumMinutes, 15);
-});
-test("a minimum-toggle checkpoint does not swallow an elapsed completion alert", async () => {
-  const { x } = await accountBeforeBoundary();
-  const original = taskBoundary();
-  const remote = { ...configureTracking(original, original.tasks, original.endTime, x.now, dayPlan(original), false, false), revision: 1 };
-  x.response(async () => ({ status: 200, body: { tracking: remote, serverNow: x.now } }));
-  await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.notifications.filter(e => e.type === "turn-complete").length, 1);
-});
-test("guest start, elapsed work, pause and reset use the shared model", async () => {
-  const x = setup(); configure(x);
-  await x.engine.command({ type: "start" }); x.now += 60_000; x.engine.tick();
-  assert.equal(x.engine.view().state.workMs, 60_000);
-  await x.engine.command({ type: "pause" }); x.now += 60_000; x.engine.tick();
-  assert.equal(x.engine.view().state.workMs, 60_000);
-  await x.engine.command({ type: "reset" });
-  assert.equal(x.engine.view().state.workMs, 0); assert.equal(x.written?.mode, "idle");
-});
-test("paused recommendations stay quiet and static without a renderer", async () => {
-
-  const x=setup(createTracking([task],"23:00","UTC",T,PLAN)); await x.engine.identity(null);
-  for(let i=0;i<400;i++){x.now+=MIN; x.engine.tick(); x.engine.tick();}
-  assert.equal(x.notifications.length,0); assert.equal(x.engine.view().state.workMs,0);
-  assert.equal(statusModel(x.engine.view()).remaining,30*MIN);
-  await x.engine.command({type:"start"}); assert.equal(statusModel(x.engine.view()).canPause,true);
-
-});
-test("sleep/resume stops at the turn boundary without inventing a second task or old alerts", async () => {
-
-  const x=setup(); configure(x);
-  x.now+=4*60*MIN; await x.engine.resume();
-  assert.equal(x.notifications.length,0); assert.equal(x.engine.view().state.workMs,0);
-  await x.engine.command({type:"start"}); x.now+=2*60*MIN; await x.engine.resume();
-  assert.equal(x.notifications.length,0); assert.equal(x.engine.view().state.workMs,30*MIN);
-  assert.equal(x.engine.view().state.mode,"idle");
-
-});
-
-test("recommendation reached pauses, while extra work remains an explicit choice", async () => {
-
-  const x=setup(); configure(x); await x.engine.command({type:"start"});
-  for(let i=0;i<30;i++){x.now+=MIN; x.engine.tick();}
-  assert.equal(x.engine.view().state.workMs,30*MIN);
-  assert.equal(statusModel(x.engine.view()).label,"Enough for today");
-  assert.equal(statusModel(x.engine.view()).canStart,true);
-  assert.deepEqual(x.notifications.map(e=>e.type),["work-complete"]);
-  x.now+=60*MIN; x.engine.tick(); assert.equal(x.engine.view().state.workMs,30*MIN);
-  await x.engine.command({type:"continue"}); x.now+=MIN; x.engine.tick();
-  assert.equal(x.engine.view().state.workMs,31*MIN);
-
-});
-test("daily rollover preserves rotation across desktop restart", async () => {
-
-  const x=setup(taskBoundary()); await x.engine.identity(null);
-  for(let i=0;i<30;i++){x.now+=MIN; x.engine.tick();}
-  x.now=T+24*60*MIN; x.engine.tick();
-  assert.equal(x.written?.workMs,0); assert.equal(x.written?.mode,"idle");
-  const reopened=setup(x.written); reopened.now=x.now; await reopened.engine.identity(null);
-  await reopened.engine.command({type:"start"});
-  assert.equal(reopened.engine.view().state.taskId,"b");
-
-});
-test("desktop removes old debt once without losing today's per-task work", async () => {
-  const saved = legacyCreate([task], "23:00", "UTC", T, PLAN);
-  delete saved.idlePolicyVersion;
-  delete saved.workLimitVersion;
-  Object.assign(saved, { carryMs: 30 * MIN, workMs: 45 * MIN, taskMs: { a: 45 * MIN }, cursor: T + 90 * MIN, controllerId: "windows_test" });
-  const x = setup(saved); x.now = T + 100 * MIN; await x.engine.identity(null); x.engine.tick();
-  assert.equal(x.written?.idlePolicyVersion, 2);
-  assert.equal(x.written?.carryMs, undefined);
-  assert.equal(x.written?.workMs, 45 * MIN);
-  assert.deepEqual(x.written?.taskMs, { a: 45 * MIN });
-  assert.equal(x.written?.controllerId, "windows_test");
-  const reopened = setup(x.written); reopened.now = x.now; await reopened.engine.identity(null);
-  assert.equal(reopened.engine.view().state.workMs, 45 * MIN);
-  assert.deepEqual(reopened.engine.view().state.taskMs, { a: 45 * MIN });
-});
-test("disabled alerts keep the turn-complete in-app message", async () => {
-
-  const x=setup(taskBoundary()); await x.engine.identity(null); x.engine.settings.alerts=false;
-  x.now=T+30*MIN-500; x.engine.tick(); x.now+=1000; x.engine.tick();
-  assert.equal(x.notifications.length,0); assert.match(x.engine.view().message!,/turn complete/i);
-
-});
-test("desktop checkpoints old running work once and does not reduce it while paused", async () => {
-  const saved = legacyCreate([task, { ...task, id: "b" }], "23:00", "UTC", T, PLAN);
-  delete saved.workLimitVersion;
-  Object.assign(saved, { mode: "work", taskId: "a", workMs: 120 * MIN, taskMs: { a: 120 * MIN }, cursor: T + 600 * MIN, controllerId: "windows_test" });
-  const x = setup(saved); x.now = T + 650 * MIN; await x.engine.identity(null); x.engine.tick();
-  assert.equal(x.written?.workLimitVersion, 1);
-  assert.equal(x.written?.workMs, 170 * MIN); assert.deepEqual(x.written?.taskMs, { a: 170 * MIN });
-  assert.equal(statusModel(x.engine.view()).remaining, 30 * MIN);
-  const reopened = setup(x.written); reopened.now = x.now; await reopened.engine.identity(null);
-  await reopened.engine.command({ type: "pause" }); reopened.now += 10 * MIN; reopened.engine.tick();
-  assert.equal(reopened.engine.view().state.workMs, 170 * MIN);
-  assert.deepEqual(reopened.engine.view().state.taskMs, { a: 170 * MIN });
-  assert.equal(statusModel(reopened.engine.view()).remaining, 0);
-  assert.equal(statusModel(reopened.engine.view()).label, "Enough for today");
-});
-test("a daily recommendation alerts once at its exact partial-turn boundary", async () => {
-
-  const s=actOnTracking(createTracking([task],"10:04","UTC",T,PLAN),{type:"start"},"windows_test",T);
-  s.workMs=28*MIN; s.taskMs.a=28*MIN;
-  const x=setup(s); await x.engine.identity(null);
-  x.now+=MIN; x.engine.tick(); x.now+=MIN; x.engine.tick(); x.engine.tick();
-  assert.equal(x.notifications.length,1); assert.equal(x.notifications[0].type,"work-complete");
-  assert.equal(x.notifications[0].at,T+2*MIN); assert.equal(x.engine.view().state.mode,"idle");
-
-});
-test("stale account state suppresses alerts until the network is fresh", async () => {
-  const s = actOnTracking(createTracking([task], "23:00", "UTC", T, PLAN), { type: "start" }, "windows_test", T);
-  s.workMs = s.taskMs.a = workBudget(s) - 120_000;
-  const x = setup(); x.response(async () => ({ status: 200, body: { tracking: s, serverNow: x.now } }));
-  await x.engine.identity("user"); x.now += 60_000; x.engine.tick(); x.now += 60_000; x.engine.tick();
-  assert.equal(x.engine.view().connected, false); assert.equal(x.notifications.length, 0);
-});
-
-// Equal tasks: Code gets a 30-minute turn, then tracking pauses and suggests Expo.
-const BOUNDARY_PLAN: DayPlan = { startTime: "10:00", workParts: 1, idleParts: 2 };
-function taskBoundary() {
-  return actOnTracking(createTracking([task, { ...task, id: "b", title: "Expo" }], "16:00", "UTC", T, BOUNDARY_PLAN), { type: "start" }, "windows_test", T);
+function configure(x: ReturnType<typeof setup>, tasks = [task]) {
+  x.engine.configure({ tasks, endTime: "23:00", plan: PLAN, accountId: null });
 }
-async function accountBeforeBoundary(s = taskBoundary(), at = T + 30 * 60_000) {
-  const x = setup();
+function tickMinutes(x: ReturnType<typeof setup>, minutes: number) {
+  for (let i = 0; i < minutes; i++) { x.now += MIN; x.engine.tick(); }
+}
+function taskBoundary(now = T) {
+  return actOnTracking(createTracking([task, second], "16:00", "UTC", now, PLAN), { type: "start" }, "windows_test", now);
+}
+async function accountBeforeBoundary(s = taskBoundary(), at = s.cursor + HOUR) {
+  const x = setup(undefined, s.cursor);
   let remote = s;
   x.response(async () => ({ status: 200, body: { tracking: remote, serverNow: x.now } }));
   await x.engine.identity("user");
@@ -236,151 +72,296 @@ async function accountBeforeBoundary(s = taskBoundary(), at = T + 30 * 60_000) {
   return { x, set remote(value: TrackingState) { remote = value; } };
 }
 
-test("sync checkpoints cannot swallow a turn completion, regardless of timer/refresh ordering", async () => {
-  for (const tickFirst of [false, true]) {
-    const { x } = await accountBeforeBoundary();
-    const remote = { ...advanceTracking(taskBoundary(), x.now).state, revision: 1 };
-    x.response(async () => ({ status: 200, body: { tracking: remote, serverNow: x.now } }));
-    if (tickFirst) x.engine.tick();
-    await x.engine.refresh(); x.engine.tick();
-    await x.engine.refresh(); x.engine.tick();
-    assert.equal(x.engine.view().state.taskId, null);
-    assert.equal(x.notifications.length, 1);
-    assert.equal(x.notifications[0].type, "turn-complete");
-    assert.match(x.notifications[0].body, /Next: Expo/);
+test("guest Start runs hourly turns continuously until Pause", async () => {
+  assert.equal(TURN_MS, HOUR);
+  const x = setup(); configure(x, [task, second]);
+  await x.engine.command({ type: "start" });
+  tickMinutes(x, 60);
+  assert.equal(x.engine.view().state.mode, "work");
+  assert.equal(x.engine.view().state.taskId, "b");
+  assert.equal(x.engine.view().state.workMs, HOUR);
+  assert.deepEqual(x.notifications.map(e => e.type), ["turn-complete"]);
+  tickMinutes(x, 60);
+  assert.equal(x.engine.view().state.taskId, "a");
+  assert.deepEqual(x.engine.view().state.rotation?.totals, { a: HOUR, b: HOUR });
+  await x.engine.command({ type: "pause" });
+  tickMinutes(x, 120);
+  assert.equal(x.engine.view().state.workMs, 2 * HOUR);
+  assert.equal(x.notifications.length, 2);
+  assert.equal(statusModel(x.engine.view()).done, false);
+});
+
+test("new middle tasks catch up in consecutive one-hour turns", async () => {
+  const saved = createTracking([task, second, third], "10:01", "UTC", T, PLAN);
+  saved.rotation!.totals = { a: 2 * HOUR, b: 0, c: 2 * HOUR };
+  const x = setup(saved); await x.engine.identity(null); await x.engine.command({ type: "start" });
+  assert.equal(x.engine.view().state.taskId, "b");
+  const firstKey = eventScheduleKey(x.engine.view().state);
+  tickMinutes(x, 60);
+  assert.equal(x.engine.view().state.taskId, "b");
+  assert.notEqual(eventScheduleKey(x.engine.view().state), firstKey);
+  assert.equal(statusModel(x.engine.view()).remaining, HOUR);
+  assert.match(x.notifications[0].body, /Keep working on Expo/);
+  tickMinutes(x, 60);
+  assert.equal(x.engine.view().state.taskId, "a");
+  assert.deepEqual(x.engine.view().state.rotation?.totals, { a: 2 * HOUR, b: 2 * HOUR, c: 2 * HOUR });
+  assert.equal(new Set(x.notifications.map(e => e.id)).size, 2);
+});
+
+test("fractional catch-up progress and wakeups use the actual turn duration", async () => {
+  const saved = createTracking([task, second], "23:00", "UTC", T, PLAN);
+  saved.rotation!.totals = { a: 2 * HOUR, b: HOUR + 30 * MIN };
+  const x = setup(saved); await x.engine.identity(null); await x.engine.command({ type: "start" });
+  assert.equal(x.engine.view().state.rotation?.turn?.durationMs, 30 * MIN);
+  const key = eventScheduleKey(x.engine.view().state);
+  tickMinutes(x, 15);
+  const m = statusModel(x.engine.view());
+  assert.equal(m.progress, 0.5); assert.equal(m.remaining, 15 * MIN);
+  assert.equal(eventScheduleKey(x.engine.view().state), key);
+  tickMinutes(x, 15);
+  assert.equal(x.engine.view().state.taskId, "a");
+  assert.equal(x.notifications[0].title, "Caught up");
+});
+
+test("completion and removal immediately switch active work to an eligible task", async () => {
+  for (const remove of [false, true]) {
+    const x = setup(); configure(x, [task, second]); await x.engine.command({ type: "start" });
+    x.now += 5 * MIN;
+    configure(x, remove ? [second] : [{ ...task, completed: true }, second]);
+    assert.equal(x.engine.view().state.mode, "work");
+    assert.equal(x.engine.view().state.taskId, "b");
+    configure(x, []);
+    assert.equal(x.engine.view().state.mode, "idle");
+    assert.equal(statusModel(x.engine.view()).done, true);
+    assert.equal(statusModel(x.engine.view()).canStart, false);
+    assert.equal(x.engine.view().state.rotation?.totals.a, 5 * MIN);
   }
 });
 
-test("a real task-edit checkpoint preserves the elapsed transition alert", async () => {
-  const fixture = await accountBeforeBoundary(); const { x } = fixture;
-  const initial = taskBoundary();
-  fixture.remote = { ...configureTracking(initial, initial.tasks.map(t => t.id === "a" ? { ...t, title: "Code (edited)" } : t), initial.endTime, x.now), revision: 1 };
-  await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].type, "turn-complete");
+test("old daily preferences never affect the desktop picker or stop active work", async () => {
+  const tasks = [task, { ...second, dueDate: "2030-01-01", priority: "high" as const }];
+  const x = setup();
+  x.engine.configure({ tasks, endTime: "10:01", plan: PLAN, accountId: null, minimumMinutes: 1440 });
+  await x.engine.command({ type: "start" }); tickMinutes(x, 60);
+  assert.equal(x.engine.view().state.taskId, "b");
+  x.engine.configure({ tasks, endTime: "09:00", plan: { ...PLAN, idleParts: 20 }, accountId: null, unweighted: true, minimumEnabled: false });
+  assert.equal(x.engine.view().state.mode, "work");
+  assert.equal(x.engine.view().state.taskId, "b");
+  assert.deepEqual(taskProgress(x.engine.view().state).map(p => p.trackedMs), [HOUR, 0]);
 });
 
-
-test("a task edit after a turn boundary preserves one alert and never starts another task", async () => {
-
-  const initial=taskBoundary(), fixture=await accountBeforeBoundary(initial); const {x}=fixture;
-  fixture.remote={...configureTracking(initial,initial.tasks.map(t=>t.id==="a"?{...t,completed:true}:t),initial.endTime,x.now),revision:1};
-  await x.engine.refresh(); x.engine.tick();
-  assert.deepEqual(x.notifications.map(e=>e.type),["turn-complete"]);
-  assert.equal(x.engine.view().state.mode,"idle");
-  for(let i=0;i<20;i++){x.now+=30_000; await x.engine.refresh(); x.engine.tick();}
-  assert.equal(x.notifications.length,1); assert.equal(x.engine.view().state.workMs,30*MIN);
-
+test("paused turns stay quiet and static without a renderer or recurring disk writes", async () => {
+  const x = setup(createTracking([task], "23:00", "UTC", T, PLAN)); await x.engine.identity(null);
+  tickMinutes(x, 400);
+  assert.equal(x.notifications.length, 0); assert.equal(x.engine.view().state.workMs, 0);
+  assert.equal(statusModel(x.engine.view()).remaining, HOUR); assert.equal(x.writes, 0);
+  await x.engine.command({ type: "start" }); tickMinutes(x, 1); await x.engine.command({ type: "pause" });
+  const writes = x.writes; tickMinutes(x, 1);
+  assert.equal(x.writes, writes); assert.equal(statusModel(x.engine.view()).remaining, 59 * MIN);
 });
 
-test("guest task edits preserve a due turn notification", async () => {
-
-  const initial=taskBoundary(), before=T+30*MIN-1000;
-  const x=setup(advanceTracking(initial,before).state); x.now=before; await x.engine.identity(null); x.now+=1025;
-  x.engine.configure({accountId:null,tasks:initial.tasks.map(t=>({...t,title:t.title+"!"})),endTime:initial.endTime,plan:PLAN});
-  x.engine.tick(); assert.deepEqual(x.notifications.map(e=>e.type),["turn-complete"]);
-
+test("sleep resumes the ongoing rotation without replaying old alerts", async () => {
+  const x = setup(); configure(x, [task, second]);
+  x.now += 4 * HOUR; await x.engine.resume();
+  assert.equal(x.engine.view().state.workMs, 0);
+  await x.engine.command({ type: "start" }); x.now += 2 * HOUR; await x.engine.resume();
+  assert.equal(x.notifications.length, 0);
+  assert.equal(x.engine.view().state.workMs, 2 * HOUR); assert.equal(x.engine.view().state.mode, "work");
+  assert.deepEqual(x.engine.view().state.rotation?.totals, { a: HOUR, b: HOUR });
 });
 
-test("completed suggested tasks are removed from recovered notification text", async () => {
-
-  const initial=taskBoundary(), fixture=await accountBeforeBoundary(initial); const {x}=fixture;
-  fixture.remote={...configureTracking(initial,initial.tasks.filter(t=>t.id!=="b"),initial.endTime,x.now),revision:1};
-  await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.notifications.length,1); assert.doesNotMatch(x.notifications[0].body,/Expo|Now tracking/);
-  assert.equal(x.engine.view().state.mode,"idle");
-
+test("midnight resets today's counters while rotation survives desktop restart", async () => {
+  const midnight = Date.parse("2026-09-16T00:00:00Z");
+  const x = setup(taskBoundary(midnight - HOUR), midnight - HOUR); await x.engine.identity(null);
+  tickMinutes(x, 60);
+  assert.equal(x.written?.workMs, 0); assert.deepEqual(x.written?.taskMs, {});
+  assert.equal(x.written?.mode, "work"); assert.equal(x.written?.taskId, "b");
+  assert.deepEqual(x.written?.rotation?.totals, { a: HOUR });
+  const reopened = setup(x.written, x.now); await reopened.engine.identity(null);
+  tickMinutes(reopened, 1);
+  assert.equal(reopened.engine.view().state.workMs, MIN);
+  assert.deepEqual(taskProgress(reopened.engine.view().state).map(p => p.trackedMs), [HOUR, MIN]);
 });
 
-test("retired day-plan edits do not suppress a valid turn notification", async () => {
-
-  const initial=taskBoundary(), fixture=await accountBeforeBoundary(initial); const {x}=fixture;
-  fixture.remote={...configureTracking(initial,initial.tasks,initial.endTime,x.now,{...PLAN,idleParts:20}),revision:1};
-  await x.engine.refresh(); x.engine.tick();
-  assert.deepEqual(x.notifications.map(e=>e.type),["turn-complete"]);
-
+test("legacy and pacing migrations persist once without losing work, ownership or alert choices", async () => {
+  for (const make of [legacyCreate, pacedCreate]) {
+    const saved = make([task, second], "23:00", "UTC", T, PLAN);
+    Object.assign(saved, { workMs: 45 * MIN, taskMs: { a: 45 * MIN }, controllerId: "windows_test" });
+    const x = setup(saved); x.engine.settings = { alerts: false, sound: false, mini: true, launchAtLogin: true };
+    await x.engine.identity(null); x.engine.tick();
+    assert.equal(x.written?.rotation?.version, 1); assert.equal(x.written?.pacing, undefined);
+    assert.equal(x.written?.workMs, 45 * MIN); assert.deepEqual(x.written?.rotation?.totals, { a: 45 * MIN });
+    assert.equal(x.written?.controllerId, "windows_test");
+    assert.deepEqual(x.engine.view().settings, { alerts: false, sound: false, mini: true, launchAtLogin: true });
+    assert.equal(x.notifications.length, 0);
+    const reopened = setup(x.written); await reopened.engine.identity(null); reopened.engine.tick();
+    assert.equal(reopened.writes, 0);
+    assert.deepEqual(reopened.engine.view().state.rotation, x.written?.rotation);
+  }
 });
 
-test("an unchanged account snapshot also delivers its boundary exactly once during refresh", async () => {
+test("legacy reset clears only today's counters and leaves cumulative hours intact", async () => {
+  const x = setup(); configure(x); await x.engine.command({ type: "start" }); tickMinutes(x, 5);
+  await x.engine.command({ type: "reset" });
+  assert.equal(x.written?.workMs, 0); assert.equal(x.written?.mode, "idle");
+  assert.deepEqual(x.written?.rotation?.totals, { a: 5 * MIN });
+});
+
+test("account timer creation preserves saved compatibility fields", async () => {
+  const x = setup();
+  x.response(async path => ({ status: 200, body: path === "/api/tracking"
+    ? { tracking: null, serverNow: x.now }
+    : { state: { tasks: [task], endTime: "23:00", unweighted: true, minimumEnabled: false, minimumMinutes: 15 } } }));
+  await x.engine.identity("user");
+  assert.equal(x.engine.view().state.unweighted, true); assert.equal(x.engine.view().state.minimumEnabled, false);
+  assert.equal(x.engine.view().state.minimumMinutes, 15); assert.equal(x.engine.view().state.rotation?.version, 1);
+});
+
+test("sync checkpoints cannot swallow or duplicate boundaries in either timer/refresh ordering", async () => {
+  for (const tickFirst of [false, true]) {
+    const fixture = await accountBeforeBoundary(); const { x } = fixture;
+    fixture.remote = { ...advanceTracking(taskBoundary(), x.now).state, revision: 1 };
+    if (tickFirst) x.engine.tick();
+    await x.engine.refresh(); x.engine.tick(); await x.engine.refresh(); x.engine.tick();
+    assert.equal(x.engine.view().state.taskId, "b"); assert.equal(x.engine.view().state.mode, "work");
+    assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].type, "turn-complete");
+    assert.match(x.notifications[0].body, /Now tracking Expo/);
+  }
+});
+
+test("unchanged account snapshots deliver ongoing hourly boundaries exactly once", async () => {
   const { x } = await accountBeforeBoundary();
+  await x.engine.refresh(); x.engine.tick(); await x.engine.refresh(); x.engine.tick();
+  assert.equal(x.notifications.length, 1);
+  for (let i = 0; i < 60; i++) { x.now += MIN; await x.engine.refresh(); x.engine.tick(); }
+  assert.equal(x.notifications.length, 2); assert.equal(x.engine.view().state.taskId, "a");
+});
+
+test("metadata edits and obsolete preference changes preserve a due turn notification", async () => {
+  const initial = taskBoundary(), fixture = await accountBeforeBoundary(initial); const { x } = fixture;
+  fixture.remote = { ...configureTracking(initial, initial.tasks.map(t => ({ ...t, title: t.title + "!" })), "10:00", x.now, { ...PLAN, idleParts: 20 }, true, false), revision: 1 };
   await x.engine.refresh(); x.engine.tick();
+  assert.equal(x.notifications.length, 1); assert.match(x.notifications[0].body, /Expo!/);
+});
+
+test("task edits after a boundary keep running and update recovered notification text", async () => {
+  for (const removeNext of [false, true]) {
+    const initial = taskBoundary(), fixture = await accountBeforeBoundary(initial); const { x } = fixture;
+    const tasks = removeNext ? [task] : initial.tasks.map(t => t.id === "a" ? { ...t, completed: true } : t);
+    fixture.remote = { ...configureTracking(initial, tasks, initial.endTime, x.now), revision: 1 };
+    await x.engine.refresh(); x.engine.tick();
+    assert.equal(x.notifications.length, 1); assert.equal(x.engine.view().state.mode, "work");
+    assert.equal(x.engine.view().state.taskId, removeNext ? "a" : "b");
+    if (removeNext) assert.doesNotMatch(x.notifications[0].body, /Expo/);
+    for (let i = 0; i < 10; i++) { x.now += MIN; await x.engine.refresh(); x.engine.tick(); }
+    assert.equal(x.notifications.length, 1); assert.ok(x.engine.view().state.workMs > HOUR);
+  }
+});
+
+test("guest task edits preserve a due notification with the latest task title", async () => {
+  const initial = taskBoundary(), before = T + HOUR - 1000;
+  const x = setup(advanceTracking(initial, before).state, before); await x.engine.identity(null); x.now += 1025;
+  configure(x, [task, { ...second, title: "Expo edited" }]);
+  x.engine.tick();
+  assert.equal(x.notifications.length, 1); assert.match(x.notifications[0].body, /Expo edited/);
+});
+
+test("midnight server checkpoint recovery preserves the alert and cumulative history", async () => {
+  const at = Date.parse("2026-09-16T00:00:00Z"), initial = taskBoundary(at - HOUR);
+  const fixture = await accountBeforeBoundary(initial, at); const { x } = fixture;
+  fixture.remote = { ...advanceTracking(initial, x.now).state, revision: 1 };
+  await x.engine.refresh(); x.engine.tick(); await x.engine.refresh();
+  assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].at, at);
+  assert.equal(x.engine.view().state.workMs, 25);
+  assert.deepEqual(x.engine.view().state.rotation?.totals, { a: HOUR, b: 25 });
+});
+
+test("a server migration checkpoint preserves command sequence, ownership and following hour alerts", async () => {
+  const old = pacedCreate([task, second], "23:00", "UTC", T, PLAN);
+  Object.assign(old, { controllerId: "windows_test", workMs: 10 * MIN, taskMs: { a: 10 * MIN }, revision: 3 });
+  old.pacing!.commandSeq = 8;
+  const x = setup();
+  let remote: TrackingState = old;
+  x.response(async () => ({ status: 200, body: { tracking: remote, serverNow: x.now } }));
+  await x.engine.identity("user");
+  remote = { ...advanceTracking(old, T).state, revision: 4 };
+  await x.engine.refresh();
+  assert.equal(x.engine.view().state.rotation?.commandSeq, 8);
+  assert.equal(x.engine.view().state.controllerId, "windows_test");
+  remote = { ...actOnTracking(remote, { type: "start" }, "windows_test", T), revision: 5 };
+  await x.engine.refresh();
+  x.now = T + 10 * MIN - 1000; await x.engine.refresh(); x.engine.tick();
+  x.now += 1025; await x.engine.refresh(); x.engine.tick();
+  assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].title, "Caught up");
+  assert.equal(x.engine.view().state.taskId, "a");
+});
+
+test("delayed polls cannot replace a newer checkpoint or replay a delivered alert", async () => {
+  const fixture = await accountBeforeBoundary(); const { x } = fixture;
+  const latest = { ...advanceTracking(taskBoundary(), x.now).state, revision: 2 };
+  fixture.remote = latest; await x.engine.refresh();
+  fixture.remote = { ...taskBoundary(), revision: 2, controllerId: "stale_owner" };
+  x.now += 1000; await x.engine.refresh(); x.engine.tick();
+  assert.equal(x.engine.view().state.taskId, "b"); assert.equal(x.engine.view().state.controllerId, "windows_test");
+  fixture.remote = { ...latest, revision: 1, controllerId: "stale_owner" };
   await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.notifications.length, 1); assert.match(x.notifications[0].body, /Next: Expo/);
+  assert.equal(x.notifications.length, 1); assert.equal(x.engine.view().state.revision, 2);
 });
 
 test("checkpoint recovery handles a server clock offset without replay on initial sign-in", async () => {
-  const x = setup(); const offset = 15 * 60_000;
-  let remote = taskBoundary();
-  x.now = T + 30 * 60_000 - offset - 1000;
+  const x = setup(); const offset = 15 * MIN;
+  let remote = taskBoundary(); x.now = T + HOUR - offset - 1000;
   x.response(async () => ({ status: 200, body: { tracking: remote, serverNow: x.now + offset } }));
-  await x.engine.identity("user"); x.engine.tick();
-  assert.equal(x.notifications.length, 0);
-  x.now += 1025;
-  remote = { ...advanceTracking(remote, x.now + offset).state, revision: 1 };
+  await x.engine.identity("user"); x.engine.tick(); assert.equal(x.notifications.length, 0);
+  x.now += 1025; remote = { ...advanceTracking(remote, x.now + offset).state, revision: 1 };
   await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.notifications.length, 1);
-  assert.equal(x.notifications[0].at, T + 30 * 60_000);
+  assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].at, T + HOUR);
 });
 
-test("checkpoint recovery covers turn and recommendation boundaries with normalized service", async () => {
-
-  for(const goal of [false,true]) {
-    let initial=taskBoundary();
-    initial.pacing!.service={a:40*MIN,b:40*MIN};
-    if(goal){initial.workMs=30*MIN; initial.taskMs={a:15*MIN,b:15*MIN};}
-    const fixture=await accountBeforeBoundary(initial); const {x}=fixture;
-    fixture.remote={...advanceTracking(initial,x.now).state,revision:1};
-    await x.engine.refresh(); x.engine.tick();
-    assert.deepEqual(x.notifications.map(e=>e.type),[goal?"work-complete":"turn-complete"]);
-  }
-
-});
-
-test("reset, pause, manual switch and ownership changes cancel obsolete checkpoint alerts", async () => {
-  for (const mutation of ["reset", "pause", "switch", "owner", "history"] as const) {
+test("reset, pause, command-sequence, ownership and history changes cancel obsolete alerts", async () => {
+  for (const mutation of ["reset", "pause", "command", "owner", "today", "totals", "duration"] as const) {
     const fixture = await accountBeforeBoundary(); const { x } = fixture;
-    const before = x.now - 500;
-    let changed: TrackingState;
-    if (mutation === "reset" || mutation === "pause") changed = actOnTracking(taskBoundary(), { type: mutation }, "windows_test", before);
-    else if (mutation === "switch") changed = actOnTracking(taskBoundary(), { type: "start", taskId: "b" }, "windows_test", before);
-    else changed = advanceTracking(taskBoundary(), x.now).state;
+    let changed = mutation === "reset" || mutation === "pause"
+      ? actOnTracking(taskBoundary(), { type: mutation }, "windows_test", x.now - 500)
+      : advanceTracking(taskBoundary(), x.now).state;
+    if (mutation === "command") changed.rotation!.commandSeq++;
     if (mutation === "owner") changed.controllerId = "phone_device";
-    if (mutation === "history") { changed.taskMs.a -= 2000; changed.taskMs.b = (changed.taskMs.b ?? 0) + 2000; }
+    if (mutation === "today") { changed.taskMs.a -= 2000; changed.taskMs.b += 2000; }
+    if (mutation === "totals") changed.rotation!.totals.a -= 2000;
+    if (mutation === "duration") changed.rotation!.turn!.durationMs -= 2000;
     fixture.remote = { ...changed, revision: 1 };
     await x.engine.refresh(); x.engine.tick();
     assert.equal(x.notifications.length, 0, mutation);
   }
 });
-test("disabled alerts still preserve the completion message recovered from sync", async () => {
-  const fixture = await accountBeforeBoundary(); const { x } = fixture;
-  x.engine.settings.alerts = false;
+
+test("disabled alerts retain the latest message and dedupe recovered events", async () => {
+  const fixture = await accountBeforeBoundary(); const { x } = fixture; x.engine.settings.alerts = false;
   fixture.remote = { ...advanceTracking(taskBoundary(), x.now).state, revision: 1 };
   await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.notifications.length, 0); assert.match(x.engine.view().message!, /30-minute turn complete/);
-  assert.ok(x.diagnostics.some(e => e.kind === "alert-skipped" && e.reason === "alerts-disabled" && e.eventType === "turn-complete"));
+  assert.equal(x.notifications.length, 0); assert.match(x.engine.view().message!, /One-hour turn complete/);
+  assert.ok(x.diagnostics.some(e => e.kind === "alert-skipped" && e.reason === "alerts-disabled"));
+  x.engine.settings.alerts = true; await x.engine.refresh(); x.engine.tick();
+  assert.equal(x.notifications.length, 0);
 });
 
-test("diagnostics explain stale sync, ownership and replaced-checkpoint suppression", async () => {
+test("stale sync, ownership and replaced checkpoints have diagnostic suppression reasons", async () => {
   for (const reason of ["sync-stale", "different-controller", "checkpoint-replaced"] as const) {
     const fixture = await accountBeforeBoundary(); const { x } = fixture;
-    if (reason === "sync-stale") {
-      x.now += 120_000;
-      x.engine.tick();
-    } else {
-      const initial = taskBoundary();
+    if (reason === "sync-stale") { x.now += 120_000; x.engine.tick(); }
+    else {
       const next = reason === "checkpoint-replaced"
-        ? actOnTracking(initial, { type: "pause" }, "windows_test", x.now)
-        : { ...advanceTracking(initial, x.now).state, controllerId: "phone_device" };
-      fixture.remote = { ...next, revision: 1 };
-      await x.engine.refresh(); x.engine.tick();
+        ? actOnTracking(taskBoundary(), { type: "pause" }, "windows_test", x.now)
+        : { ...advanceTracking(taskBoundary(), x.now).state, controllerId: "phone_device" };
+      fixture.remote = { ...next, revision: 1 }; await x.engine.refresh(); x.engine.tick();
     }
     assert.ok(x.diagnostics.some(e => e.kind === "alert-skipped" && e.reason === reason && e.eventType === "turn-complete"), reason);
     assert.equal(x.notifications.length, 0);
   }
 });
 
-test("unchanged idle ticks do not generate diagnostic writes", () => {
-  const x = setup(); configure(x);
-  x.diagnostics.length = 0;
+test("unchanged paused ticks do not generate diagnostic writes", () => {
+  const x = setup(); configure(x); x.diagnostics.length = 0;
   for (let i = 0; i < 500; i++) { x.now += 1000; x.engine.tick(); }
   assert.equal(x.diagnostics.length, 0);
 });
@@ -389,21 +370,21 @@ test("a recovered alert is logged once and logger failure cannot break tracking"
   const fixture = await accountBeforeBoundary(); const { x } = fixture;
   fixture.remote = { ...advanceTracking(taskBoundary(), x.now).state, revision: 1 };
   await x.engine.refresh(); x.engine.tick(); await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.diagnostics.filter(e => e.kind === "alert-requested" && e.eventType === "turn-complete").length, 1);
+  assert.equal(x.diagnostics.filter(e => e.kind === "alert-requested").length, 1);
   let now = T; const delivered: TrackingEvent[] = [];
   const engine = new TrackerEngine({ now: () => now, request: async () => ({ status: 503, body: {} }), saveGuest: () => {}, publish: () => {},
     diagnostic: () => { throw new Error("disk full"); }, notify: e => delivered.push(e),
   }, "windows_test", taskBoundary());
-  await engine.identity(null); now += 30 * 60_000 - 1000; engine.tick(); now += 1025; engine.tick();
+  await engine.identity(null); now += HOUR - 1000; engine.tick(); now += 1025; engine.tick();
   assert.equal(delivered.length, 1);
 });
 
-test("cold start, reconnection and sleep do not replay checkpoint alerts", async () => {
-  for (const scenario of ["cold", "offline", "sleep", "midnight"] as const) {
+test("cold start, reconnection and sleep do not replay old checkpoint alerts", async () => {
+  for (const scenario of ["cold", "offline", "sleep", "next-day"] as const) {
     const fixture = await accountBeforeBoundary(); const { x } = fixture;
     if (scenario === "cold") await x.engine.identity(null);
     if (scenario === "offline" || scenario === "sleep") x.now += 120_000;
-    if (scenario === "midnight") x.now += 24 * 60 * 60_000;
+    if (scenario === "next-day") x.now += 24 * HOUR;
     fixture.remote = { ...advanceTracking(taskBoundary(), x.now).state, revision: 1 };
     if (scenario === "cold") await x.engine.identity("user");
     else if (scenario === "sleep") await x.engine.resume();
@@ -411,7 +392,8 @@ test("cold start, reconnection and sleep do not replay checkpoint alerts", async
     x.engine.tick(); assert.equal(x.notifications.length, 0, scenario);
   }
 });
-test("account commands use the latest revision, never a second offline timer", async () => {
+
+test("account commands use the latest revision and never create an offline timer", async () => {
   const x = setup(); let remote = createTracking([task], "23:00", "UTC", T, PLAN); remote.revision = 8;
   x.response(async (_path, method, body: any) => {
     if (method === "POST") { assert.equal(body.revision, remote.revision); remote = { ...actOnTracking(remote, body.action, body.controllerId, x.now), revision: remote.revision + 1 }; }
@@ -419,86 +401,87 @@ test("account commands use the latest revision, never a second offline timer", a
   });
   await x.engine.identity("user-a"); await x.engine.command({ type: "start" });
   assert.equal(x.engine.view().state.mode, "work"); assert.equal(x.engine.view().state.revision, 9);
-  x.response(async () => ({ status: 0, body: {} }));
-  await assert.rejects(x.engine.command({ type: "pause" }));
-  assert.equal(x.engine.view().state.mode, "work");
-  assert.equal(x.written, undefined);
+  x.response(async () => ({ status: 0, body: {} })); await assert.rejects(x.engine.command({ type: "pause" }));
+  assert.equal(x.engine.view().state.mode, "work"); assert.equal(x.written, undefined);
 });
+
 test("another device's pause and alert ownership are respected", async () => {
   const x = setup(); let remote: TrackingState = { ...taskBoundary(), controllerId: "phone_device" };
-  x.now = T + 30 * MIN - 1000;
+  x.now = T + HOUR - 1000;
   x.response(async () => ({ status: 200, body: { tracking: remote, serverNow: x.now } }));
   await x.engine.identity("user"); x.now += 1025; x.engine.tick();
-  assert.equal(x.engine.view().state.taskId, null); assert.equal(x.notifications.length, 0);
+  assert.equal(x.engine.view().state.taskId, "b"); assert.equal(x.notifications.length, 0);
   remote = { ...actOnTracking(remote, { type: "pause" }, "phone_device", x.now), revision: 2 };
   await x.engine.refresh(); assert.equal(x.engine.view().state.mode, "idle");
 });
+
 test("old in-flight account replies cannot overwrite the guest/account scope", async () => {
   const x = setup(); configure(x); await x.engine.command({ type: "start" });
   let resolve!: (reply: ApiReply) => void;
   x.response(() => new Promise(r => { resolve = r; }));
-  const pending = x.engine.identity("account");
-  await x.engine.identity(null);
-  resolve({ status: 200, body: { tracking: createTracking([], "20:00", "UTC", T), serverNow: T } });
-  await pending;
+  const pending = x.engine.identity("account"); await x.engine.identity(null);
+  resolve({ status: 200, body: { tracking: createTracking([], "20:00", "UTC", T), serverNow: T } }); await pending;
   assert.equal(x.engine.view().accountId, null); assert.equal(x.engine.view().state.taskId, "a");
-  assert.throws(() => x.engine.configure({ tasks: [], endTime: "20:00", plan: { ...PLAN }, accountId: "forged" }));
+  assert.throws(() => x.engine.configure({ tasks: [], endTime: "20:00", plan: PLAN, accountId: "forged" }));
 });
+
 test("revision conflicts refresh and report instead of overwriting", async () => {
   const x = setup(); const remote = createTracking([task], "23:00", "UTC", T, PLAN);
   x.response(async (_path, method) => method === "POST" ? { status: 409, body: { error: "Changed elsewhere" } } : { status: 200, body: { tracking: remote, serverNow: x.now } });
   await x.engine.identity("user"); await assert.rejects(x.engine.command({ type: "start" }), /Changed elsewhere/);
   assert.equal(x.engine.view().state.mode, "idle");
 });
-test("cold offline account does not allow tracking until its state is loaded", async () => {
+
+test("cold offline account does not allow tracking before loading its state", async () => {
   const x = setup(); await x.engine.identity("user");
   assert.equal(x.engine.view().ready, false); await assert.rejects(x.engine.command({ type: "start" }));
 });
-test("IPC allowlists reject URL injection, unsupported verbs, malformed data and frames", () => {
+
+test("an incompatible tracking protocol shows the update error and blocks commands and alerts", async () => {
+  const fixture = await accountBeforeBoundary(); const { x } = fixture;
+  x.response(async () => ({ status: 426, body: { error: TRACKING_UPDATE_REQUIRED } }));
+  await x.engine.refresh(); x.engine.tick();
+  assert.equal(x.engine.view().ready, false);
+  assert.equal(x.engine.view().error, TRACKING_UPDATE_REQUIRED);
+  assert.equal(x.notifications.length, 0);
+  assert.equal(x.engine.view().state.controllerId, "windows_test");
+  await assert.rejects(x.engine.command({ type: "pause" }));
+  assert.equal(x.written, undefined);
+});
+
+test("IPC accepts only picker starts and rejects obsolete per-task and continue controls", () => {
   assert.deepEqual(validateApi({ path: "/api/state", method: "GET" }), { path: "/api/state", method: "GET" });
   for (const path of ["https://evil.test", "file:///C:/private", "/api/state?x=y", "/api/tracking", "/api/../secret"]) assert.throws(() => validateApi({ path, method: "GET" }));
   assert.throws(() => validateApi({ path: "/api/state", method: "PUT", body: "{" }));
-  assert.throws(() => validateAction({ type: "shell" }));
+  assert.deepEqual(validateAction({ type: "start" }), { type: "start" });
   assert.deepEqual(validateAction({ type: "pause", taskId: "ignored" }), { type: "pause" });
-  assert.throws(() => validateAction({ type: "skip-rest" }), "breaks are gone");
-  assert.throws(() => validateAction({ type: "start", taskId: 42 }));
+  for (const action of [{ type: "shell" }, { type: "skip-rest" }, { type: "continue" }, { type: "start", taskId: "b" }, { type: "start", taskId: 42 }]) assert.throws(() => validateAction(action));
   assert.ok(trustedPage("yantasks://app/index.html?mini=1"));
   assert.ok(!trustedPage("https://app/index.html")); assert.ok(!trustedPage("yantasks://evil/index.html"));
 });
-test("power policy lowers idle/battery polling while preserving exact alert wakeups", () => {
-  assert.equal(syncDelay(false, false, true), 60_000);
-  assert.equal(syncDelay(true, false, true), 30_000);
-  assert.equal(syncDelay(true, false, false), 15_000);
-  assert.equal(syncDelay(true, true, false), 5000);
-  assert.equal(wakeDelay(false, null), 60_000);
-  assert.equal(wakeDelay(false, 2300), 2325);
-  assert.equal(wakeDelay(true, 60_000), 1000);
-  assert.equal(wakeDelay(false, -10), 100);
+
+test("power policy preserves boundary wakeups while lowering paused and battery polling", () => {
+  assert.equal(syncDelay(false, false, true), 60_000); assert.equal(syncDelay(true, false, true), 30_000);
+  assert.equal(syncDelay(true, false, false), 15_000); assert.equal(syncDelay(true, true, false), 5000);
+  assert.equal(wakeDelay(false, null), 60_000); assert.equal(wakeDelay(false, 2300), 2325);
+  assert.equal(wakeDelay(true, 60_000), 1000); assert.equal(wakeDelay(false, -10), 100);
+  const paused = createTracking([task], "23:00", "UTC", T, PLAN);
+  const working = actOnTracking(paused, { type: "start" }, "windows_test", T);
+  assert.equal(hasLiveCountdown(paused), false); assert.equal(hasLiveCountdown(working), true);
+  assert.equal(hasLiveCountdown(advanceTracking(working, T + HOUR).state), true);
 });
 
-test("only working clocks need one-second display wakeups", async () => {
-
-  const paused=createTracking([task],"23:00","UTC",T,PLAN);
-  const working=actOnTracking(paused,{type:"start"},"windows_test",T);
-  assert.equal(hasLiveCountdown(paused),false); assert.equal(hasLiveCountdown(working),true);
-  assert.equal(wakeDelay(true && hasLiveCountdown(working),null),1000);
-  assert.equal(wakeDelay(true && hasLiveCountdown(paused),null),60_000);
-  assert.equal(wakeDelay(false,2300),2325);
-  assert.equal(syncDelay(false,true,true),30_000);
-  assert.equal(hasLiveCountdown(advanceTracking(working,T+30*MIN).state),false);
-
-});
-test("taskbar shows turn countdown and a stable paused recommendation independent of day settings", async () => {
-
-  const x=setup(); x.engine.configure({tasks:[task],endTime:"10:30",plan:{...PLAN,startTime:"10:30"},accountId:null});
-  let m=statusModel(x.engine.view()); assert.equal(m.label,"Paused"); assert.equal(m.canStart,true);
-  assert.equal(m.remaining,30*MIN);
-  x.now+=60*MIN; x.engine.tick(); assert.equal(statusModel(x.engine.view()).remaining,30*MIN);
-  await x.engine.command({type:"start"}); x.now+=MIN; x.engine.tick();
-  m=statusModel(x.engine.view()); assert.equal(m.label,"Working"); assert.equal(m.title,"Code");
-  assert.equal(m.remaining,29*MIN); assert.ok(m.tooltip.length<=127); assert.ok(m.progress>0);
-  await x.engine.command({type:"pause"}); x.now+=60*MIN; x.engine.tick();
-  m=statusModel(x.engine.view()); assert.equal(m.remaining,29*MIN); assert.equal(x.engine.view().state.workMs,MIN);
-  assert.match(m.windowTitle,/recommended left/); assert.equal(m.canStart,true);
-
+test("taskbar model shows a running or paused turn and is done only with no open tasks", async () => {
+  const x = setup(); configure(x);
+  let m = statusModel(x.engine.view()); assert.equal(m.label, "Paused"); assert.equal(m.canStart, true);
+  assert.equal(m.remaining, HOUR);
+  await x.engine.command({ type: "start" }); tickMinutes(x, 1);
+  m = statusModel(x.engine.view()); assert.equal(m.label, "Working"); assert.equal(m.title, "Code");
+  assert.equal(m.remaining, 59 * MIN); assert.ok(m.tooltip.length <= 127); assert.equal(m.progress, 1 / 60);
+  await x.engine.command({ type: "pause" }); tickMinutes(x, 60);
+  m = statusModel(x.engine.view()); assert.equal(m.remaining, 59 * MIN); assert.equal(m.progress, -1);
+  assert.equal(m.canStart, true); assert.equal(m.done, false); assert.equal(x.engine.view().state.workMs, MIN);
+  assert.doesNotMatch(m.windowTitle + m.tooltip, /recommend|goal|budget|idle/i);
+  configure(x, [{ ...task, completed: true }]);
+  m = statusModel(x.engine.view()); assert.equal(m.done, true); assert.equal(m.canStart, false); assert.equal(m.label, "All done");
 });

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, screen, session, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, screen, session, shell, Tray } from "electron";
 import type { IpcMainInvokeEvent, NativeImage } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,8 +7,9 @@ import { TrackerEngine } from "./engine";
 import { defaults, type ApiReply, type DesktopState, type Settings } from "./contract";
 import { trustedPage, validateAction, validateApi } from "./security";
 import { statusModel } from "./model";
-import { formatDuration, upcomingTrackingEvents, type TrackingEvent } from "../../lib/tracking";
-import { hasLiveCountdown, syncDelay, wakeDelay } from "./power";
+import { upcomingTrackingEvents, type TrackingEvent } from "../../lib/tracking";
+import { TRACKING_PROTOCOL, TRACKING_PROTOCOL_HEADER } from "../../lib/tracking-protocol";
+import { eventScheduleKey, hasLiveCountdown, syncDelay, wakeDelay } from "./power";
 import { AlertLog, type AlertDiagnostic } from "./diagnostics";
 import { desktopIdentity } from "./identity";
 
@@ -68,7 +69,7 @@ async function request(endpoint: string, method = "GET", body?: unknown): Promis
   try {
     const res = await session.fromPartition("persist:yantasks-account").fetch(`${API}${endpoint}`, {
       method, credentials: "include", redirect: "error", cache: "no-store",
-      headers: { "Content-Type": "application/json", Origin: API },
+      headers: { "Content-Type": "application/json", Origin: API, [TRACKING_PROTOCOL_HEADER]: TRACKING_PROTOCOL },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000),
     });
     return { status: res.status, body: await res.json() };
@@ -88,8 +89,8 @@ function schedule(view: DesktopState) {
   if (smoke && !powerCheck && !countdownCheck || suspended || quitting || !main) return;
   const visible = isVisible(main) || isVisible(mini);
   const s = view.state;
-  const key = `${view.accountId}/${s.revision}/${s.dayKey}/${s.mode}/${s.taskId}/${s.endTime}`;
-  if (scheduleKey !== key) {
+  const key = `${view.accountId}/${eventScheduleKey(s)}`;
+  if (scheduleKey !== key || s.mode === "work" && !eventTimes.some(t => t > s.cursor)) {
     scheduleKey = key;
     eventTimes = upcomingTrackingEvents(s, s.cursor).map(e => e.at);
   }
@@ -163,8 +164,8 @@ function publish(view: DesktopState) {
   if (buttonKey !== lastButtons) {
     lastButtons = buttonKey;
     main.setThumbarButtons([
-      { tooltip: view.state.mode === "idle" ? "Start working" : "Pause tracking", icon: icons[view.state.mode === "idle" ? "work" : "idle"], flags: !view.ready || view.busy || (view.state.mode === "idle" ? !m.canStart : !m.canPause) ? ["disabled"] : [], click: () => void toggle() },
-      { tooltip: "Show mini tracker", icon: icons.open, click: () => changeSettings({ mini: true }) },
+      { tooltip: m.paused ? "Start" : "Pause", icon: icons[m.paused ? "work" : "idle"], flags: !view.ready || view.busy || (m.paused ? !m.canStart : !m.canPause) ? ["disabled"] : [], click: () => void toggle() },
+      { tooltip: "Show mini tracker", icon: icons.open, click: () => setMiniVisible(true) },
       { tooltip: "Open tasks", icon: icons.app, click: showMain },
     ]);
   }
@@ -177,15 +178,10 @@ async function toggle() {
   await engine.command({ type: view.state.mode === "idle" ? "start" : "pause" }).catch(() => {});
 }
 
-function changeSettings(input: Partial<Settings>) {
-  for (const key of Object.keys(input)) {
-    if (!Object.hasOwn(defaults, key) || typeof input[key as keyof Settings] !== "boolean") throw new Error("Invalid setting.");
-  }
-  if (input.launchAtLogin !== undefined) {
-    if (!app.isPackaged && input.launchAtLogin) throw new Error("Install YanTasks before enabling launch at sign-in.");
-    app.setLoginItemSettings({ openAtLogin: input.launchAtLogin, path: process.execPath, args: ["--background"] });
-  }
-  settings = { ...settings, ...input };
+function setMiniVisible(visible: boolean) {
+  // Keep saved notification and startup preferences intact. Only the mini
+  // window's operational visibility changes; there is no settings UI.
+  settings = { ...settings, mini: visible };
   engine.settings = settings;
   if (settings.mini) showMini(); else { mini?.destroy(); mini = undefined; }
   save(); engine.publish();
@@ -196,16 +192,11 @@ function trayMenu() {
   const m = statusModel(v);
   const menu = Menu.buildFromTemplate([
     { label: `${m.label}: ${m.title.slice(0, 65)}`, enabled: false },
-    { label: `Worked ${formatDuration(v.state.workMs)} · Recommended left ${formatDuration(m.workLeft)}`, enabled: false },
-    { label: v.connected ? `Today’s recommendation ${formatDuration(m.goal)}` : "Offline — reconnect to sync", enabled: false },
     { type: "separator" },
-    { label: v.state.mode === "idle" ? (m.done ? "Track extra work" : "Start suggested task") : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode === "idle" ? m.canStart : m.canPause), click: () => void toggle() },
-    { label: "Track a task", enabled: v.ready && !v.busy, submenu: m.entries.filter(p => p.weight > 0 && !p.doneToday).slice(0, 50).map(p => ({ label: `${p.task.title.slice(0, 60)} · rotation #${p.queuePosition}`, type: "radio" as const, checked: p.task.id === v.state.taskId, click: () => void engine.command({ type: "start", taskId: p.task.id }).catch(() => {}) })) },
+    { label: m.paused ? "Start" : "Pause", enabled: v.ready && !v.busy && (m.paused ? m.canStart : m.canPause), click: () => void toggle() },
     { label: "Show tasks", click: showMain },
-    { label: "Always-on-top mini tracker", type: "checkbox", checked: settings.mini, click: item => changeSettings({ mini: item.checked }) },
+    { label: settings.mini ? "Hide mini tracker" : "Show mini tracker", click: () => setMiniVisible(!settings.mini) },
     { type: "separator" },
-    { label: "Native alerts", type: "checkbox", checked: settings.alerts, click: item => changeSettings({ alerts: item.checked }) },
-    { label: "Launch at Windows sign-in", type: "checkbox", checked: settings.launchAtLogin, click: item => changeSettings({ launchAtLogin: item.checked }) },
     { label: "Quit YanTasks…", click: () => void quit() },
   ]);
   tray.popUpContextMenu(menu);
@@ -260,6 +251,9 @@ async function start() {
     w.webContents.on("will-attach-webview", event => event.preventDefault());
     w.webContents.on("render-process-gone", () => { if (!quitting) void w.loadURL(`yantasks://app/index.html${compact ? "?mini=1" : ""}`); });
     w.webContents.on("did-fail-load", (_event, code, description) => console.error("Desktop page failed", code, description));
+    if (smoke) w.webContents.on("console-message", details => {
+      if (details.level === "error") console.error(`Smoke ${compact ? "mini" : "main"} renderer: ${details.message}`);
+    });
     w.on("show", () => engine.tick());
     w.on("hide", () => engine.tick());
     w.on("minimize", () => engine.tick());
@@ -275,15 +269,15 @@ async function start() {
     const pos = miniPosition && screen.getAllDisplays().some(d => miniPosition!.x >= d.workArea.x && miniPosition!.x + 390 <= d.workArea.x + d.workArea.width && miniPosition!.y >= d.workArea.y && miniPosition!.y + 350 <= d.workArea.y + d.workArea.height) ? miniPosition : { x: area.x + area.width - 410, y: area.y + area.height - 370 };
     w.setPosition(Math.round(pos.x), Math.round(pos.y));
     w.on("moved", () => { const [x, y] = w.getPosition(); miniPosition = { x, y }; save(); });
-    w.on("close", event => { if (!quitting) { event.preventDefault(); changeSettings({ mini: false }); } });
+    w.on("close", event => { if (!quitting) { event.preventDefault(); setMiniVisible(false); } });
     return w;
   };
-  main.on("close", event => { if (!quitting) { event.preventDefault(); main.hide(); if (engine.view().state.mode !== "idle") changeSettings({ mini: true }); } });
+  main.on("close", event => { if (!quitting) { event.preventDefault(); main.hide(); if (engine.view().state.mode === "work") setMiniVisible(true); } });
   main.on("focus", () => { main.flashFrame(false); engine.tick(); void engine.refresh(); });
   main.once("ready-to-show", () => { if (!process.argv.includes("--background") && !smoke) main.show(); });
   tray = new Tray(icons.idle);
   tray.on("double-click", showMain);
-  tray.on("click", () => changeSettings({ mini: !settings.mini }));
+  tray.on("click", () => setMiniVisible(!settings.mini));
   tray.on("right-click", trayMenu);
   app.on("second-instance", showMain);
   app.on("activate", showMain);
@@ -314,14 +308,14 @@ async function start() {
   ipcMain.handle("configure", (event, config) => { allowed(event, true); if (!config || typeof config !== "object") throw new Error("Invalid configuration."); engine.configure(config); });
   ipcMain.handle("command", (event, action) => { allowed(event); return engine.command(validateAction(action)); });
   ipcMain.handle("refresh", event => { allowed(event); return engine.refresh(); });
-  ipcMain.handle("settings", (event, value) => { allowed(event); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid settings."); changeSettings(value); });
   ipcMain.handle("window", (event, action) => {
     allowed(event);
     if (action === "main") showMain();
-    else if (action === "mini") changeSettings({ mini: true });
-    else if (action === "hide-mini") changeSettings({ mini: false });
-    else if (action === "test-alert") nativeAlert({ title: "YanTasks alerts are ready", body: "Turn completions and today’s recommendation will appear here while YanTasks is running." });
+    else if (action === "mini") setMiniVisible(true);
+    else if (action === "hide-mini") setMiniVisible(false);
+    else if (action === "test-alert") nativeAlert({ title: "YanTasks alerts are ready", body: "Task switches appear here after each one-hour turn while YanTasks is running." });
     else if (action === "dismiss") engine.dismiss();
+    else if (action === "support" || action === "privacy") { if (!smoke) return shell.openExternal(`${API}/${action}`); }
     else throw new Error("Unknown window action.");
   });
   engine.publish();
@@ -334,7 +328,7 @@ async function start() {
       const { runPowerCheck } = await import("./power-check");
       mini.destroy(); mini = undefined;
       const seconds = Number(process.argv.find(a => a.startsWith("--power-seconds="))?.split("=")[1]) || 20;
-      await runPowerCheck({ main, engine, mini: () => mini, setMini: on => changeSettings({ mini: on }), stats, seconds });
+      await runPowerCheck({ main, engine, mini: () => mini, setMini: setMiniVisible, stats, seconds });
     }
     quitting = true;
     app.exit(0);

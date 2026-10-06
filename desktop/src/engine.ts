@@ -1,4 +1,6 @@
-import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, suggestedTask, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
+import { checkpointEvents } from "../../lib/tracking-events";
+import { TRACKING_UPDATE_REQUIRED } from "../../lib/tracking-protocol";
 import { sanitizeState } from "../../lib/app-state";
 import type { ApiReply, DesktopState, GuestConfig, Settings } from "./contract";
 import { defaults } from "./contract";
@@ -13,37 +15,6 @@ type Dependencies = {
   diagnostic?: (record: AlertDiagnostic) => void;
 };
 
-/** Recover only elapsed transitions that the incoming checkpoint corroborates.
- * Task edits checkpoint elapsed time too, so metadata/revision need not match.
- * Reconfigure both states to normalize virtual service before comparing them.
- * Earned work and turn position must match; a reset or manual switch cannot
- * revive an obsolete prediction.
- */
-function checkpointEvents(previous: TrackingState, next: TrackingState): { events: TrackingEvent[]; confirmed: boolean } {
-  const projected = advanceTracking(previous, next.cursor);
-  const rejected = { events: projected.events, confirmed: false };
-  if (next.cursor <= previous.cursor || next.dayKey !== previous.dayKey || next.timeZone !== previous.timeZone ||
-      next.controllerId !== previous.controllerId) return rejected;
-  const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, dayPlan(next), next.unweighted, next.minimumEnabled, next.minimumMinutes);
-  const canonical = configureTracking(next, next.tasks, next.endTime, next.cursor);
-  const equalTime = (a: number, b: number) => Math.abs(a - b) <= 1;
-  const a = expected.pacing!, b = canonical.pacing!;
-  if (a.commandSeq !== b.commandSeq || a.goalKey !== b.goalKey || !equalTime(a.goalMs, b.goalMs) || a.turn?.taskId !== b.turn?.taskId || !equalTime(a.turn?.elapsedMs ?? 0, b.turn?.elapsedMs ?? 0)) return rejected;
-  for (const id of new Set([...Object.keys(a.service), ...Object.keys(b.service)])) {
-    if (!equalTime(Object.hasOwn(a.service, id) ? a.service[id] : 0, Object.hasOwn(b.service, id) ? b.service[id] : 0)) return rejected;
-  }
-  if (expected.mode !== next.mode || expected.taskId !== next.taskId) return rejected;
-  // Only explicitly tracked work counts.
-  if (!equalTime(expected.workMs, next.workMs) || !equalTime(expected.carryMs ?? 0, next.carryMs ?? 0)) return rejected;
-  for (const id of new Set([...Object.keys(expected.taskMs), ...Object.keys(next.taskMs)])) {
-    const time = (s: TrackingState) => Object.hasOwn(s.taskMs, id) ? s.taskMs[id] : 0;
-    if (!equalTime(time(expected), time(next))) return rejected;
-  }
-  const suggestion = suggestedTask(next);
-  return { confirmed: true, events: projected.events.map(event => event.type === "turn-complete"
-    ? { ...event, body: `Tracking is paused. ${suggestion ? `Next: ${suggestion.title}. ` : ""}Choose a task when you’re ready.` }
-    : event) };
-}
 // This runs in Electron's main process, not a background Chromium tab. Timers
 // reconcile against the same CAS/revision API and pure time model as iOS/web.
 export class TrackerEngine {
@@ -140,7 +111,10 @@ export class TrackerEngine {
   private adopt(value: unknown, serverNow: unknown) {
     const next = parseTracking(value);
     if (!next || typeof serverNow !== "number" || !Number.isFinite(serverNow)) throw new Error("The server returned an invalid timer.");
-    if (next.revision < this.snapshot.revision) return;
+    // Automatic server checkpoints may share a revision. A delayed poll must
+    // not replace a newer cursor or undo an already adopted rotation migration.
+    if (this.ready && (next.revision < this.snapshot.revision || next.revision === this.snapshot.revision &&
+        (next.cursor < this.snapshot.cursor || this.snapshot.rotation && !next.rotation))) return;
     const previousTick = this.lastTick;
     // A refresh may arrive before the boundary wakeup. Reconcile both sides of
     // the checkpoint before replacing it, not just the new snapshot in tick().
@@ -169,8 +143,7 @@ export class TrackerEngine {
   private deliver(events: TrackingEvent[], after: number, now: number, suppression: Suppression | null, source: AlertDiagnostic["source"]) {
     for (const event of events) {
       if (event.at <= after || event.at > now || this.delivered.has(event.id)) continue;
-      // An idle warning predicted before a checkpoint that shows work is under way is stale.
-      const reason = suppression ?? (source !== "tick" && this.snapshot.mode === "work" && (event.type === "idle-half" || event.type === "idle-soon") ? "checkpoint-replaced" : null);
+      const reason = suppression;
       this.trace({ kind: reason || !this.settings.alerts ? "alert-skipped" : "alert-requested", source,
         eventId: event.id, eventType: event.type, eventAt: event.at, revision: this.snapshot.revision,
         ...(reason || !this.settings.alerts ? { reason: reason ?? "alerts-disabled" } : {}) });
@@ -191,6 +164,11 @@ export class TrackerEngine {
         const result = await this.d.request("/api/tracking");
         if (epoch !== this.epoch) return;
         if (result.status === 401) { this.ready = false; throw new Error("Session expired. Open the task list and sign in again."); }
+        if (result.status === 426) {
+          this.ready = false;
+          const body = result.body as { error?: unknown } | null;
+          throw new Error(typeof body?.error === "string" ? body.error : TRACKING_UPDATE_REQUIRED);
+        }
         if (result.status !== 200) throw new Error("Cannot sync the timer. Checking again automatically.");
         const body = result.body as { tracking: unknown; serverNow: number };
         if (body.tracking === null) {
@@ -256,7 +234,7 @@ export class TrackerEngine {
       this.snapshot = state;
       // Checkpoint on transitions and once per active minute; timestamps preserve all
       // intervening elapsed time if the app is restarted between checkpoints.
-      if (events.length || this.guest.pacing?.version !== state.pacing?.version || this.guest.idlePolicyVersion !== state.idlePolicyVersion || this.guest.workLimitVersion !== state.workLimitVersion || this.guest.workOnlyVersion !== state.workOnlyVersion || this.guest.coverageVersion !== state.coverageVersion || this.guest.carryMs !== undefined || state.dayKey !== this.guest.dayKey || (state.mode !== "idle" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
+      if (events.length || this.guest.rotation?.version !== state.rotation?.version || this.guest.idlePolicyVersion !== state.idlePolicyVersion || this.guest.workLimitVersion !== state.workLimitVersion || this.guest.workOnlyVersion !== state.workOnlyVersion || this.guest.coverageVersion !== state.coverageVersion || this.guest.carryMs !== undefined || state.dayKey !== this.guest.dayKey || state.mode !== this.guest.mode || state.taskId !== this.guest.taskId || (state.mode === "work" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
     }
     this.publish();
   }

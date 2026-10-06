@@ -11,12 +11,11 @@ import {
 } from "react-native";
 import { DateKey, addDays, formatDueDate, fromKey, toKey, todayKey } from "../../../lib/dates";
 import { parseTrailingDate } from "../../../lib/parse-date";
-import { Priority, Task } from "../../../lib/types";
-import { DEFAULT_PRIORITY } from "../../../lib/weights";
+import { Task } from "../../../lib/types";
 import { radius, themed, useStyles, useTheme } from "../theme";
 import { Btn, Field, useInputStyle } from "./ui";
 
-export type TaskDraft = { title: string; description: string; dueDate: DateKey; priority: Priority };
+export type TaskDraft = Pick<Task, "title" | "description" | "dueDate">;
 
 type Props = {
   /** An existing task to edit, or null to create a new one. */
@@ -42,7 +41,6 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
 
   const [raw, setRaw] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const priority = task?.priority ?? DEFAULT_PRIORITY;
   // Null until the user picks a date explicitly; new tasks let the text decide.
   const [pickedDate, setPickedDate] = useState<DateKey | null>(
     task ? task.dueDate : null,
@@ -63,7 +61,6 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
       title: titleFromText,
       description: description.trim(),
       dueDate,
-      priority,
     });
   }
 
@@ -257,8 +254,6 @@ const styles = themed((c) => ({
     paddingVertical: 7,
   },
   chipActive: { borderColor: c.accent, backgroundColor: c.accentSoft },
-  priorityRow: { flexDirection: "row", gap: 8 },
-  priorityChip: { flex: 1, alignItems: "center" },
   chipText: { color: c.dim, fontSize: 13 },
   chipTextActive: { color: c.accent, fontWeight: "700" },
   textarea: { minHeight: 76, textAlignVertical: "top" },

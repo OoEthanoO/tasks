@@ -38,12 +38,13 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
     throw new Error("Renderer condition not met: " + expression);
   };
   await waitFor("!!document.querySelector('.focus-clock')");
-  await main.webContents.executeJavaScript("document.querySelector('.day-settings > summary').click()");
-  await waitFor("document.querySelector('.day-settings').open");
-  const help = await main.webContents.executeJavaScript("document.querySelector('.day-settings').innerText");
-  assert.match(help, /same rule applies every day/); assert.match(help, /3 hours/);
+  const retiredUi = /Windows settings|recommended|recommendation|Track extra work|Start suggested|priority|bedtime|outing/i;
+  assert.doesNotMatch(await main.webContents.executeJavaScript("document.body.innerText"), retiredUi);
+  assert.equal(await main.webContents.executeJavaScript("!!document.querySelector('.day-settings, .desktop-settings')"), false);
+  assert.equal(await main.webContents.executeJavaScript("typeof window.desktop.settings"), "undefined");
   assert.equal(await main.webContents.executeJavaScript("!!document.querySelector('input[aria-describedby=minimum-hint]')"), false);
-  await main.webContents.executeJavaScript("document.querySelector('.topbar button.btn-primary').click()");
+  await waitFor("!!document.querySelector('button[aria-keyshortcuts=Q]') && !document.querySelector('button[aria-keyshortcuts=Q]').disabled");
+  await main.webContents.executeJavaScript("document.querySelector('button[aria-keyshortcuts=Q]').click()");
   await waitFor("!!document.querySelector('.quickadd-input')");
   await main.webContents.executeJavaScript(`{
     const input=document.querySelector('.quickadd-input');
@@ -54,11 +55,15 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
   await main.webContents.executeJavaScript("document.querySelector('.quickadd button.btn-primary').click()");
   await waitFor("window.desktop.snapshot().then(v => v.state.tasks.some(t => t.title === 'Windows smoke test'))");
   await waitFor("!document.querySelector('.focus-action').disabled");
-  assert.match(await main.webContents.executeJavaScript("document.body.innerText"), /Rotation #1/);
+  assert.match(await main.webContents.executeJavaScript("document.body.innerText"), /tracked/);
   main.webContents.reload(); await ready(main);
   await waitFor("!!document.querySelector('.focus-action') && !document.querySelector('.focus-action').disabled");
   assert.match(await main.webContents.executeJavaScript("document.body.innerText"), /Windows smoke test/);
+  assert.deepEqual(await main.webContents.executeJavaScript("Array.from(document.querySelectorAll('.app-footer a'), a => a.href)"),
+    ["https://tasks.ethanyanxu.com/support", "https://tasks.ethanyanxu.com/privacy"]);
   await assert.rejects(main.webContents.executeJavaScript("window.desktop.api({path:'https://example.com', method:'GET'})"));
+  await assert.rejects(main.webContents.executeJavaScript("window.desktop.command({type:'start',taskId:'arbitrary'})"));
+  await assert.rejects(main.webContents.executeJavaScript("window.desktop.command({type:'continue'})"));
   assert.equal((await request("/api/state")).status, 503);
   // Check Electron's real session transport preserves httpOnly cookies. This
   // localhost fixture is isolated from both production and the user's account.
@@ -80,6 +85,19 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
   await main.webContents.executeJavaScript("document.querySelector('.focus-action').click()");
   await waitFor("window.desktop.snapshot().then(v => v.state.mode === 'work')");
   assert.equal(engine.view().state.mode, "work");
+  if (process.argv.includes("--screenshot")) {
+    // Only the freshly created smoke profile is captured, never an installed
+    // app window. Keep fixture windows transparent and click-through.
+    const directory = app.getPath("userData");
+    assert.ok(path.basename(directory).startsWith("yantasks-smoke-"));
+    mini.setOpacity(0); mini.setIgnoreMouseEvents(true); mini.showInactive();
+    await new Promise(resolve => setTimeout(resolve, 150));
+    for (const [name, window] of [["rotation-main", main], ["rotation-mini", mini]] as const) {
+      const target = path.join(directory, `${name}.png`);
+      fs.writeFileSync(target, (await window.webContents.capturePage()).toPNG());
+      console.log(`SMOKE SCREENSHOT: ${target}`);
+    }
+  }
   main.hide(); mini.hide();
   await new Promise(resolve => setTimeout(resolve, 1200)); engine.tick();
   assert.ok(engine.view().state.workMs > 1000, "tracking advances with both windows hidden");
@@ -116,10 +134,10 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
       const before = await readSeconds(w, selector);
       await sleep(3200);
       const after = await readSeconds(w, selector);
-      assert.equal(after, before, selector + " leaves a paused recommendation still");
+      assert.equal(after, before, selector + " leaves a paused turn still");
       assert.equal(engine.view().state.workMs, worked);
       const text = await w.webContents.executeJavaScript("document.body.innerText");
-      assert.match(text, /Paused|PAUSED/); assert.doesNotMatch(text, /IDLE LEFT|Idle left|Skipped today/);
+      assert.match(text, /Paused|PAUSED/); assert.doesNotMatch(text, retiredUi);
     }
     main.hide(); mini.hide();
     await sleep(100);
@@ -130,6 +148,7 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
     console.log("COUNTDOWN CHECK PASS: main and mini count down explicit work, remain still while paused, and stay quiet when hidden.");
   }
   await assert.rejects(mini.webContents.executeJavaScript("window.desktop.api({path:'/api/auth/me',method:'GET'})"));
+  assert.doesNotMatch(await mini.webContents.executeJavaScript("document.body.innerText"), retiredUi);
   // Opt-in native delivery probe. The normal smoke run remains silent. Only
   // this disposable profile is touched; no real account timer is changed.
   if (process.argv.includes("--alert-check")) {

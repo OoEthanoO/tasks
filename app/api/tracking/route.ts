@@ -4,11 +4,13 @@ import { accountsUnavailable } from "@/lib/server/db-status";
 import { loadState } from "@/lib/db";
 import { commandTracking, readAccountTracking, TrackingConflict } from "@/lib/tracking-db";
 import { TrackingAction, validTimeZone } from "@/lib/tracking";
+import { supportsTrackingProtocol, TRACKING_UPDATE_REQUIRED } from "@/lib/tracking-protocol";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  if (!supportsTrackingProtocol(req.headers)) return NextResponse.json({ error: TRACKING_UPDATE_REQUIRED }, { status: 426, headers: { "Cache-Control": "no-store" } });
   const offline = accountsUnavailable();
   if (offline) return offline;
   const user = await currentUser(req);
@@ -16,6 +18,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ tracking: await readAccountTracking(user.id), serverNow: Date.now() }, { headers: { "Cache-Control": "no-store" } });
 }
 export async function POST(req: NextRequest) {
+  if (!supportsTrackingProtocol(req.headers)) return NextResponse.json({ error: TRACKING_UPDATE_REQUIRED }, { status: 426, headers: { "Cache-Control": "no-store" } });
   const offline = accountsUnavailable();
   if (offline) return offline;
   const user = await currentUser(req);

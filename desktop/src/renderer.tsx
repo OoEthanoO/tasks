@@ -30,11 +30,10 @@ function Mini() {
     <header className="mini-drag"><span>YANTASKS <span className="mini-pin">ALWAYS ON TOP</span></span><button className="mini-close" aria-label="Hide mini tracker" onClick={() => void window.desktop.window("hide-mini")}>×</button></header>
     <div className="mini-state"><i className="status-dot" />{m.label}<span>{!view.connected ? "OFFLINE" : view.accountId ? "SYNCED" : "THIS PC"}</span></div>
     <h1 title={m.title}>{m.title}</h1>
-    <div className="mini-clock">{formatDuration(m.remaining, true)}</div>
+    <div className="mini-clock" aria-label={m.clockLabel}>{formatDuration(m.remaining, true)}</div>
     <p className="mini-sub">{m.hint}</p>
     <div className="mini-progress" role="progressbar" aria-label="Current turn progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, m.progress) * 100)}><span style={{ width: `${Math.max(0, m.progress) * 100}%` }} /></div>
-    <div className="mini-stats"><div><span>WORKED</span><strong>{formatDuration(view.state.workMs)}</strong></div><div><span>RECOMMENDED LEFT</span><strong>{formatDuration(m.workLeft)}</strong></div><div><span>RECOMMENDED</span><strong>{formatDuration(m.goal)}</strong></div></div>
-    <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || (view.state.mode === "idle" ? !m.canStart : !m.canPause)} onClick={() => void command()}>{view.busy ? "Syncing…" : view.state.mode === "idle" ? (m.done ? "Track extra work" : "Start suggested") : "Pause tracking"}</button><button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button></div>
+    <div className="mini-actions"><button className="btn btn-primary" disabled={!view.ready || view.busy || (m.paused ? !m.canStart : !m.canPause)} onClick={() => void command()}>{view.busy ? "Syncing…" : m.paused ? "Start" : "Pause"}</button><button className="btn btn-ghost" onClick={() => void window.desktop.window("main")}>Open tasks ↗</button></div>
     {(error || view.error || view.message) && <p role="status" className="mini-message" title={error || view.error || view.message || ""}>{error || view.error || view.message}</p>}
   </main>;
 }
@@ -42,23 +41,9 @@ function Mini() {
 function Desktop() {
   const view = useDesktopState();
   const m = statusModel(view);
-  const [open, setOpen] = useState(false);
-  const [error, setError] = useState("");
-  const setting = async (key: "alerts" | "sound" | "launchAtLogin", value: boolean) => {
-    try { await window.desktop.settings({ [key]: value }); setError(""); }
-    catch (e) { setError(e instanceof Error ? e.message : "Could not save settings."); }
-  };
   return <><div className={`desktop-bar mode-${view.state.mode}`}>
-    <div className="desktop-status"><i className="status-dot" /><strong>{m.label}</strong><span>{view.state.mode !== "idle" ? m.title : "Closing the window keeps alerts running in the tray."}</span></div>
-    <div className="desktop-buttons"><button className="btn btn-ghost" onClick={() => void window.desktop.window("mini")}>Mini tracker</button><button className="btn btn-ghost" aria-expanded={open} onClick={() => setOpen(!open)}>Windows settings</button></div>
-  </div>{open && <section className="desktop-settings" aria-label="Windows settings">
-    <div><h2>Here even when the window isn’t.</h2><p>YanTasks keeps checking your timer from the tray. Right-click its icon for quick controls. To stop desktop alerts, choose Quit in the tray menu.</p></div>
-    <label><input type="checkbox" checked={view.settings.alerts} onChange={e => void setting("alerts", e.target.checked)} /> Native Windows alerts</label>
-    <label><input type="checkbox" checked={view.settings.sound} onChange={e => void setting("sound", e.target.checked)} /> Notification sound</label>
-    <label><input type="checkbox" checked={view.settings.launchAtLogin} onChange={e => void setting("launchAtLogin", e.target.checked)} /> Launch quietly at Windows sign-in</label>
-    <button className="btn btn-ghost" onClick={() => void window.desktop.window("test-alert")}>Send a test alert</button>
-    <p className="hint">Battery-aware: hidden windows stop updating, background sync slows while idle or on battery, and alert wakeups follow turn boundaries. YanTasks never keeps your PC awake. Alerts require a running app and an awake PC; Windows Do Not Disturb may silence them.</p>
-    {error && <p className="danger" role="alert">{error}</p>}
-  </section>}<Page /></>;
+    <div className="desktop-status"><i className="status-dot" /><strong>{m.label}</strong><span>{m.title}</span></div>
+    <div className="desktop-buttons"><button className="btn btn-ghost" onClick={() => void window.desktop.window("mini")}>Mini tracker</button></div>
+  </div><Page /></>;
 }
 createRoot(document.getElementById("root")!).render(compact ? <Mini /> : <Desktop />);

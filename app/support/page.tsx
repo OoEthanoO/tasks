@@ -34,16 +34,14 @@ export default function SupportPage() {
         </p>
 
         <h2 className="card-title" style={{ marginTop: 26 }}>
-          A daily recommendation, not a quota
+          One-hour turns
         </h2>
-        <p>Each unfinished task adds 60 minutes divided by (days until due + 1). Tasks due today or overdue count as zero days away. Add these contributions, round up to 30 minutes, and cap at 3 hours. The same rule applies every day; all future tasks count. This is pacing advice, not an estimate of the time needed to finish everything.</p>
-        <h2 className="card-title" style={{ marginTop: 26 }}>Track when you can</h2>
-        <p>Start suggested task begins a 30-minute turn, or resumes a partly worked turn. Every task remains in a fair rotation across days. Near deadlines get at most a 2× boost, so distant tasks keep getting opportunities. Choose any open task manually if you prefer. A turn finishing pauses tracking and asks you to choose the next task or continue the same one.</p>
-        <p>Waiting never drains idle time, adds work, or creates debt. Reaching the recommendation pauses tracking; extra work remains optional. Only a task’s checkbox completes it. Daily tracked counters reset at midnight in the shared timer’s time zone, but rotation history stays. Upgrading checkpoints the old timer first, preserving work already earned and its notification owner.</p>
-        <h2 className="card-title" style={{ marginTop: 26 }}>Optional outings</h2>
-        <p>Can I go out now? subtracts your remaining recommendation, round-trip travel and other time you reserve from the time until bedtime. The rest is how long you can spend there if you leave now and work afterward. This does not guarantee real tasks will be finished. Bedtime is for this advice only, not a tracking cutoff.</p>
-        <h2 className="card-title" style={{ marginTop: 26 }}>Alerts</h2>
-        <p>Enable alerts for turn completion, reaching today’s recommendation, and tracking crossing midnight. Browser alerts need the page open; phone alerts can fire while locked; Windows alerts need an awake PC and running app. Alerts follow the last device that controlled tracking. If you change the timer elsewhere while the phone is suspended, reopen the phone app to refresh scheduled alerts. OS settings may silence delivery.</p>
+        <p>Tasks appear by due date, then by when they were created. Press Start to work on the task chosen by the rotation. The timer advances automatically after each hour. Press Pause when you stop working; Start resumes the remaining time in your turn.</p>
+        <p>Each task’s tracked time adds up across days. A new task starts at zero and catches up to the task before it before the next round begins. For example, with totals of 2 hours, 0 hours, and 2 hours in list order, the middle task gets two consecutive one-hour turns. Once they are level, the rotation continues in order.</p>
+        <p>A catch-up turn can be shorter than an hour when older tracked totals leave a fractional gap. The countdown shows that turn’s actual remaining time.</p>
+        <p>Only checking a task’s box marks it complete. Use Edit to change its title, description, or due date, or to delete it. Completed tasks stay in the Completed section with their tracked totals; uncheck one to reopen it.</p>
+        <h2 className="card-title" style={{ marginTop: 26 }}>Notifications</h2>
+        <p>Use Enable notifications beneath the timer to allow turn alerts. Browser notifications need this page open. Alerts follow the device that last controlled tracking, and your browser or operating system may silence them.</p>
 
         <h2 className="card-title" style={{ marginTop: 26 }}>
           Typing dates
@@ -63,14 +61,13 @@ export default function SupportPage() {
         </h2>
         <p>
           You do not need an account. Without one, everything stays on the device you
-          typed it on. Sign in and your tasks, tracked time, active timer and preferences sync between
-          the iPhone app and this website. If you already have tasks on a device and
+          typed it on. Sign in and your tasks, cumulative tracked time, and active timer sync between
+          your devices. If you already have tasks on a device and
           sign in to an empty account, you will be asked before anything moves.
         </p>
         <p>
-          If the app ever says <strong>Not saved</strong>, your edits are still on the
-          device and nothing is lost — press Retry, or leave it and it will go out with
-          the next change.
+          If the app says <strong>Not saved</strong>, keep the page open and press Retry
+          to save your pending edits. Changing a synced timer requires a server connection.
         </p>
 
         <h2 className="card-title" style={{ marginTop: 26 }}>

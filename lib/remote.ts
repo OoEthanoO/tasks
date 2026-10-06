@@ -1,6 +1,7 @@
 import { sanitizeState } from "./app-state";
 import { AppState, User } from "./types";
 import { TrackingAction, TrackingState } from "./tracking";
+import { TRACKING_PROTOCOL, TRACKING_PROTOCOL_HEADER } from "./tracking-protocol";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -80,10 +81,10 @@ export type AuthResult = { user: User; state: AppState; migrated?: boolean };
 
 export const api = {
   async loadTracking(): Promise<{ tracking: TrackingState | null; serverNow: number }> {
-    return request("/api/tracking");
+    return request("/api/tracking", { headers: { [TRACKING_PROTOCOL_HEADER]: TRACKING_PROTOCOL } });
   },
   async track(input: { revision: number; action: TrackingAction; controllerId: string; timeZone: string }): Promise<{ tracking: TrackingState; serverNow: number }> {
-    return request("/api/tracking", { method: "POST", body: JSON.stringify(input) });
+    return request("/api/tracking", { method: "POST", headers: { [TRACKING_PROTOCOL_HEADER]: TRACKING_PROTOCOL }, body: JSON.stringify(input) });
   },
   async me(): Promise<User | null> {
     const body = await request<{ user: User | null }>("/api/auth/me");

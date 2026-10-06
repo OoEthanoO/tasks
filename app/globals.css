@@ -1,40 +1,11 @@
-.tracking-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; color: var(--text-dim); font-size: 13px; }
-.focus-label { margin-top: 28px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 1.6px; }
-.focus-title { margin: 8px 0; font-size: 26px; overflow-wrap: anywhere; }
-.focus-clock { font-size: clamp(36px, 5vw, 54px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
-.focus-action { width: 100%; margin: 14px 0; min-height: 44px; }
-.skip-rest { width: 100%; margin: -4px 0 8px; }
-.rest-controls { margin-top: 10px; gap: 8px; }
-.rest-toggle { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; color: var(--text); }
-.minutes-input { width: 76px; }
-.tracking-totals { display: flex; flex-wrap: wrap; gap: 22px; margin: 24px 0 18px; }
-.tracking-totals span { display: block; color: var(--text-dim); font-size: 12px; margin-bottom: 6px; }
-.tracking-totals strong { font-size: 18px; font-variant-numeric: tabular-nums; }
-.tracking-explainer { color: var(--text-dim); font-size: 12px; line-height: 1.7; margin-bottom: 14px; }
-.reset-progress { margin-bottom: 14px; }
-.task-progress { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--text-dim); margin: 8px 0; }
-.task-progress progress { flex-basis: 100%; width: 100%; height: 5px; border: 0; accent-color: var(--accent); }
-.daily-done { color: var(--ok); }
-.daily-skipped { color: var(--text-faint); }
-.is-idle .focus-label { color: var(--text-dim); }
-.start-advice { margin: 4px 0 2px; }
 *,
 *::before,
 *::after {
   box-sizing: border-box;
 }
 
-/*
- * Two palettes, one set of names. The base is dark; `data-theme="light"` swaps
- * it. A small script in the document head resolves the stored preference (or,
- * for "system", the OS setting) and stamps `data-theme` on <html> before the
- * first paint, so exactly one of these blocks ever applies and neither needs
- * duplicating inside a media query. The app is client-rendered throughout, so
- * depending on that script costs nothing that was not already the case.
- */
-
-:root,
-:root[data-theme="dark"] {
+/* Follow the device appearance; saved legacy theme choices stay untouched. */
+:root {
   color-scheme: dark;
 
   --bg: #0a0b0e;
@@ -52,7 +23,7 @@
   --track: #23283354;
   --text: #e7e9ee;
   --text-dim: #9aa1b1;
-  --text-faint: #6b7383;
+  --text-faint: #8991a1;
 
   --accent: #7c6cff;
   --accent-soft: #7c6cff22;
@@ -92,7 +63,8 @@
  * accent and the three status hues are darkened so they still carry 4.5:1
  * against white — the dark palette's versions are far too pale for that.
  */
-:root[data-theme="light"] {
+@media (prefers-color-scheme: light) {
+:root {
   color-scheme: light;
 
   --bg: #f6f7f9;
@@ -140,6 +112,8 @@
   --shadow-modal: 0 24px 60px rgba(20, 24, 35, 0.18);
 }
 
+}
+
 /* Scheme-independent. */
 :root {
   --radius: 12px;
@@ -181,14 +155,14 @@ select {
 /* ---------- shell ---------- */
 
 .shell {
-  max-width: 1180px;
+  max-width: 820px;
   margin: 0 auto;
   padding: 32px 24px 96px;
 }
 
 .topbar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 24px;
   flex-wrap: wrap;
@@ -221,80 +195,6 @@ select {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.today-chip {
-  color: var(--text-dim);
-  font-size: 13px;
-  padding: 6px 10px;
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-}
-
-/* ---------- theme toggle ---------- */
-
-.theme-toggle,
-.priority-picker {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  background: var(--bg-elev);
-}
-
-.theme-option,
-.priority-option {
-  background: transparent;
-  border: none;
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 12.5px;
-  color: var(--text-faint);
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.theme-option:hover,
-.priority-option:hover {
-  color: var(--text-dim);
-}
-
-.theme-option.is-active,
-.priority-option.is-active {
-  background: var(--bg-elev-2);
-  color: var(--text);
-}
-
-.theme-option:focus-visible,
-.priority-option:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* A form control rather than a header switch: don't stretch, and a bigger target. */
-.priority-picker {
-  align-self: flex-start;
-}
-
-.priority-option {
-  padding: 6px 14px;
-  font-size: 13px;
-}
-
-.columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 900px) {
-  .columns {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .shell {
-    padding: 24px 16px 80px;
-  }
 }
 
 .stack {
@@ -402,32 +302,6 @@ select {
 
 /* ---------- task list ---------- */
 
-.group-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin: 18px 0 8px;
-}
-
-.group-label:first-child {
-  margin-top: 0;
-}
-
-.group-label.overdue {
-  color: var(--danger);
-}
-
-.group-count {
-  color: var(--text-faint);
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
 .task {
   display: flex;
   gap: 12px;
@@ -445,14 +319,14 @@ select {
 }
 
 .task.is-done {
-  opacity: 0.5;
+  background: transparent;
 }
 
 .check {
   appearance: none;
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   margin: 2px 0 0;
   border: 1.5px solid var(--line-strong);
   border-radius: 6px;
@@ -474,8 +348,8 @@ select {
 .check:checked::after {
   content: "";
   position: absolute;
-  left: 5px;
-  top: 1px;
+  left: 7px;
+  top: 3px;
   width: 4px;
   height: 9px;
   border: solid var(--on-accent);
@@ -532,66 +406,13 @@ select {
   color: var(--sep);
 }
 
-/* Accent, not warn/danger: those already mean "due today" and "overdue". */
-.priority-tag.is-medium,
-.priority-tag.is-high {
-  color: var(--accent-text);
-}
-
-.priority-tag.is-high {
-  font-weight: 700;
-}
-
-.pill.priority-tag {
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
-}
-
-.prob {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  min-width: 58px;
-}
-
-.prob-value {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.prob-value.is-zero {
-  color: var(--text-faint);
-}
-
-.prob-bar {
-  width: 52px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--track);
-  overflow: hidden;
-}
-
-.prob-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
-}
-
-.task-actions {
-  display: flex;
-  gap: 2px;
-  flex: none;
-}
-
 .icon-btn {
   background: transparent;
   border: none;
-  color: var(--text-faint);
-  padding: 4px 6px;
+  color: var(--text-dim);
+  min-width: 36px;
+  min-height: 36px;
+  padding: 8px;
   border-radius: 6px;
   font-size: 13px;
   line-height: 1;
@@ -671,6 +492,7 @@ select {
   justify-content: center;
   padding: 12vh 16px 16px;
   z-index: 50;
+  overflow-y: auto;
 }
 
 .quickadd {
@@ -680,7 +502,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: var(--shadow-modal);
-  overflow: hidden;
+  padding: 0;
 }
 
 .quickadd-input {
@@ -688,7 +510,7 @@ select {
   background: transparent;
   border: none;
   outline: none;
-  padding: 18px 20px;
+  padding: 8px 20px 18px;
   font-size: 19px;
   letter-spacing: -0.01em;
 }
@@ -769,30 +591,6 @@ select {
   color: var(--text-dim);
 }
 
-/* ---------- schedule ---------- */
-
-.sched-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.time-input {
-  background: var(--input-bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 6px 9px;
-  outline: none;
-}
-
-.time-input:focus {
-  border-color: var(--accent);
-}
-
 .banner {
   display: flex;
   align-items: flex-start;
@@ -812,77 +610,6 @@ select {
 
 .banner strong {
   font-weight: 600;
-}
-
-.blocks {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 460px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.block {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  font-size: 14px;
-}
-
-.block:hover {
-  background: var(--row-hover);
-}
-
-.block.is-past {
-  opacity: 0.4;
-}
-
-.block.is-now {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.block-time {
-  flex: none;
-  width: 150px;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.block.is-now .block-time {
-  color: var(--accent-text);
-}
-
-.block-task {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.block-task.is-rest {
-  color: var(--ok);
-}
-
-.block-task.is-gone {
-  color: var(--text-faint);
-  text-decoration: line-through;
-}
-
-.now-tag {
-  flex: none;
-  font-size: 10px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: var(--accent);
 }
 
 /* ---------- misc ---------- */
@@ -956,17 +683,6 @@ select {
   font-weight: 620;
 }
 
-.formula {
-  font-size: 12.5px;
-  color: var(--text-faint);
-  line-height: 1.7;
-}
-
-.formula code {
-  font-family: var(--mono);
-  color: var(--text-dim);
-}
-
 /* ---------- confirm dialog ---------- */
 
 .confirm-panel {
@@ -1003,6 +719,7 @@ select {
 
 .account {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -1203,52 +920,60 @@ select {
   }
 }
 
-/* Focus first; optional day settings stay out of the timer's way. */
-.focus-column { grid-column: 2; grid-row: 1; }
-.focus-column + .card { grid-column: 1; grid-row: 1; }
-@media (max-width: 900px) {
-  .focus-column, .focus-column + .card { grid-column: 1; grid-row: auto; }
-}
-.tracking-card .card-head { margin-bottom: 20px; gap: 12px; }
-.focus-cutoff { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
-.tracking-card .focus-label { margin-top: 0; }
-.tracking-card .focus-title { line-height: 1.3; margin: 10px 0 14px; }
-.tracking-card .focus-clock { font-size: clamp(42px, 5vw, 60px); line-height: 1.15; }
-.tracking-card .focus-action { min-height: 48px; margin: 18px 0 12px; }
-.break-preview { color: var(--text-dim); font-size: 12px; line-height: 1.6; padding: 10px 12px; background: var(--bg-elev-2); border-radius: 8px; margin: 0 0 14px; }
-.tracking-card .tracking-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 18px 0; margin: 8px 0; border-top: 1px solid var(--line-soft); }
-.tracking-card .tracking-totals strong { font-size: clamp(15px, 2vw, 18px); }
-.day-settings { border-top: 1px solid var(--line-soft); }
-.day-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 17px 0 2px; cursor: pointer; list-style: none; }
-.day-settings > summary::-webkit-details-marker { display: none; }
-.day-settings > summary::after { content: "+"; color: var(--text-dim); font-size: 22px; }
-.day-settings[open] > summary::after { content: "−"; }
-.day-settings > summary strong { font-size: 13px; font-weight: 600; }
-.day-settings > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
-.settings-summary { display: block; color: var(--text-dim); font-size: 11px; line-height: 1.6; margin-top: 4px; }
-.settings-body { padding-top: 16px; }
-.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; }
-.setting-row label { flex: 1; min-width: 0; cursor: pointer; }
-.setting-row strong { display: block; font-size: 13px; font-weight: 500; }
-.setting-help { display: block; color: var(--text-dim); font-size: 12px; line-height: 1.6; margin-top: 4px; }
-.setting-section { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 12px; }
-.setting-check { flex: 0 0 auto; width: 19px; height: 19px; margin: 0; accent-color: var(--accent); cursor: pointer; }
-.tracking-card .setting-row .time-input { width: 132px; min-width: 0; flex: 0 0 auto; }
-.tracking-card .minutes-input { width: 80px; min-width: 0; text-align: center; padding: 9px 8px; }
-.setting-duration, .duration-field { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-dim); font-size: 12px; }
-.setting-duration { padding-top: 8px; }
-.setting-note { flex-basis: 100%; font-size: 11px; line-height: 1.6; }
-.break-durations { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 10px 0 2px; }
-.break-durations > label { font-size: 12px; color: var(--text-dim); display: grid; gap: 6px; }
-.settings-save-note { color: var(--text-faint); font-size: 11px; margin: 12px 0 0; }
-.tracking-card .reset-progress { margin: 0; color: var(--danger); }
+
+/* Rotation */
+.tracking-card { padding: 24px; }
+.focus-label { color: var(--accent-text); font-size: 11px; font-weight: 650; letter-spacing: 0.1em; }
+.is-paused .focus-label { color: var(--text-dim); }
+.focus-title { margin: 8px 0 16px; font-size: 25px; line-height: 1.3; overflow-wrap: anywhere; }
+.focus-clock { font-size: clamp(40px, 8vw, 56px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1.2; }
+.turn-progress { display: block; appearance: none; width: 100%; height: 4px; margin: 16px 0; border: 0; border-radius: 4px; overflow: hidden; background: var(--line-soft); accent-color: var(--accent); }
+.turn-progress::-webkit-progress-bar { background: var(--line-soft); }
+.turn-progress::-webkit-progress-value { background: var(--accent); }
+.turn-progress::-moz-progress-bar { background: var(--accent); }
+.focus-hint { margin: 10px 0 0; color: var(--text-dim); font-size: 13px; }
+.focus-action { min-width: 120px; min-height: 44px; justify-content: center; margin: 20px 0 12px; }
+.focus-next { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; overflow-wrap: anywhere; }
+.notification-action { border-top: 1px solid var(--line-soft); padding-top: 12px; margin-top: 8px; }
+.notification-action .btn { padding-left: 0; }
+.task-list { list-style: none; margin: 0; padding: 0; }
 .task.is-active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
-.task-progress progress { appearance: none; border-radius: 4px; overflow: hidden; background: var(--line-soft); }
-.task-progress progress::-webkit-progress-bar { background: var(--line-soft); border-radius: 4px; }
-.task-progress progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
-.task-progress progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
-@media (max-width: 420px) {
-  .tracking-card .setting-row .time-input { width: 114px; }
-  .tracking-card .tracking-totals { gap: 8px; }
-  .tracking-card .tracking-totals span { font-size: 11px; }
+.task-total { font-variant-numeric: tabular-nums; }
+.task-current { color: var(--accent-text); font-size: 11px; }
+.completed-tasks { margin-top: 16px; }
+.completed-tasks summary { cursor: pointer; color: var(--text-dim); font-size: 13px; padding: 8px 0; }
+.completed-tasks[open] summary { margin-bottom: 8px; }
+.app-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 22px; color: var(--text-dim); font-size: 12px; }
+.app-footer .btn { font-size: inherit; padding-left: 0; }
+a { color: var(--accent-text); text-underline-offset: 3px; }
+a.btn { text-decoration: none; }
+.app-footer a { color: inherit; }
+.banner { overflow-wrap: anywhere; }
+.banner > span { min-width: 0; flex: 1; }
+.banner > button { flex-shrink: 0; }
+
+/* Native dialogs keep keyboard focus inside and return it on close. */
+dialog { color: var(--text); margin: auto; max-height: calc(100dvh - 32px); overflow-y: auto; }
+dialog::backdrop { background: var(--overlay); backdrop-filter: blur(3px); }
+dialog.quickadd, dialog.help-panel { width: calc(100% - 32px); }
+.quickadd-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px 0; }
+.quickadd-head h2, .help-panel h2 { margin: 0; font-size: 16px; }
+.quickadd-preview strong { color: var(--text-dim); overflow-wrap: anywhere; }
+.examples { margin: 0; }
+.editor .field { width: 100%; }
+.editor-actions { width: 100%; flex-wrap: wrap; }
+:where(button, a, input, textarea, select, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.quickadd-input:focus-visible { outline-offset: -3px; }
+
+@media (max-width: 620px) {
+  .shell { padding: 24px 16px 64px; }
+  .topbar { gap: 14px; }
+  .tracking-card { padding: 20px; }
+  .task { gap: 10px; padding: 12px 10px; }
+  .quickadd-foot { padding: 12px; gap: 4px; flex-wrap: wrap; }
+  .quickadd-foot .btn { font-size: 13px; }
+  .account { gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }

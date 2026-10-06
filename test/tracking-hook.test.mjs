@@ -161,7 +161,7 @@ try {
   tracker.setUnweighted(true); tracker.setMinimumEnabled(false); tracker.setMinimumMinutes(5);
   await tracker.flush();
   assert.equal(tracker.value.remainingWorkMs,goal,"retired allocation controls cannot change pacing");
-  assert.ok(tracker.value.progress.every(p=>p.weight===2 && !p.skipped));
+  assert.ok(tracker.value.progress.every(p=>p.weight===1 && !p.skipped));
   await tracker.value.command({type:"start"}); await tracker.flush();
   Date.now = () => start + 10*minute;
   await tracker.value.command({type:"pause"}); await tracker.flush();
@@ -170,14 +170,14 @@ try {
   tracker=mount(persistentAdapter,{tasks,endTime:"18:00"});
   await tracker.flush();
   assert.equal(tracker.value.state.workMs,10*minute);
-  assert.equal(tracker.value.state.pacing.turn.elapsedMs,10*minute);
+  assert.equal(tracker.value.state.rotation.turn.elapsedMs,10*minute);
   assert.equal(tracker.value.remainingWorkMs,goal-10*minute,"paused time leaves the recommendation alone");
   await tracker.value.command({type:"start"}); await tracker.flush();
   Date.now=()=>start+90*minute; await tracker.value.refresh(); await tracker.flush();
-  assert.equal(tracker.value.state.workMs,30*minute,"resume stops at the original turn boundary");
-  assert.equal(tracker.value.state.mode,"idle");
+  assert.equal(tracker.value.state.workMs,40*minute,"resume continues the original one-hour turn");
+  assert.equal(tracker.value.state.mode,"work");
 } finally { tracker.unmount(); Date.now=realNow; }
-console.log("1 guest pacing, retired-settings and partial-turn persistence scenario passed");
+console.log("1 guest rotation, retired-settings and partial-turn persistence scenario passed");
 
 // Persist the no-borrowing checkpoint without a command, preserving today's
 // work on both the first load and a remount. Tomorrow starts without old debt.
@@ -207,7 +207,7 @@ try {
   tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
   await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);
-  assert.equal(tracker.value.remainingWorkMs, 120 * minute);
+  assert.equal(tracker.value.remainingWorkMs, 20 * minute, "catch-up time stays saved across days");
   assert.equal(tracker.value.state.workMs, 0); assert.equal(tracker.value.state.mode, "idle");
   await tracker.value.command({ type: "reset" }); await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);
@@ -228,7 +228,7 @@ try {
   assert.equal(JSON.parse(saved).workLimitVersion, 1);
   assert.equal(tracker.value.state.workMs, 190 * minute);
   assert.deepEqual(tracker.value.state.taskMs, { a: 190 * minute });
-  assert.equal(tracker.value.remainingWorkMs, 0);
+  assert.equal(tracker.value.remainingWorkMs, 60 * minute);
   tracker.unmount();
   tracker = mount(capAdapter, { tasks, endTime: "18:00" });
   await tracker.flush();
@@ -238,7 +238,7 @@ try {
   Date.now = () => start + 460 * minute;
   await tracker.value.refresh(); await tracker.flush();
   assert.equal(tracker.value.state.workMs, 190 * minute);
-  assert.equal(tracker.value.remainingWorkMs, 0);
+  assert.equal(tracker.value.remainingWorkMs, 60 * minute);
   assert.equal(tracker.value.state.mode, "idle");
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 guest capped-target migration and paused-time regression scenario passed");
@@ -298,3 +298,44 @@ try {
 assert.equal(timeouts.size, 0, "unmount removes the repaint timer");
 assert.equal(intervals.size, 0, "unmount removes polling");
 console.log("1 account countdown cadence and latency regression scenario passed");
+
+// Polling can checkpoint an automatic turn before the display's next second.
+// Test both orderings, rollover, cancellation and a sub-second turn boundary.
+const core = require("../.test-build/tracking.js");
+for (const scenario of ["poll-first", "tick-first", "midnight", "fractional", "pause", "reset", "owner", "counter"]) {
+  const began = scenario === "midnight" ? Date.parse("2026-10-06T23:00:00Z") : start + (scenario === "fractional" ? 500 : 0);
+  const boundary = began + 60 * minute;
+  let wallTime = boundary - 1000;
+  const source = { ...actOnTracking(createTracking(tasks, "18:00", "UTC", began, PLAN), { type: "start" }, "test-device", began), revision: 10 };
+  let server = source;
+  const notices = [];
+  Date.now = () => wallTime;
+  globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {};
+  globalThis.setInterval = () => 1; globalThis.clearInterval = () => {};
+  api.loadTracking = async () => ({ tracking: server, serverNow: wallTime });
+  tracker = mount({ ...adapter, notify: event => notices.push(event) }, { tasks, accountId: "account" });
+  try {
+    await tracker.flush();
+    assert.equal(notices.length, 0, scenario + " startup");
+    if (scenario === "tick-first") { wallTime = boundary; foreground(); await tracker.flush(); }
+    server = { ...core.advanceTracking(source, boundary).state, revision: 11 };
+    if (scenario === "poll-first") server = core.configureTracking(server, tasks.map(t => ({ ...t, title: t.title + " edited" })), "18:00", boundary);
+    if (scenario === "pause" || scenario === "reset") server = core.actOnTracking(source, { type: scenario }, "test-device", boundary);
+    if (scenario === "owner") server.controllerId = "other-device";
+    if (scenario === "counter") server.rotation.totals.a += 100;
+    server.revision = 11;
+    wallTime = boundary + 100;
+    await tracker.value.refresh(); await tracker.flush();
+    const suppressed = ["pause", "reset", "owner", "counter"].includes(scenario);
+    assert.equal(notices.length, suppressed || scenario === "fractional" ? 0 : 1, scenario + " after checkpoint");
+    wallTime = Math.ceil((boundary + 100) / 1000) * 1000;
+    foreground(); await tracker.flush();
+    assert.equal(notices.length, suppressed ? 0 : 1, scenario + " next display second");
+    await tracker.value.refresh(); await tracker.flush();
+    assert.equal(notices.length, suppressed ? 0 : 1, scenario + " deduplicated");
+  } finally {
+    tracker.unmount(); Date.now = realNow; api.loadTracking = realLoadTracking;
+    Object.assign(globalThis, realTimers);
+  }
+}
+console.log("8 checkpoint notification ordering, fractional-boundary and cancellation scenarios passed");

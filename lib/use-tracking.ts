@@ -2,6 +2,7 @@ import { DEFAULT_MINIMUM_MINUTES } from "./minimum";
 import type * as React from "react";
 import { api, ApiError } from "./remote";
 import { Task } from "./types";
+import { checkpointEvents } from "./tracking-events";
 import type { DayPlan } from "./plan";
 import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, idleLeftMs, localTimeZone, ownsAlerts, parseTracking, remainingWorkTime, taskProgress, trackingConfigKey, TrackingAction, TrackingEvent, TrackingState, upcomingTrackingEvents, workBudget } from "./tracking";
 
@@ -43,6 +44,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
     const fetching = useRef(false);
     const commanding = useRef(false);
     const seen = useRef(new Set<string>());
+    const recovered = useRef(new Map<string, TrackingEvent>());
     const lastCheck = useRef(Date.now());
     const permissionRead = useRef(0);
 
@@ -74,9 +76,17 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       // A slow poll must never replace a more recent command response.
       if (snapshotRef.current && next.revision < snapshotRef.current.revision) return;
       if (JSON.stringify(snapshotRef.current) !== JSON.stringify(next)) {
+        const previous = snapshotRef.current;
+        if (previous) {
+          if (previous.controllerId !== next.controllerId || previous.rotation?.commandSeq !== next.rotation?.commandSeq) recovered.current.clear();
+          const checkpoint = checkpointEvents(previous, next);
+          if (checkpoint.confirmed) for (const event of checkpoint.events) {
+            if (!seen.current.has(event.id) && event.at >= lastCheck.current) recovered.current.set(event.id, event);
+          }
+        }
         if (next.mode === "idle" && next.workMs === 0) {
           // Also clear stale in-app alerts when another client resets the day.
-          setMessage(null); seen.current.clear(); lastCheck.current = next.cursor;
+          setMessage(null); seen.current.clear(); recovered.current.clear(); lastCheck.current = next.cursor;
         }
         snapshotRef.current = next;
         setSnapshot(next);
@@ -98,7 +108,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
           try { saved = raw ? parseTracking(JSON.parse(raw)) : null; } catch { /* reset corrupt guest state */ }
           if (saved) {
             const advanced = advanceTracking(saved, Date.now()).state;
-            if (advanced.pacing?.version !== saved.pacing?.version || advanced.dayKey !== saved.dayKey || advanced.allocationVersion !== saved.allocationVersion || advanced.idlePolicyVersion !== saved.idlePolicyVersion || advanced.workLimitVersion !== saved.workLimitVersion || advanced.workOnlyVersion !== saved.workOnlyVersion || advanced.coverageVersion !== saved.coverageVersion || saved.carryMs !== undefined) {
+            if (advanced.rotation?.version !== saved.rotation?.version || advanced.dayKey !== saved.dayKey || advanced.allocationVersion !== saved.allocationVersion || advanced.idlePolicyVersion !== saved.idlePolicyVersion || advanced.workLimitVersion !== saved.workLimitVersion || advanced.workOnlyVersion !== saved.workOnlyVersion || advanced.coverageVersion !== saved.coverageVersion || saved.carryMs !== undefined) {
               saved = { ...advanced, revision: saved.revision + 1 };
               await adapter.write(JSON.stringify(saved));
             }
@@ -115,7 +125,7 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
       scope.current++;
       snapshotRef.current = null; setSnapshot(null); setReady(false); setError(null);
       fetching.current = false; commanding.current = false; setBusy(false);
-      offset.current = 0; clockSynced.current = false; seen.current.clear(); lastCheck.current = Date.now();
+      offset.current = 0; clockSynced.current = false; seen.current.clear(); recovered.current.clear(); lastCheck.current = Date.now();
       let cancelled = false;
       void adapter.controllerId().then(id => { if (!cancelled) setController(id); });
       void refresh();
@@ -155,12 +165,15 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
 
     useEffect(() => {
       if (!projected) return;
-      const fresh = projected.events.filter(e => !seen.current.has(e.id) && e.at >= lastCheck.current && e.at <= clock);
+      // Keep fractional future boundaries until the aligned display clock reaches them.
+      const candidates = new Map([...projected.events, ...recovered.current.values()].map(e => [e.id, e]));
+      const fresh = [...candidates.values()].filter(e => !seen.current.has(e.id) && e.at >= lastCheck.current && e.at <= clock);
       for (const e of fresh) {
         seen.current.add(e.id);
         setMessage(`${e.title}. ${e.body}`);
         if (snapshot && ownsAlerts(snapshot, controller)) adapter.notify(e);
       }
+      for (const [id, event] of recovered.current) if (event.at <= clock) recovered.current.delete(id);
       lastCheck.current = clock;
     }, [projected, clock, snapshot, controller]);
 

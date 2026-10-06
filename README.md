@@ -1,9 +1,8 @@
 # YanTasks
 
-A deadline-paced work tracker. Add tasks and due dates, then start when you can
-work and pause when you cannot. A daily recommendation scales with deadline
-pressure, while a persistent fair rotation gives even distant tasks a turn.
-There are no school-day categories, look-ahead cutoffs, or idle allowances.
+A minimal task tracker with an ordered, one-hour rotation. Add a title,
+description, and due date, then press Start. Turns advance automatically;
+Pause stops tracking. Task totals carry across days.
 
 The [Windows desktop app](desktop/README.md) adds native background alerts,
 taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync.
@@ -29,9 +28,9 @@ Without it the app still runs — you stay in "On this device" mode, and the
 account buttons say accounts are not set up on this server rather than blaming
 the network. The tables are created on first use, so there is no migration step.
 
-Signed out, everything lives in `localStorage` — tasks, the last
-recommendation, and the schedule all survive a reload. Sign in and the same data
-lives in your account instead, so it follows you between browsers.
+Signed out, tasks and the timer live in `localStorage` and survive a reload.
+Sign in to sync tasks, cumulative tracked time, and the active timer across
+devices. Older stored preferences remain readable for compatibility.
 
 ## Accounts
 
@@ -65,8 +64,8 @@ chip means the browser is the only place your tasks exist.
 If you have been using YanTasks signed out, it never strands the data on the
 device. Two moments raise the question, and both offer the same two answers:
 
-- **Move it into my account** — tasks, schedule, last recommendation and end
-  time are written to the account, and the device copy is cleared. The local
+- **Move it into my account** — tasks, tracked time, and stored preferences
+  are written to the account, and the device copy is cleared. The local
   copy is only cleared once the server confirms it stored them, so a failure
   along the way (a taken username, say) leaves your data exactly where it was.
 - **Leave it on this device** — the account stays empty and the device keeps
@@ -80,12 +79,8 @@ schedule — and this device has something. An account holding anything at all i
 left alone: both copies matter at that point, and silently overwriting either
 one is not a call to make on your behalf.
 
-Two things deliberately do not count as data. A customized end time is a
-preference rather than something you would lose. A stored recommendation is a
-leftover: nothing creates or clears one now that the Up next card is gone, so
-counting it would leave anyone who drew one before then with an account that
-never reads as empty, and no offer to move the tasks still on their device.
-Both still round-trip through storage untouched.
+Retired end-time preferences and recommendations do not by themselves count as
+account data for this prompt. They still round-trip through storage untouched.
 
 Because you are already signed in by the time this question comes up, dismissing
 it is a real answer — the same as leaving the copy on the device.
@@ -135,114 +130,57 @@ past (an overdue task) and rolls to next year beyond that. Anything unrecognized
 is left alone as part of the name, and the date defaults to today. You can
 always override the date by hand in the details section or by editing the task.
 
-## Daily recommendation
+## Ordered one-hour rotation
 
-For each unfinished task, let `d = max(0, calendar days until due)`. Its contribution
-is `60 / (d + 1)` minutes. Add the contributions, round **up** to the nearest
-30 minutes, and cap at **3 hours every day**. No tasks means no recommended work.
+Tasks are displayed by due date, then creation time. The shared picker decides
+which open task to track; the only timer controls are **Start** and **Pause**.
+A normal turn lasts one hour, then the next turn starts automatically. Start
+resumes a partially tracked turn. Only a task's checkbox marks it complete.
 
-For example, tasks due today, tomorrow and in 5 days contribute 60 + 30 + 10 =
-100 minutes, rounded to 2 hours. All open tasks count, even those far in the
-future. Completed tasks do not. The 3-hour ceiling protects time away from work;
-this recommendation is a pacing heuristic, **not an estimate or guarantee of
-finishing every task**. The UI warns when uncapped pressure exceeds the ceiling.
+Tracked hours accumulate across days. New tasks start at zero and catch up to
+the preceding task before the next round. For example, totals of **2h, 0h, 2h**
+give the middle task two consecutive one-hour turns. When earlier tracked time
+leaves a fractional gap, a catch-up turn can be shorter than an hour so it
+never overtakes the preceding task. The progress bar uses the actual turn
+duration.
 
-Waiting never consumes a work/idle quota or shrinks the recommendation. It
-recalculates when tasks are added, removed, completed or rescheduled, and on the
-next account-local calendar day. Changes never erase earned work. Existing
-priorities, start times, ratios, minimum settings and schedule data remain
-readable for compatibility, but do not affect pacing and have no current controls.
+The web UI shows the current task, remaining turn time, a subtle preview of the
+next task, and each task's cumulative tracked time. Edit changes the title,
+description, or due date and also offers deletion. Completed tasks can be
+reopened from the Completed section.
 
-## Fair 30-minute turns
+There are no priorities, weights, daily recommendations, work windows, rest
+budgets, outing advice, or settings controls. Legacy fields still round-trip
+through persistence for migration; new tasks store an inert `priority: "low"`.
 
-Each open task has a rotation weight of `1 + 1 / (d + 1)`, between 1× and 2×.
-Near deadlines get a bounded boost rather than exclusive access. Actual tracked
-time divided by the weight at the time it was worked accumulates as virtual
-service. The task with the least service is suggested next; exact ties use due
-date then creation order. New tasks join at the current service frontier, with
-no debt for time before they existed. Rotation history carries across days, so
-a small daily recommendation cannot repeatedly starve the same later tasks.
-
-Start resumes a partial turn or begins the suggested task. You can choose any
-open task instead. Tracking pauses at 30 minutes and alerts you; choose the next
-task or **Continue** the same one. It never silently starts logging a different
-task. Completing or deleting the active task pauses, preserving all earned time.
-Only the task checkbox means the task itself is finished.
-
-The daily recommendation also pauses the timer when reached. You may explicitly
-track extra work, including after bedtime. Daily counters reset at account-local
-midnight and tracking pauses, but rotation and an unfinished turn are retained.
-Nothing untracked becomes work or debt.
-
-**Reset today’s progress** clears daily work and pauses after confirmation. It
-does not erase task metadata or the long-term rotation. The daily reset cannot
-be undone.
-
-## Optional outings
-
-**Can I go out now?** reserves the remaining recommendation, round-trip travel,
-and any other time you want to keep free (meals, commitments, buffer) before
-bedtime. The rest is the suggested maximum time at the outing. It assumes leaving
-now, equal travel each way, and availability to work afterward. Pause tracking
-before going. This checks whether the recommendation fits, not whether real task
-completion is guaranteed. Bedtime affects this advice only.
-
-## Synchronization and alerts
+## Synchronization and notifications
 
 Signed-in users share one timestamp-based timer and rotation in Postgres.
-Revision-checked commands prevent simultaneous devices overwriting one another.
-Web/iOS poll while open and project the same timestamps; Windows uses its
-battery-aware main-process engine. Only one explicitly chosen task is credited,
-even while an app is closed. Offline elapsed work stops at the same turn/goal
-boundary; changing an account timer requires a server connection.
+Revision-checked commands prevent simultaneous devices from overwriting one
+another. Open clients project the same turn boundaries and cumulative totals.
+Changing a synced timer requires a server connection. Pending task edits keep
+the existing sync status, error message, and Retry action.
 
-Existing timers migrate once: elapsed time is checkpointed under the frozen
-previous calculation before pacing begins, preserving today's total/per-task
-work, current tracking state, and notification owner. Old whole-state preference
-saves cannot overwrite the timer. Guest timers import only into accounts without
-a timer and always import paused. Refresh clients and rebuild native clients
-together when deploying a calculation change.
+Existing timers checkpoint under their previous calculation before migrating,
+preserving recorded work. Whole-state preference saves cannot overwrite the
+account timer. Guest timers import only into accounts without a timer and
+import paused. Rebuild clients together when deploying a calculation change.
+Tracking requests require the `rotation-v1` protocol; old clients receive an
+update-required response instead of interpreting the new timer with old rules.
+Previously installed phone builds need a separate native update.
 
-Alerts cover the end of a turn, reaching the recommendation, and an actively
-tracked turn crossing midnight. Alerts follow the last controlling device.
-Browser alerts require the page open; iOS schedules with the OS; Windows needs
-an awake PC with the app running. OS notification settings may silence delivery.
-Open iOS after changing tracking elsewhere to replace stale scheduled alerts;
-this is not a cross-device background push service. Permission state is read
-on launch and on foreground, without re-prompting on refresh.
+Use **Enable notifications** beneath the timer to request browser permission
+for turn alerts. Browser notifications require the page open and follow the
+last device to control tracking. Permission is read on launch and foreground;
+refreshing never requests permission by itself.
 
-## Appearance
+## Appearance and accessibility
 
-Light and dark, on both the web app and the phone. The control offers three
-states — **System**, **Light**, **Dark** — and the choice is remembered per
-device (`localStorage` on the web, `AsyncStorage` on the phone). System is the
-default and follows the OS setting live; if the OS will not say which it wants,
-the app stays dark, which is what it has always been.
-
-The two apps share `lib/theme.ts` — the preference type, the storage key, and
-the rule that turns a preference plus an OS setting into a scheme — so a
-preference means the same thing on both. Only the palettes are per-platform:
-CSS custom properties in `app/globals.css`, a plain object in
-`mobile/src/theme.tsx`. The values are kept in step by hand.
-
-Two things worth knowing if you touch this:
-
-- On the web a small inline script in `app/layout.tsx` resolves the theme and
-  stamps `data-theme` on `<html>` before the first paint, so there is no flash
-  of the wrong colours. That is also why `<html>` carries
-  `suppressHydrationWarning` — the server cannot know the stored choice.
-- On the phone `StyleSheet.create` runs at import time, far too early to know
-  the scheme, so themed styles are declared with `themed((c) => ({ … }))` and
-  read with `useStyles(…)`. Both sheets are built once; the hook picks. A new
-  component that hardcodes a colour will simply not follow the theme.
-
-Elevation runs the other way in light: a card is white and the page behind it
-is grey, where in dark the card is the lighter of the two. The accent and the
-three status hues are darkened for light so they still carry 4.5:1 on white.
-
-Note that `mobile/app.json` sets `userInterfaceStyle` to `automatic`. It was
-`dark`, which pins `useColorScheme()` and would keep System from ever reporting
-light — changing it needs a native rebuild, not just a reload.
+The web app follows the system's light or dark appearance through CSS, including
+changes while it is open. Stored legacy theme preferences are left untouched.
+Quick add and shortcut help use native dialogs with keyboard focus containment,
+Escape dismissal, and focus restoration. Task fields are labelled, focus
+indicators remain visible, and the countdown does not announce every second.
 
 ## Tests
 
@@ -250,20 +188,13 @@ light — changing it needs a native rebuild, not just a reload.
 npm test
 ```
 
-Current pacing tests cover uniform daily rules, distant-task fairness across days,
-explicit turns, outing arithmetic, goal changes, clock/DST boundaries, revision
-races and 500 legacy migration samples. A frozen legacy suite guards the exact
-calculation used for existing elapsed time. Additional assertions cover date
-parsing, the old weight formulas, the absolute Rest
-share, proportional and evenly spread block allocation, block boundaries,
-when a schedule goes stale, when regenerating is worth asking about,
-loading older named breaks as plain Rest without changing their allocation,
-work days that end after midnight, how blocks
-resolve against a changed task list, how tasks sort into the four buckets,
-rejecting
-due dates that are only digit-shaped, credential rules,
-password hashing, sanitizing untrusted state, login throttling, when a
-migration is worth offering, how a stored theme preference resolves against the
-OS setting, and an account/session/migration round-trip. The database tests run against PGlite —
-real Postgres, in-process — so the SQL that ships to Neon is the SQL under test.
-They need no `DATABASE_URL` and reach no network.
+The suite covers shared tracking behavior, date parsing, persistence,
+authentication, sync, and legacy migration. Database tests use PGlite and need
+no `DATABASE_URL`.
+
+Validate the web app separately with:
+
+```bash
+npx tsc --noEmit --incremental false
+npm run build
+```

@@ -1,131 +1,92 @@
 "use client";
 
-import { useState } from "react";
-import { DateKey, describeDelta, formatDueDate } from "@/lib/dates";
-import { dueBucket, groupTasks } from "@/lib/grouping";
-import { Task } from "@/lib/types";
-import {
-  WeightedTask,
-  formatProbability,
-} from "@/lib/weights";
-import { TaskProgress, formatDuration } from "@/lib/tracking";
+import { useId, useState } from "react";
+import { type DateKey, formatDueDate } from "@/lib/dates";
+import { compareListOrder, dueBucket } from "@/lib/grouping";
+import type { Task } from "@/lib/types";
+import { type TaskProgress, formatDuration } from "@/lib/tracking";
 
 type Props = {
-  entries: WeightedTask[];
+  entries: TaskProgress[];
   today: DateKey;
-  maxProbability: number;
-  progress: TaskProgress[];
   activeId: string | null;
-  trackingDisabled: boolean;
-  onTrack: (id: string) => void;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Task>) => void;
 };
 
-export default function TaskList({
-  entries,
-  today,
-  maxProbability,
-  progress,
-  activeId,
-  trackingDisabled,
-  onTrack,
-  onToggle,
-  onDelete,
-  onUpdate,
-}: Props) {
+export default function TaskList({ entries, today, activeId, onToggle, onDelete, onUpdate }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   if (entries.length === 0) {
     return (
       <div className="empty">
         <p>No tasks yet.</p>
-        <p>
-          Press <span className="kbd">Q</span> to add your first one.
-        </p>
+        <p>Add a task to start your rotation.</p>
       </div>
     );
   }
 
-  const groups = groupTasks(entries, today);
+  const sorted = [...entries].sort((a, b) => compareListOrder(a.task, b.task));
+  const open = sorted.filter(entry => !entry.task.completed);
+  const completed = sorted.filter(entry => entry.task.completed);
+  const renderEntry = (entry: TaskProgress) => (
+    <li key={entry.task.id}>
+      {editingId === entry.task.id ? (
+        <TaskEditor
+          task={entry.task}
+          onCancel={() => setEditingId(null)}
+          onSave={patch => {
+            onUpdate(entry.task.id, patch);
+            setEditingId(null);
+          }}
+          onDelete={() => {
+            onDelete(entry.task.id);
+            setEditingId(null);
+          }}
+        />
+      ) : (
+        <TaskRow
+          entry={entry}
+          today={today}
+          active={activeId === entry.task.id && !entry.task.completed}
+          onToggle={() => onToggle(entry.task.id)}
+          onEdit={() => setEditingId(entry.task.id)}
+        />
+      )}
+    </li>
+  );
 
   return (
-    <div>
-      {groups.map((group) => (
-        <div key={group.key}>
-          <div className={`group-label${group.tone ? ` ${group.tone}` : ""}`}>
-            {group.label} <span className="group-count">{group.items.length}</span>
-          </div>
-          {group.items.map((entry) =>
-            editingId === entry.task.id ? (
-              <TaskEditor
-                key={entry.task.id}
-                task={entry.task}
-                onCancel={() => setEditingId(null)}
-                onSave={(patch) => {
-                  onUpdate(entry.task.id, patch);
-                  setEditingId(null);
-                }}
-                onDelete={() => {
-                  onDelete(entry.task.id);
-                  setEditingId(null);
-                }}
-              />
-            ) : (
-              <TaskRow
-                key={entry.task.id}
-                entry={entry}
-                today={today}
-                maxProbability={maxProbability}
-                progress={progress.find(p => p.task.id === entry.task.id)}
-                active={activeId === entry.task.id}
-                trackingDisabled={trackingDisabled}
-                onTrack={() => onTrack(entry.task.id)}
-                onToggle={() => onToggle(entry.task.id)}
-                onEdit={() => setEditingId(entry.task.id)}
-                onDelete={() => onDelete(entry.task.id)}
-              />
-            ),
-          )}
-        </div>
-      ))}
-    </div>
+    <>
+      {open.length > 0 ? (
+        <ul className="task-list" aria-label="Open tasks, ordered by due date">{open.map(renderEntry)}</ul>
+      ) : (
+        <div className="empty"><p>All tasks completed.</p></div>
+      )}
+      {completed.length > 0 && (
+        <details className="completed-tasks">
+          <summary>Completed · {completed.length}</summary>
+          <ul className="task-list" aria-label="Completed tasks">{completed.map(renderEntry)}</ul>
+        </details>
+      )}
+    </>
   );
 }
 
-function TaskRow({
-  entry,
-  today,
-  maxProbability,
-  progress,
-  active,
-  trackingDisabled,
-  onTrack,
-  onToggle,
-  onEdit,
-  onDelete,
-}: {
-  entry: WeightedTask;
+function TaskRow({ entry, today, active, onToggle, onEdit }: {
+  entry: TaskProgress;
   today: DateKey;
-  maxProbability: number;
-  progress?: TaskProgress;
   active: boolean;
-  trackingDisabled: boolean;
-  onTrack: () => void;
   onToggle: () => void;
   onEdit: () => void;
-  onDelete: () => void;
 }) {
-  const { task, weight, probability } = entry;
-  const DUE_CLASS = { overdue: " is-overdue", today: " is-today", upcoming: "", done: "" };
-  const dueClass = DUE_CLASS[dueBucket(task, today)];
-
-  const barWidth =
-    maxProbability > 0 ? Math.max(3, (probability / maxProbability) * 100) : 0;
+  const { task, trackedMs } = entry;
+  const bucket = dueBucket(task, today);
+  const dueClass = bucket === "overdue" ? " is-overdue" : bucket === "today" ? " is-today" : "";
 
   return (
-    <div className={`task${task.completed ? " is-done" : ""}${active && !task.completed ? " is-active" : ""}`}>
+    <div className={`task${task.completed ? " is-done" : ""}${active ? " is-active" : ""}`}>
       <input
         type="checkbox"
         className="check"
@@ -133,128 +94,67 @@ function TaskRow({
         onChange={onToggle}
         aria-label={task.completed ? `Reopen ${task.title}` : `Complete ${task.title}`}
       />
-
       <div className="task-main">
         <div className="task-title">{task.title}</div>
         {task.description && <p className="task-desc">{task.description}</p>}
-        {progress && !task.completed && <div className="task-progress">
-          <span>{formatDuration(progress.trackedMs)} worked today</span>
-          <span>{active ? `${formatDuration(progress.remainingMs)} until pause` : progress.partialTurn ? `Turn paused · ${formatDuration(progress.remainingMs)} left` : `Rotation #${progress.queuePosition}`}</span>
-          {active && <progress max={(progress.turnElapsedMs ?? 0) + progress.remainingMs} value={progress.turnElapsedMs ?? 0} aria-label={`${task.title} current turn`} />}
-        </div>}
         <div className="task-meta">
-          <span className={`due${dueClass}`}>{formatDueDate(task.dueDate, today)}</span>
-          {!task.completed && (
-            <>
-              <span className="sep">·</span>
-              <span>{describeDelta(task.dueDate, today)}</span>
-              <span className="sep">·</span>
-              <span title="A bounded deadline boost in the fair rotation; never more than 2×">
-                {weight.toFixed(2)}× rotation weight
-              </span>
-            </>
-          )}
+          <time className={`due${dueClass}`} dateTime={task.dueDate} title={`Due ${task.dueDate}`}>
+            {formatDueDate(task.dueDate, today)}
+          </time>
+          <span className="sep" aria-hidden="true">·</span>
+          <span className="task-total" title="Total tracked across all days">{formatDuration(trackedMs)} tracked</span>
+          {active && <span className="task-current">Tracking</span>}
         </div>
       </div>
-
-      <div className="prob" title={
-        task.completed
-          ? "Completed tasks have weight 0 and are never picked"
-          : `${formatProbability(probability)} long-run share when following the rotation, not a daily quota`
-      }>
-        <span className={`prob-value${probability <= 0 ? " is-zero" : ""}`}>
-          {task.completed ? "—" : formatProbability(probability)}
-        </span>
-        {!task.completed && (
-          <span className="prob-bar">
-            <span className="prob-fill" style={{ width: `${barWidth}%` }} />
-          </span>
-        )}
-      </div>
-
-      <div className="task-actions">
-        {!task.completed && <button type="button" className="btn btn-ghost" disabled={trackingDisabled || active} onClick={onTrack} aria-label={`Track ${task.title}`}>{active ? "Tracking" : "Track"}</button>}
-        <button type="button" className="icon-btn" onClick={onEdit} title="Edit task">
-          Edit
-        </button>
-        <button
-          type="button"
-          className="icon-btn danger"
-          onClick={onDelete}
-          title="Delete task"
-          aria-label={`Delete ${task.title}`}
-        >
-          ✕
-        </button>
-      </div>
+      <button type="button" className="icon-btn" onClick={onEdit} aria-label={`Edit ${task.title}`}>
+        Edit
+      </button>
     </div>
   );
 }
 
-function TaskEditor({
-  task,
-  onSave,
-  onCancel,
-  onDelete,
-}: {
+function TaskEditor({ task, onSave, onCancel, onDelete }: {
   task: Task;
   onSave: (patch: Partial<Task>) => void;
   onCancel: () => void;
   onDelete: () => void;
 }) {
+  const id = useId();
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [dueDate, setDueDate] = useState(task.dueDate);
 
-  function save() {
-    const trimmed = title.trim();
-    if (!trimmed) return;
-    onSave({ title: trimmed, description: description.trim(), dueDate });
-  }
-
   return (
-    <div className="task">
-      <div className="editor" onKeyDown={(e) => e.key === "Escape" && onCancel()}>
-        <div className="field">
-          <label>Title</label>
-          <input
-            className="input"
-            value={title}
-            autoFocus
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && save()}
-          />
-        </div>
-        <div className="field">
-          <label>Due date</label>
-          <input
-            type="date"
-            className="input time-input"
-            value={dueDate}
-            onChange={(e) => e.target.value && setDueDate(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Description</label>
-          <textarea
-            className="textarea"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </div>
-        <div className="editor-actions">
-          <button type="button" className="btn btn-primary" onClick={save}>
-            Save
-          </button>
-          <button type="button" className="btn" onClick={onCancel}>
-            Cancel
-          </button>
-          <div className="spacer" />
-          <button type="button" className="btn btn-danger" onClick={onDelete}>
-            Delete
-          </button>
-        </div>
+    <form
+      className="task editor"
+      aria-label={`Edit ${task.title}`}
+      onSubmit={e => {
+        e.preventDefault();
+        if (title.trim() && dueDate) onSave({ title: title.trim(), description: description.trim(), dueDate });
+      }}
+      onKeyDown={e => {
+        e.stopPropagation();
+        if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      }}
+    >
+      <div className="field">
+        <label htmlFor={`${id}-title`}>Title</label>
+        <input id={`${id}-title`} className="input" value={title} required autoFocus onChange={e => setTitle(e.target.value)} />
       </div>
-    </div>
+      <div className="field">
+        <label htmlFor={`${id}-date`}>Due date</label>
+        <input id={`${id}-date`} type="date" className="input" value={dueDate} required onChange={e => setDueDate(e.target.value)} />
+      </div>
+      <div className="field">
+        <label htmlFor={`${id}-description`}>Description (optional)</label>
+        <textarea id={`${id}-description`} className="textarea" value={description} onChange={e => setDescription(e.target.value)} />
+      </div>
+      <div className="editor-actions">
+        <button type="submit" className="btn btn-primary" disabled={!title.trim() || !dueDate}>Save</button>
+        <button type="button" className="btn" onClick={onCancel}>Cancel</button>
+        <div className="spacer" />
+        <button type="button" className="btn btn-danger" onClick={onDelete}>Delete</button>
+      </div>
+    </form>
   );
 }

@@ -2,7 +2,7 @@
 
 A local Windows desktop client using the same task interface, account API and
 tracking calculations as the website and iPhone app. Sign in with your existing
-YanTasks account to sync tasks, daily recommendations, rotation, tracked work, resets and the current timer.
+YanTasks account to sync tasks, one-hour rotation, tracked work and the current timer.
 Guest data stays on this PC; it does not silently replace account data.
 
 ## Use
@@ -13,19 +13,20 @@ release should be signed with the project's own code-signing certificate.
 
 - Closing the main window keeps the timer and native alerts running in the tray.
 - Click the tray icon to toggle the draggable, always-on-top mini tracker.
-- Right-click it to pause/resume, switch tasks, open the task list or quit.
+- Right-click it to start/pause, show the task list or mini tracker, or quit.
 - The taskbar icon shows a working/paused overlay and progress. Hover it
   for thumbnail controls. Windows does not provide an app-defined text panel
   inside the standard taskbar; the mini tracker and tray tooltip show the stats.
-- Windows settings in the app include alert sound, a test alert, and optional
-  launch at sign-in (off by default). Installing creates the Start Menu shortcut
-  needed for Windows notification identity.
+- There are no app settings or per-task start controls. Existing saved alert,
+  sound and launch-at-sign-in preferences remain intact. Installing creates
+  the Start Menu shortcut needed for Windows notification identity.
 - Alerts follow the device that last started, paused or reset tracking, avoiding a
   second set of PC alerts for a timer controlled from the phone or website.
-- Every day uses the same deadline-based recommendation, capped at 3 hours.
-  Thirty-minute turns pause for your next choice; there is no idle quota.
-  Rotation persists across days, all tasks stay eligible, and extra work is
-  explicitly available. Bedtime is only used for optional outing advice.
+- Start follows the shared picker in task-list order. Turns switch automatically
+  after one hour; a fractional catch-up turn stops when it reaches its predecessor.
+  Newly added tasks catch up one hour at a time. Rotation continues until you
+  pause or there are no open tasks, including across midnight. Completing or
+  removing the current task switches to the next eligible task.
 - Quitting does **not** pause an account timer. Pause tracking first if finished.
 
 ### Battery and notification boundaries
@@ -33,8 +34,8 @@ release should be signed with the project's own code-signing certificate.
 Hidden renderers are background-throttled and receive no live state broadcasts.
 The mini window is created only when opened and freed when hidden. Visible active
 work countdowns update once per second with no continuous animation.
-Paused recommendations stay still and do not need a one-second loop. Background
-timer wakeups are scheduled for turn/recommendation boundaries or a one-minute heartbeat,
+Paused turns stay still and do not need a one-second loop. Background
+timer wakeups are scheduled for hour boundaries or a one-minute heartbeat,
 not a one-second loop. Account polling is 5 seconds when visible/active on AC,
 15 seconds active in the background on AC, 30 seconds active on battery, and
 60 seconds paused in the background. Task-list metadata refreshes every 30 seconds
@@ -57,7 +58,7 @@ changes can take up to one polling interval to arrive, especially on battery.
 reasons, native notification show/failure callbacks, and changes in timer/alert
 ownership or sync health. It distinguishes an alert requested by the engine from
 one reported shown by Windows; neither proves that the user noticed the banner.
-Task edits are reconciled against the updated queue and virtual service before
+Task edits are reconciled against cumulative totals and the current turn before
 elapsed turn alerts are delivered. Explicit commands cancel obsolete predictions.
 
 Diagnostics add no polling, timer, or network traffic. Only events/status changes
@@ -78,6 +79,7 @@ npm test
 npm run build
 npm run smoke
 npm run smoke -- --countdown-check
+npm run smoke -- --countdown-check --screenshot
 npm start
 npm run dist
 npm run smoke -- --packaged
@@ -94,8 +96,11 @@ sleep, turn boundaries and battery scheduling. Run root `npm test` and
 battery-life benchmark). `--packaged` checks the built executable rather than
 the development Electron runtime.
 `--countdown-check` verifies that the real main and mini clocks count down only during
-explicit work and remain still while paused, then checks that hidden windows stop frequent wakeups and
+work and remain still while paused, then checks that hidden windows stop frequent wakeups and
 receive no countdown updates. Its visible test windows are transparent and click-through.
+`--screenshot` captures the main and mini windows after the isolated fixture task
+starts, before hiding them, and logs both PNG paths under the disposable smoke
+profile. It can be combined with countdown or packaged checks.
 Development runs use a separate `YanTasks Development` profile and Windows app
 ID. Smoke runs use `YanTasks Test`; neither shares the installed app's shell
 identity, so an Electron development shortcut cannot replace its taskbar/search

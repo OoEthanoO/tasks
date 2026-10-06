@@ -6,7 +6,6 @@ const bridge: DesktopBridge = {
   configure: config => ipcRenderer.invoke("configure", config),
   command: action => ipcRenderer.invoke("command", action),
   refresh: () => ipcRenderer.invoke("refresh"),
-  settings: value => ipcRenderer.invoke("settings", value),
   window: action => ipcRenderer.invoke("window", action),
   subscribe: listener => {
     const handler = (_event: Electron.IpcRendererEvent, state: DesktopState) => listener(state);
