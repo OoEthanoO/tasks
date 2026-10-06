@@ -68,7 +68,7 @@ The existing EAS configuration is retained as a manual fallback.
 ## Timer alerts
 
 Enable alerts in the focus card. `expo-notifications` schedules task-complete,
-start-working advice, idle-ending warning, idle-exhausted and work-done alerts
+end-time alerts (there are no rest or idle reminders)
 with iOS. A new native build is
 required after this dependency change. Open the app after changing tracking on
 another device so iOS can replace any old scheduled alerts. Time itself is

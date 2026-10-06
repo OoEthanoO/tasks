@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { formatDuration, RESET_PROGRESS_CONFIRMATION } from "@/lib/tracking";
 import { describeFocus } from "@/lib/focus";
-import { clampWhole, DayPlan, SPLIT_PARTS } from "@/lib/plan";
+import { clampWhole, DayPlan } from "@/lib/plan";
 import { MINIMUM_MINUTES } from "@/lib/minimum";
 import { Tracker } from "./useTracking";
 import ConfirmDialog from "./ConfirmDialog";
@@ -21,7 +21,7 @@ function WholeInput({ label, value, range, onCommit }: { label: string; value: n
     onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} />;
 }
 
-export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, plan, onPlanChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
+export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
   tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; plan: DayPlan; onPlanChange: (value: DayPlan) => void;
   unweighted: boolean; onUnweightedChange: (value: boolean) => void;
   minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
@@ -32,23 +32,19 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, pl
   const s = t.state;
   const f = describeFocus(s, t.progress, t.ready);
   const working = f.working;
-  // What the settings mean for an ordinary day, shown beside them.
-  const minutesOf = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
-  const dayMinutes = Math.max(0, minutesOf(endTime) - minutesOf(plan.startTime));
-  const workMinutes = Math.round(dayMinutes * plan.workParts / (plan.workParts + plan.idleParts));
-  const plannedWork = dayMinutes
-    ? `${formatDuration(workMinutes * 60_000)} of work and ${formatDuration((dayMinutes - workMinutes) * 60_000)} of idle time a day.`
-    : "The work day must start before it ends.";
   return (
     <section className={`card tracking-card${working ? "" : " is-idle"}`}>
-      <div className="card-head"><h2 className="card-title">Today’s focus</h2><span className="focus-cutoff">{plan.startTime}–{endTime}</span></div>
+      <div className="card-head"><h2 className="card-title">Today’s focus</h2><span className="focus-cutoff">Ends {endTime}</span></div>
+      <div className="setting-row">
+        <label htmlFor="end-time"><strong>Work ends at</strong><span className="setting-help">Time available until this end time · {s.timeZone}</span></label>
+        <input id="end-time" type="time" required className="input time-input" value={endTime} onChange={e => e.target.value && onEndTimeChange(e.target.value)} />
+      </div>
       <div className="focus-label">{f.label}</div>
       <h3 className="focus-title">{f.title}</h3>
       <div className="focus-clock" role="timer" aria-label={f.clockLabel}>
         {formatDuration(f.clock, true)}
       </div>
       <p className="hint">{f.hint}</p>
-      {f.advice && <div className="banner warn start-advice" role="status">{f.advice}</div>}
       <button type="button" className="btn btn-primary focus-action"
         disabled={!t.ready || t.busy || (!working && !f.canStart)} onClick={() => void t.command({ type: working ? "pause" : "start" })}>
         {t.busy ? "Syncing…" : working ? "Pause tracking" : "Start working"}
@@ -58,31 +54,12 @@ export default function TrackingPanel({ tracker: t, endTime, onEndTimeChange, pl
       <div className="tracking-totals">
         <div><span>Worked today</span><strong>{formatDuration(s.workMs, true)}</strong></div>
         <div><span>Work left</span><strong>{t.ready ? formatDuration(f.workLeft) : "—"}</strong></div>
-        <div><span>{f.idleStat.label}</span><strong>{t.ready ? formatDuration(f.idleStat.value) : "—"}</strong></div>
       </div>
       <details className="day-settings">
         <summary>
-          <span><strong>Day settings</strong><span className="settings-summary">{plan.workParts}:{plan.idleParts} work:idle · {unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</span></span>
+          <span><strong>Day settings</strong><span className="settings-summary">{unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</span></span>
         </summary>
         <div className="settings-body">
-          <div className="setting-row">
-            <label htmlFor="start-time"><strong>Work day starts</strong><span className="setting-help">{t.ready ? s.timeZone : "Local time"}</span></label>
-            <input id="start-time" type="time" className="input time-input" value={plan.startTime} onChange={e => e.target.value && onPlanChange({ ...plan, startTime: e.target.value })} />
-          </div>
-          <div className="setting-row">
-            <label htmlFor="end-time"><strong>Work day ends</strong><span className="setting-help">Tracking stops here.</span></label>
-            <input id="end-time" type="time" className="input time-input" value={endTime} onChange={e => e.target.value && onEndTimeChange(e.target.value)} />
-          </div>
-          <div className="setting-section">
-            <div className="setting-row">
-              <label><strong>Work : idle</strong><span className="setting-help">Untracked time is idle. 1:1 is recommended.</span></label>
-            </div>
-            <div className="break-durations split-fields">
-              <label><span>Work</span><span className="duration-field"><WholeInput label="Work parts of the ratio" value={plan.workParts} range={SPLIT_PARTS} onCommit={workParts => onPlanChange({ ...plan, workParts })} /></span></label>
-              <label><span>Idle</span><span className="duration-field"><WholeInput label="Idle parts of the ratio" value={plan.idleParts} range={SPLIT_PARTS} onCommit={idleParts => onPlanChange({ ...plan, idleParts })} /></span></label>
-            </div>
-            <p className="break-preview day-preview">{plannedWork}</p>
-          </div>
           <div className="setting-section">
             <div className="setting-row">
               <label htmlFor="unweighted"><strong>Unweighted</strong><span className="setting-help" id="unweighted-hint">Give every open task equal weight.</span></label>

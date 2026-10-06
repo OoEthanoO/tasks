@@ -1,4 +1,4 @@
-import type { TrackingState } from "./tracking";
+import type { TrackingState } from "./legacy-tracking";
 import { compareListOrder } from "./grouping";
 import { diffDays } from "./dates";
 import { taskWeight } from "./weights";

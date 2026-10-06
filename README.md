@@ -1,9 +1,9 @@
 # YanTasks
 
 A task manager that decides what you should work on next. Tasks are weighted by
-how urgent they are and the priority you give them. Set when your work day starts
-and ends; the day splits into work and idle time (1:1 by default). Track the work
-whenever it suits you while proportional daily targets divide it among your tasks.
+how urgent they are and the priority you give them. Set an end time and track work.
+All remaining time until that cutoff is available to weighted task targets.
+There are no rest periods, idle budgets, start times or work:idle ratios.
 
 The [Windows desktop app](desktop/README.md) adds native background alerts,
 taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync.
@@ -164,7 +164,7 @@ as a low-priority task due tomorrow. Tasks created before priorities existed
 read as low. Weights display as exact fractions (`2/3`, `4/5`), never rounded.
 
 Open tasks aim for proportional **work time** by weight. The day's work time
-comes from the work day and its split (see below). The app balances final task
+is the time remaining until the selected end time (see below). The app balances final task
 totals by weight while treating logged time as a lower bound. Tasks already above
 that balance receive no extra time; all unfinished targets together fit the work
 still left today.
@@ -174,7 +174,7 @@ Specifically, weighted water filling finds a level `L` such that
 Each final target is `max(tracked, weight * L)`. This keeps overruns fixed instead
 of asking other tasks to make up more time than the day contains. Completed or
 deleted tasks keep their historical work but receive no new allocation.
-The **Work left** display is the day's work time not yet tracked. A task whose
+The **Work left** display is the time still available before the end time. A task whose
 tracked time meets its current target is **Done for today**, not permanently
 completed. Changing tasks or the work day recalculates future targets while
 preserving earned time.
@@ -187,56 +187,34 @@ weights, lowest on the list first), and each skipped share goes only to the
 tasks above it, never to less urgent ones. The most important open task is never skipped, so a short day is not
 wasted, and a task with 30 minutes already logged is never skipped. Skipped
 tasks show a 0% share and cannot be tracked that day. The decision is
-recalculated whenever tasks, the work day or the split change.
+recalculated whenever tasks, the end time or the allocation settings change.
 
-## Work and idle tracking
+## Work-only tracking
 
-The work day runs from its **start** (default 09:00) to its **end** (default
-23:00). The **work : idle** split (default and recommended 1:1, each side 1–20)
-divides that window into the day's work time and idle allowance: 09:00–23:00 at
-1:1 is seven hours of each; at 2:1 it is 9h20m of work and 4h40m of idle time.
+Set the day's **end time** (the existing value is preserved). The app allocates
+`max(0, end time - now)` among unfinished tasks, preserving logged work as a
+lower bound. There is no start time, ratio, rest allowance, idle budget or
+borrowed time. The end time is always visible on the focus card.
 
-Worked time increases only while you track it. Start takes the first unfinished
-daily target in list order (nearest due date, then creation order); weight
-decides how much time a task gets, not when. The timer keeps following the
-list, so a task added or moved above the current one takes over at once.
-Reaching a target alerts you and moves on to the next unfinished task down the
-list. Each task also has a Track button; a task picked with it stays until its
-target is met, then the list resumes. There are no breaks: pause whenever you like.
+Only **Start working** or **Track** records work. Start chooses the first
+unfinished target in list order; a manually chosen task stays selected until
+its target is reached. Completing a daily target alerts you and selects the
+next unfinished task. Permanent completion still uses the task checkbox.
 
-Every minute of the work day that you are not tracking uses **idle** time, counted
-down from the allowance to zero. Once less than half of the allowance is left and work remains, the
-app advises you to start working. Five minutes before the allowance runs out it
-warns you; when it runs out, the timer shows **Paused** until you choose
-**Start working** or **Track**. Remaining work is the smaller of the untracked
-work goal and the time until the day's end. After idle is used up, the available
-work clock and unfinished task targets shrink as time passes, even while paused;
-this never adds tracked work. Targets rebalance by weight using only that available
-time, and already logged work stays unchanged. Nothing is borrowed from another
-day. Tracking never starts on its own, and you can always pause. Once all
-of the work time is tracked, tracking stops, Start is unavailable and the rest
-of the day is idle. Before the start time nothing counts and tracking cannot
-start.
+While paused, the countdown and unfinished targets decrease as the end time
+approaches, but logged work never increases. Tracking stops at the cutoff.
+Changing the end time preserves earned work; extending it never starts a
+paused timer automatically. There are no rest/idle reminders.
 
-The start, end and split sit together under **Day settings** and follow your
-account to every device. Changing them mid-day keeps the work already tracked
-and recalculates the goal and the allowance, so a smaller allowance can leave
-no idle time remaining. Timers saved by older apps keep their tracked work; a break in
-progress becomes idle time.
+Existing timers checkpoint elapsed work under their previous rules once,
+without changing prior total or per-task work, notification ownership or task
+metadata. Old start/ratio settings remain readable solely for compatibility
+and do not influence the new calculation. Reload older web tabs and update
+installed clients to use the same calculation everywhere.
 
-Daily tracked counters reset at midnight; the new day begins idle with its normal
-work goal and idle allowance. Neither unfinished work nor used-up idle time
-carries over. Upgrading an older borrowing timer discards its debt, but preserves
-today's total and per-task work, including elapsed work from a running session.
-The same checkpoint protects running fixed-goal timers when upgrading to end-capped targets.
-The first device starting an account timer establishes its time zone, which all
-clients share.
-
-Use **Reset today’s progress** to start fresh without waiting for midnight.
-After confirmation, it clears all of today's tracked work and pauses the shared
-timer. Time already passed today still counts as idle, so a late reset can leave
-no idle time remaining. Tasks, permanent completion and the work day settings stay
-unchanged. The reset cannot be undone.
+Daily counters reset at midnight in the shared time zone and tracking pauses.
+**Reset today’s progress** also clears today's counters and pauses after
+confirmation, without changing tasks or the end time. It cannot be undone.
 
 Signed-in users share one timestamp-based session in a separate Postgres row.
 Revision-checked commands prevent two devices from overwriting the same timer.
@@ -248,14 +226,12 @@ Existing timers are upgraded at a shared checkpoint: elapsed time under the old
 allocation is preserved before the corrected calculation starts. Refresh web
 clients and install the latest mobile build to use the same calculation everywhere.
 
-Enable alerts to receive task completion, the advice to start working at half the
-idle allowance, a warning five minutes before idle time runs out, when idle time
-is used up, and the end of today's work. The button reads the device's current permission
-on launch and on returning to the app, so its status survives refreshes and
+Enable alerts for task completion and reaching the end time while tracking.
+The button reads the device's current permission on launch and on returning to the app, so its status survives refreshes and
 reflects permission changes in settings. iOS schedules these with the operating system;
 web notifications require the page to remain open. Alerts belong to the device
 that last started, paused or reset the timer; until one has, every device alerts,
-because idle reminders come due without anyone pressing anything. If the timer is changed elsewhere while
+If the timer is changed elsewhere while
 the phone is suspended, open the phone app to refresh its scheduled alerts;
 otherwise a previously scheduled alert can be stale. This is a local-notification
 implementation, not a background cross-device push service.

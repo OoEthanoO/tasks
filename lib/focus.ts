@@ -1,30 +1,17 @@
-import { canTrackWork, dayBudget, dayEnd, dayPlan, dayStart, formatDuration, idleLeftMs, shouldStartWorking, workLeftMs, type TaskProgress, type TrackingState } from "./tracking";
+import { canTrackWork, dayEnd, formatDuration, workLeftMs, type TaskProgress, type TrackingState } from "./tracking";
 
-/** What the focus card shows, shared by the web and iPhone apps so their wording stays in step. */
+/** Shared work-only presentation: a paused countdown never means logged work. */
 export function describeFocus(s: TrackingState, progress: TaskProgress[], ready: boolean) {
   const current = progress.find(p => p.task.id === s.taskId);
-  const working = s.mode === "work";
-  const before = s.cursor < dayStart(s), ended = s.cursor >= dayEnd(s);
-  const budget = dayBudget(s), workLeft = workLeftMs(s), idleLeft = Math.max(0, idleLeftMs(s));
-  const done = !before && workLeft <= 0;
+  const working = s.mode === "work", ended = s.cursor >= dayEnd(s);
+  const workLeft = workLeftMs(s), paused = !working && !ended;
   const canStart = canTrackWork(s) && progress.some(p => p.weight > 0 && !p.doneToday);
-  const paused = !working && !before && !ended && !done && idleLeft <= 0;
-  const label = !ready ? "LOADING TIMER…" : before ? "BEFORE YOUR DAY" : ended ? "DAY COMPLETE" : done ? "WORK DONE"
-    : working ? "WORKING ON" : paused ? "PAUSED" : "IDLE";
-  const title = working ? current?.task.title ?? "Working" : before ? `Your day starts at ${dayPlan(s).startTime}.`
-    : ended ? "You’re done for today." : done ? "Today’s work is done." : paused ? "Ready when you are." : "Idle time";
-  // Once idle is used, the available work shrinks toward the cutoff without logging time.
-  const clock = before ? budget.workMs : working || done || paused ? workLeft : idleLeft;
-  const clockLabel = paused ? "Work time available — not tracking" : working || done ? "Work time left today" : before ? "Today’s work goal" : "Idle time left today";
-  const hint = !ready ? "" : before ? `${formatDuration(budget.workMs)} of work and ${formatDuration(budget.idleMs)} of idle time today.`
-    : ended ? "Tracking has stopped for today. Tomorrow starts fresh."
-    : done ? "All of today’s work is tracked. The rest of the day is idle time."
+  const label = !ready ? "LOADING TIMER…" : ended ? "DAY COMPLETE" : working ? "WORKING ON" : "PAUSED";
+  const title = ended ? "You’re done for today." : working ? current?.task.title ?? "Working" : canStart ? "Ready when you are." : "No unfinished tasks.";
+  const clockLabel = working ? "Work time left today" : "Work time available — not tracking";
+  const hint = !ready ? "" : ended ? "Your end time has been reached. Extend it to continue, or start fresh tomorrow."
     : working ? `Work time left today${current ? ` · ${formatDuration(current.remainingMs)} left on this task` : ""}`
-    : paused ? "No work is being tracked. Targets shrink to fit the time until your day ends. Choose Start working or Track when you’re ready."
-    : canStart ? "Idle time left. When it runs out, tracking stays paused until you start working." : "Idle time left. Add a task to have work to track.";
-  const advice = !shouldStartWorking(s) ? null
-    : paused ? "Today’s idle time is used up. Start working now."
-    : "Less than half of today’s idle time is left. Start working now.";
-  const idleStat = { label: "Idle left", value: idleLeft };
-  return { working, paused, canStart, label, title, clock, clockLabel, hint, advice, workLeft, idleStat };
+    : canStart ? "No work is being tracked. Available time and task targets decrease until your end time. Choose Start working when you’re ready."
+    : "Add an unfinished task to start tracking work.";
+  return { working, paused, canStart, label, title, clock: workLeft, clockLabel, hint, workLeft };
 }

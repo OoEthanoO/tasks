@@ -3,7 +3,7 @@ import { Pressable, Switch, Text, TextInput, View, type StyleProp, type TextStyl
 import { sanitizeEndTime } from "../../../lib/app-state";
 import { formatDuration, RESET_PROGRESS_CONFIRMATION } from "../../../lib/tracking";
 import { describeFocus } from "../../../lib/focus";
-import { clampWhole, DayPlan, sanitizeClockTime, SPLIT_PARTS } from "../../../lib/plan";
+import { clampWhole, DayPlan, sanitizeClockTime } from "../../../lib/plan";
 import { MINIMUM_MINUTES } from "../../../lib/minimum";
 import { Tracker } from "../useTracking";
 import { themed, useStyles, useTheme } from "../theme";
@@ -30,7 +30,7 @@ function TimeField({ label, value, onCommit, style }: { label: string; value: st
     onEndEditing={e => { const clean = sanitizeClockTime(e.nativeEvent.text, value); setDraft(clean); if (clean !== value) onCommit(clean); }} />;
 }
 
-export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, plan, onPlanChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
+export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
   tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; plan: DayPlan; onPlanChange: (value: DayPlan) => void;
   unweighted: boolean; onUnweightedChange: (value: boolean) => void;
   minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
@@ -46,40 +46,26 @@ export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, pla
   const working = f.working;
   return <Card>
     <CardHead title="Today’s focus" />
-    <Text style={s.hint}>Work day {plan.startTime}–{endTime}</Text>
+    <View style={s.controls}>
+      <Text style={s.hint}>Work ends at</Text>
+      <TimeField style={s.input} label="Work end time, 24 hour clock" value={endTime} onCommit={value => onEndTimeChange(sanitizeEndTime(value))} />
+    </View>
     <Text style={[s.label, !working && { color: c.dim }]}>{f.label}</Text>
     <Text style={s.title}>{f.title}</Text>
     <Text style={s.clock} accessibilityRole="timer" accessibilityLabel={f.clockLabel}>{formatDuration(f.clock, true)}</Text>
     <Text style={s.hint}>{f.hint}</Text>
-    {f.advice && <Banner tone="warn">{f.advice}</Banner>}
     <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (!working && !f.canStart)} label={t.busy ? "Syncing…" : working ? "Pause tracking" : "Start working"} onPress={() => void t.command({ type: working ? "pause" : "start" })} />
     {t.error && <Banner tone="danger" action={<Btn label="Refresh timer" onPress={() => void t.refresh()} />}>{t.error}</Banner>}
     {t.message && <Banner tone="ok" action={<Btn label="Dismiss" onPress={t.dismissMessage} />}>{t.message}</Banner>}
     <View style={s.totals}>
       <View><Text style={s.hint}>Worked today</Text><Text style={s.total}>{formatDuration(state.workMs, true)}</Text></View>
       <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(f.workLeft)}</Text></View>
-      <View><Text style={s.hint}>{f.idleStat.label}</Text><Text style={s.total}>{formatDuration(f.idleStat.value)}</Text></View>
     </View>
     <Pressable style={s.settingsHeader} accessibilityRole="button" accessibilityLabel="Day settings" accessibilityState={{ expanded: settingsOpen }} onPress={() => setSettingsOpen(!settingsOpen)}>
-      <View style={{ flex: 1 }}><Text style={s.settingsTitle}>Day settings</Text><Text style={s.hint}>{plan.workParts}:{plan.idleParts} work:idle · {unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</Text></View>
+      <View style={{ flex: 1 }}><Text style={s.settingsTitle}>Day settings</Text><Text style={s.hint}>{unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</Text></View>
       <Text style={s.settingsTitle}>{settingsOpen ? "−" : "+"}</Text>
     </Pressable>
     {settingsOpen && <View style={s.settingsBody}>
-    <View style={s.controls}>
-      <Text style={s.hint}>Work day starts at</Text>
-      <TimeField style={s.input} label="Work day start time, 24 hour clock" value={plan.startTime} onCommit={startTime => onPlanChange({ ...plan, startTime })} />
-    </View>
-    <View style={s.controls}>
-      <Text style={s.hint}>Work day ends at</Text>
-      <TimeField style={s.input} label="Work day end time, 24 hour clock" value={endTime} onCommit={value => onEndTimeChange(sanitizeEndTime(value))} />
-    </View>
-    <View style={[s.controls, s.wrap]}>
-      <Text style={s.hint}>Work : idle</Text>
-      <WholeField style={[s.input, s.minutes]} label="Work parts of the ratio" value={plan.workParts} range={SPLIT_PARTS} onCommit={workParts => onPlanChange({ ...plan, workParts })} />
-      <Text style={s.hint}>:</Text>
-      <WholeField style={[s.input, s.minutes]} label="Idle parts of the ratio" value={plan.idleParts} range={SPLIT_PARTS} onCommit={idleParts => onPlanChange({ ...plan, idleParts })} />
-    </View>
-    <Text style={s.hint}>Untracked time is idle. 1:1 is recommended.</Text>
     <View style={s.controls}>
       <Text style={s.hint}>Unweighted</Text>
       <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Give every open task equal weight." trackColor={{ true: c.accent, false: c.line }} />
