@@ -513,7 +513,7 @@ function YanTasks() {
             title={ready && openCount > 0 ? `Tasks · ${openCount} open` : "Tasks"}
             right={
               <Text style={s.restHint}>
-                Daily work share
+                Long-run turn share
               </Text>
             }
           />
@@ -536,7 +536,7 @@ function YanTasks() {
 
           {ready && tasks.length > 0 && (
             <View style={s.stats}>
-              <Text style={s.stat}>Task weight {table.taskTotal.toFixed(3)}</Text>
+              <Text style={s.stat}>Every open task gets turns · no future-date cutoff</Text>
             </View>
           )}
         </Card>

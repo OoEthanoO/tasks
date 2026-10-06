@@ -478,7 +478,7 @@ export default function Page() {
           <h1>
             YanTasks<span className="dot">.</span>
           </h1>
-          <span className="tagline">weighted work tracker</span>
+          <span className="tagline">deadline-paced work</span>
         </div>
         <div className="topbar-actions">
           <span className="today-chip">
@@ -540,7 +540,7 @@ export default function Page() {
               Tasks {ready && openCount > 0 && <span>· {openCount} open</span>}
             </h2>
             <span className="hint">
-              Daily work share
+              Long-run turn share
             </span>
           </div>
 
@@ -564,7 +564,7 @@ export default function Page() {
           {ready && tasks.length > 0 && (
             <div className="stats">
               <span>
-                Task weight <b>{table.taskTotal.toFixed(3)}</b>
+                Every open task gets turns · no future-date cutoff
               </span>
             </div>
           )}
@@ -622,25 +622,22 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
         <div className="stats" style={{ marginTop: 18 }}>
           <div className="formula">
             <div>
-              <strong style={{ color: "var(--text-dim)" }}>How weights work</strong>
+              <strong style={{ color: "var(--text-dim)" }}>Pacing, not a deadline guarantee</strong>
             </div>
             <div>
-              Due tomorrow or later: <code>1 / days away</code> — tomorrow 1, day after
-              1/2, in 3 days 1/3.
+              Every unfinished task adds <code>60 minutes / (days until due + 1)</code> to today’s recommendation. Overdue tasks count as due today. Round the sum up to 30 minutes, capped at 3 hours. Every day uses this same rule.
             </div>
             <div>
-              Due today or overdue: <code>2 + days overdue</code> — today 2, yesterday 3,
-              day before 4.
+              Work in 30-minute turns. At each turn boundary, tracking pauses and you choose the suggested task or continue the same one. Only ticking the checkbox completes a task.
             </div>
             <div>
-              Completed: <code>0</code>.
+              All open tasks stay eligible. Rotation weight is <code>1 + 1 / (days until due + 1)</code>, between 1× and 2×. The task with the least weight-adjusted tracked time goes next.
             </div>
             <div>
-              Priority multiplies it: low <code>×1</code>, medium <code>×2</code>, high{" "}
-              <code>×4</code>.
+              Rotation history carries across days; daily work counters reset at midnight. Existing priority values are saved for compatibility but no longer affect turns.
             </div>
             <div>
-              Open tasks divide tracked work in proportion to their weights. Unweighted mode gives every open task weight 1. With the daily minimum enabled, a task whose share would come to under your chosen minimum is skipped for the day, and its time is redistributed to higher-weight tasks, or earlier tasks in the list when weights are equal. The first eligible task is never skipped, so a short day can still be used. Choose a minimum from 1 to 1,440 minutes (30 by default), or turn it off to include smaller shares in either weighting mode. The work day runs from your start time to your end time and divides into work and idle time by your ratio (1:1 recommended). Untracked time within the work day uses idle time; below half the allowance you will be advised to start. When it runs out, the timer stays Paused until you choose Start working or Track. Remaining work and unfinished task targets shrink to fit the time until your day ends. This never adds worked time or changes work already logged. Tracking never starts on its own, and you can always pause. No time is borrowed from other days. Daily tracked counters reset at midnight, and each day starts with its normal work goal and idle allowance.
+              Paused time never becomes work or debt. There is no idle allowance or school-day setting. Task changes can update the recommendation, but simply waiting does not. Bedtime is only used for outing advice; extra work is always your choice.
             </div>
           </div>
         </div>

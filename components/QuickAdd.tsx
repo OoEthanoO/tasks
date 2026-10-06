@@ -4,8 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDueDate, todayKey } from "@/lib/dates";
 import { parseTrailingDate } from "@/lib/parse-date";
 import { Priority } from "@/lib/types";
-import { DEFAULT_PRIORITY, PRIORITY_LABEL } from "@/lib/weights";
-import PriorityPicker from "./PriorityPicker";
+import { DEFAULT_PRIORITY } from "@/lib/weights";
 
 type Props = {
   onCreate: (input: { title: string; description: string; dueDate: string; priority: Priority }) => void;
@@ -16,7 +15,6 @@ export default function QuickAdd({ onCreate, onClose }: Props) {
   const [raw, setRaw] = useState("");
   const [description, setDescription] = useState("");
   const [manualDate, setManualDate] = useState<string | null>(null);
-  const [priority, setPriority] = useState<Priority>(DEFAULT_PRIORITY);
   const [showDetails, setShowDetails] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -32,7 +30,7 @@ export default function QuickAdd({ onCreate, onClose }: Props) {
 
   function submit() {
     if (!canSubmit) return;
-    onCreate({ title, description: description.trim(), dueDate, priority });
+    onCreate({ title, description: description.trim(), dueDate, priority: DEFAULT_PRIORITY });
     onClose();
   }
 
@@ -84,11 +82,6 @@ export default function QuickAdd({ onCreate, onClose }: Props) {
               {!manualDate && " (default)"}
             </span>
           )}
-          {priority !== DEFAULT_PRIORITY && (
-            <span className={`pill priority-tag is-${priority}`}>
-              {PRIORITY_LABEL[priority]} priority
-            </span>
-          )}
         </div>
 
         {!raw && (
@@ -113,11 +106,6 @@ export default function QuickAdd({ onCreate, onClose }: Props) {
               />
             </div>
             <div className="field">
-              <label id="qa-priority">Priority</label>
-              <PriorityPicker value={priority} onChange={setPriority} labelledBy="qa-priority" />
-              <span className="hint">Medium doubles a task’s weight; high quadruples it.</span>
-            </div>
-            <div className="field">
               <label htmlFor="qa-desc">Description (optional)</label>
               <textarea
                 id="qa-desc"
@@ -136,7 +124,7 @@ export default function QuickAdd({ onCreate, onClose }: Props) {
             className="btn btn-ghost"
             onClick={() => setShowDetails((v) => !v)}
           >
-            {showDetails ? "Hide details" : "Add date / priority / description"}
+            {showDetails ? "Hide details" : "Add date / description"}
           </button>
           <div className="spacer" />
           <span className="hint">

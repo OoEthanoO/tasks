@@ -24,8 +24,8 @@ export function dueBucket(task: Task, today: DateKey): DueBucket {
 /**
  * The order tasks appear in the list: nearest due date first, ties broken by
  * creation order so the list never reshuffles under you (and, past that, by
- * saved order, since the sort is stable). The timer works through open tasks
- * in this same order, so the task it picks next is always the next one down.
+ * saved order, since the sort is stable). The fair rotation uses this order
+ * only to break equal-service ties, not to exclude distant tasks.
  */
 export function compareListOrder(a: Task, b: Task): number {
   return a.dueDate.localeCompare(b.dueDate) || a.createdAt.localeCompare(b.createdAt);

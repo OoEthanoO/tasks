@@ -5,15 +5,10 @@ import { DateKey, describeDelta, formatDueDate } from "@/lib/dates";
 import { dueBucket, groupTasks } from "@/lib/grouping";
 import { Task } from "@/lib/types";
 import {
-  DEFAULT_PRIORITY,
-  PRIORITY_LABEL,
-  PRIORITY_MULTIPLIER,
   WeightedTask,
   formatProbability,
-  formatWeight,
 } from "@/lib/weights";
-import PriorityPicker from "./PriorityPicker";
-import { skippedExplanation, TaskProgress, formatDuration } from "@/lib/tracking";
+import { TaskProgress, formatDuration } from "@/lib/tracking";
 
 type Props = {
   entries: WeightedTask[];
@@ -142,14 +137,10 @@ function TaskRow({
       <div className="task-main">
         <div className="task-title">{task.title}</div>
         {task.description && <p className="task-desc">{task.description}</p>}
-        {progress && !task.completed && progress.skipped && <div className="task-progress">
-          <span>{formatDuration(progress.trackedMs)} today</span>
-          <span className="daily-skipped" title={skippedExplanation(progress.minimumMs)}>Skipped today: under {formatDuration(progress.minimumMs)}</span>
-        </div>}
-        {progress && !task.completed && !progress.skipped && <div className="task-progress">
-          <span>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</span>
-          <span className={progress.doneToday ? "daily-done" : ""}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</span>
-          <progress max={Math.max(1, progress.targetMs)} value={Math.min(progress.trackedMs, progress.targetMs)} aria-label={`${task.title} daily progress`} />
+        {progress && !task.completed && <div className="task-progress">
+          <span>{formatDuration(progress.trackedMs)} worked today</span>
+          <span>{active ? `${formatDuration(progress.remainingMs)} until pause` : progress.partialTurn ? `Turn paused · ${formatDuration(progress.remainingMs)} left` : `Rotation #${progress.queuePosition}`}</span>
+          {active && <progress max={(progress.turnElapsedMs ?? 0) + progress.remainingMs} value={progress.turnElapsedMs ?? 0} aria-label={`${task.title} current turn`} />}
         </div>}
         <div className="task-meta">
           <span className={`due${dueClass}`}>{formatDueDate(task.dueDate, today)}</span>
@@ -157,20 +148,9 @@ function TaskRow({
             <>
               <span className="sep">·</span>
               <span>{describeDelta(task.dueDate, today)}</span>
-              {task.priority !== DEFAULT_PRIORITY && (
-                <>
-                  <span className="sep">·</span>
-                  <span
-                    className={`priority-tag is-${task.priority}`}
-                    title={`${PRIORITY_LABEL[task.priority]} priority multiplies the weight by ${PRIORITY_MULTIPLIER[task.priority]}`}
-                  >
-                    {PRIORITY_LABEL[task.priority]} priority
-                  </span>
-                </>
-              )}
               <span className="sep">·</span>
-              <span title="This task's relative share of work time">
-                weight {formatWeight(weight)}
+              <span title="A bounded deadline boost in the fair rotation; never more than 2×">
+                {weight.toFixed(2)}× rotation weight
               </span>
             </>
           )}
@@ -180,9 +160,7 @@ function TaskRow({
       <div className="prob" title={
         task.completed
           ? "Completed tasks have weight 0 and are never picked"
-          : progress?.skipped
-            ? skippedExplanation(progress.minimumMs)
-            : `${formatProbability(probability)} share of work time`
+          : `${formatProbability(probability)} long-run share when following the rotation, not a daily quota`
       }>
         <span className={`prob-value${probability <= 0 ? " is-zero" : ""}`}>
           {task.completed ? "—" : formatProbability(probability)}
@@ -195,7 +173,7 @@ function TaskRow({
       </div>
 
       <div className="task-actions">
-        {!task.completed && <button type="button" className="btn btn-ghost" disabled={trackingDisabled || progress?.doneToday || active} onClick={onTrack} aria-label={`Track ${task.title}`}>{active ? "Tracking" : "Track"}</button>}
+        {!task.completed && <button type="button" className="btn btn-ghost" disabled={trackingDisabled || active} onClick={onTrack} aria-label={`Track ${task.title}`}>{active ? "Tracking" : "Track"}</button>}
         <button type="button" className="icon-btn" onClick={onEdit} title="Edit task">
           Edit
         </button>
@@ -227,12 +205,11 @@ function TaskEditor({
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [dueDate, setDueDate] = useState(task.dueDate);
-  const [priority, setPriority] = useState(task.priority);
 
   function save() {
     const trimmed = title.trim();
     if (!trimmed) return;
-    onSave({ title: trimmed, description: description.trim(), dueDate, priority });
+    onSave({ title: trimmed, description: description.trim(), dueDate });
   }
 
   return (
@@ -255,14 +232,6 @@ function TaskEditor({
             className="input time-input"
             value={dueDate}
             onChange={(e) => e.target.value && setDueDate(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label id={`priority-${task.id}`}>Priority</label>
-          <PriorityPicker
-            value={priority}
-            onChange={setPriority}
-            labelledBy={`priority-${task.id}`}
           />
         </div>
         <div className="field">

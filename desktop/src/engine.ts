@@ -1,6 +1,5 @@
-import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, localTimeZone, ownsAlerts, parseTracking, suggestedTask, trackingConfigKey, type TrackingAction, type TrackingEvent, type TrackingState } from "../../lib/tracking";
 import { sanitizeState } from "../../lib/app-state";
-import { samePlan } from "../../lib/plan";
 import type { ApiReply, DesktopState, GuestConfig, Settings } from "./contract";
 import { defaults } from "./contract";
 import type { AlertDiagnostic, Suppression } from "./diagnostics";
@@ -16,29 +15,33 @@ type Dependencies = {
 
 /** Recover only elapsed transitions that the incoming checkpoint corroborates.
  * Task edits checkpoint elapsed time too, so metadata/revision need not match.
- * Reconfigure the projected state before comparing mode/task: an early
- * completion can legitimately reopen an earlier target. Elapsed counters still
- * have to match, so a reset/pause/manual switch cannot revive a prediction.
+ * Reconfigure both states to normalize virtual service before comparing them.
+ * Earned work and turn position must match; a reset or manual switch cannot
+ * revive an obsolete prediction.
  */
 function checkpointEvents(previous: TrackingState, next: TrackingState): { events: TrackingEvent[]; confirmed: boolean } {
   const projected = advanceTracking(previous, next.cursor);
   const rejected = { events: projected.events, confirmed: false };
   if (next.cursor <= previous.cursor || next.dayKey !== previous.dayKey || next.timeZone !== previous.timeZone ||
-      next.controllerId !== previous.controllerId || !samePlan(dayPlan(previous), dayPlan(next))) return rejected;
+      next.controllerId !== previous.controllerId) return rejected;
   const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, dayPlan(next), next.unweighted, next.minimumEnabled, next.minimumMinutes);
-  if (expected.mode !== next.mode || expected.taskId !== next.taskId || expected.allocationVersion !== next.allocationVersion || expected.idlePolicyVersion !== next.idlePolicyVersion || expected.workLimitVersion !== next.workLimitVersion || expected.workOnlyVersion !== next.workOnlyVersion || expected.coverageVersion !== next.coverageVersion) return rejected;
+  const canonical = configureTracking(next, next.tasks, next.endTime, next.cursor);
   const equalTime = (a: number, b: number) => Math.abs(a - b) <= 1;
-  // Only work is counted; idle time is derived from the clock.
+  const a = expected.pacing!, b = canonical.pacing!;
+  if (a.commandSeq !== b.commandSeq || a.goalKey !== b.goalKey || !equalTime(a.goalMs, b.goalMs) || a.turn?.taskId !== b.turn?.taskId || !equalTime(a.turn?.elapsedMs ?? 0, b.turn?.elapsedMs ?? 0)) return rejected;
+  for (const id of new Set([...Object.keys(a.service), ...Object.keys(b.service)])) {
+    if (!equalTime(Object.hasOwn(a.service, id) ? a.service[id] : 0, Object.hasOwn(b.service, id) ? b.service[id] : 0)) return rejected;
+  }
+  if (expected.mode !== next.mode || expected.taskId !== next.taskId) return rejected;
+  // Only explicitly tracked work counts.
   if (!equalTime(expected.workMs, next.workMs) || !equalTime(expected.carryMs ?? 0, next.carryMs ?? 0)) return rejected;
   for (const id of new Set([...Object.keys(expected.taskMs), ...Object.keys(next.taskMs)])) {
     const time = (s: TrackingState) => Object.hasOwn(s.taskMs, id) ? s.taskMs[id] : 0;
     if (!equalTime(time(expected), time(next))) return rejected;
   }
-  const changedNextStep = projected.state.mode !== next.mode || projected.state.taskId !== next.taskId;
-  const task = next.tasks.find(t => t.id === next.taskId);
-  const nextStep = next.mode === "work" && task ? `Now tracking ${task.title}.` : "Tracking is paused.";
-  return { confirmed: true, events: projected.events.map(event => changedNextStep && event.type === "task-complete"
-    ? { ...event, body: `A daily target was reached. Targets were updated. ${nextStep}` }
+  const suggestion = suggestedTask(next);
+  return { confirmed: true, events: projected.events.map(event => event.type === "turn-complete"
+    ? { ...event, body: `Tracking is paused. ${suggestion ? `Next: ${suggestion.title}. ` : ""}Choose a task when you’re ready.` }
     : event) };
 }
 // This runs in Electron's main process, not a background Chromium tab. Timers
@@ -253,7 +256,7 @@ export class TrackerEngine {
       this.snapshot = state;
       // Checkpoint on transitions and once per active minute; timestamps preserve all
       // intervening elapsed time if the app is restarted between checkpoints.
-      if (events.length || this.guest.idlePolicyVersion !== state.idlePolicyVersion || this.guest.workLimitVersion !== state.workLimitVersion || this.guest.workOnlyVersion !== state.workOnlyVersion || this.guest.coverageVersion !== state.coverageVersion || this.guest.carryMs !== undefined || state.dayKey !== this.guest.dayKey || (state.mode !== "idle" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
+      if (events.length || this.guest.pacing?.version !== state.pacing?.version || this.guest.idlePolicyVersion !== state.idlePolicyVersion || this.guest.workLimitVersion !== state.workLimitVersion || this.guest.workOnlyVersion !== state.workOnlyVersion || this.guest.coverageVersion !== state.coverageVersion || this.guest.carryMs !== undefined || state.dayKey !== this.guest.dayKey || (state.mode !== "idle" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
     }
     this.publish();
   }

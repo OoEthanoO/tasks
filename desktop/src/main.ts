@@ -196,11 +196,11 @@ function trayMenu() {
   const m = statusModel(v);
   const menu = Menu.buildFromTemplate([
     { label: `${m.label}: ${m.title.slice(0, 65)}`, enabled: false },
-    { label: `Worked ${formatDuration(v.state.workMs)} · Work left ${formatDuration(m.workLeft)}`, enabled: false },
-    { label: v.connected ? `Idle left ${formatDuration(m.idleLeft)}` : "Offline — reconnect to sync", enabled: false },
+    { label: `Worked ${formatDuration(v.state.workMs)} · Recommended left ${formatDuration(m.workLeft)}`, enabled: false },
+    { label: v.connected ? `Today’s recommendation ${formatDuration(m.goal)}` : "Offline — reconnect to sync", enabled: false },
     { type: "separator" },
-    { label: v.state.mode === "idle" ? "Start working" : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode === "idle" ? m.canStart : m.canPause), click: () => void toggle() },
-    { label: "Track a task", enabled: v.ready && !v.busy, submenu: m.entries.filter(p => p.weight > 0 && !p.doneToday).slice(0, 50).map(p => ({ label: `${p.task.title.slice(0, 60)} · ${formatDuration(p.remainingMs)} left`, type: "radio" as const, checked: p.task.id === v.state.taskId, click: () => void engine.command({ type: "start", taskId: p.task.id }).catch(() => {}) })) },
+    { label: v.state.mode === "idle" ? (m.done ? "Track extra work" : "Start suggested task") : "Pause tracking", enabled: v.ready && !v.busy && (v.state.mode === "idle" ? m.canStart : m.canPause), click: () => void toggle() },
+    { label: "Track a task", enabled: v.ready && !v.busy, submenu: m.entries.filter(p => p.weight > 0 && !p.doneToday).slice(0, 50).map(p => ({ label: `${p.task.title.slice(0, 60)} · rotation #${p.queuePosition}`, type: "radio" as const, checked: p.task.id === v.state.taskId, click: () => void engine.command({ type: "start", taskId: p.task.id }).catch(() => {}) })) },
     { label: "Show tasks", click: showMain },
     { label: "Always-on-top mini tracker", type: "checkbox", checked: settings.mini, click: item => changeSettings({ mini: item.checked }) },
     { type: "separator" },
@@ -320,7 +320,7 @@ async function start() {
     if (action === "main") showMain();
     else if (action === "mini") changeSettings({ mini: true });
     else if (action === "hide-mini") changeSettings({ mini: false });
-    else if (action === "test-alert") nativeAlert({ title: "YanTasks alerts are ready", body: "Daily targets, idle-time reminders and the end of today’s work will appear here while YanTasks is running." });
+    else if (action === "test-alert") nativeAlert({ title: "YanTasks alerts are ready", body: "Turn completions and today’s recommendation will appear here while YanTasks is running." });
     else if (action === "dismiss") engine.dismiss();
     else throw new Error("Unknown window action.");
   });

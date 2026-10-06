@@ -1,8 +1,8 @@
 # YanTasks — mobile
 
 The phone client for [tasks.ethanyanxu.com](https://tasks.ethanyanxu.com). Same
-account, same database, same weights: this app imports `../lib` directly rather
-than reimplementing any of it, so the weighting and timestamp-based work timer
+account, same database, same deadline pacing: this app imports `../lib` directly rather
+than reimplementing any of it, so the rotation and timestamp-based work timer
 exist in exactly one place.
 
 ## Run it on your iPhone
@@ -67,10 +67,10 @@ The existing EAS configuration is retained as a manual fallback.
 
 ## Timer alerts
 
-Enable alerts in the focus card. `expo-notifications` schedules task-complete,
-start-working advice, idle-ending warning, idle-exhausted and work-done alerts
-with iOS. A new native build is
-required after this dependency change. Open the app after changing tracking on
+Enable alerts in the focus card. `expo-notifications` schedules the next
+30-minute turn, daily-recommendation or midnight boundary with iOS. Tracking
+pauses at the boundary and waits for an explicit choice. A new native build
+is required to use the updated shared pacing calculation and interface. Open the app after changing tracking on
 another device so iOS can replace any old scheduled alerts. Time itself is
 computed from the shared server timestamps and does not rely on notifications.
 

@@ -12,7 +12,7 @@ import {
 import { DateKey, addDays, formatDueDate, fromKey, toKey, todayKey } from "../../../lib/dates";
 import { parseTrailingDate } from "../../../lib/parse-date";
 import { Priority, Task } from "../../../lib/types";
-import { DEFAULT_PRIORITY, PRIORITIES, PRIORITY_LABEL } from "../../../lib/weights";
+import { DEFAULT_PRIORITY } from "../../../lib/weights";
 import { radius, themed, useStyles, useTheme } from "../theme";
 import { Btn, Field, useInputStyle } from "./ui";
 
@@ -42,7 +42,7 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
 
   const [raw, setRaw] = useState(task?.title ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
-  const [priority, setPriority] = useState<Priority>(task?.priority ?? DEFAULT_PRIORITY);
+  const priority = task?.priority ?? DEFAULT_PRIORITY;
   // Null until the user picks a date explicitly; new tasks let the text decide.
   const [pickedDate, setPickedDate] = useState<DateKey | null>(
     task ? task.dueDate : null,
@@ -152,28 +152,6 @@ export default function TaskSheet({ task, onSubmit, onDelete, onClose }: Props) 
                     >
                       <Text style={[s.chipText, active && s.chipTextActive]}>
                         {q.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </Field>
-
-            <Field label="Priority" hint="Medium doubles a task’s weight; high quadruples it.">
-              <View style={s.priorityRow}>
-                {PRIORITIES.map((option) => {
-                  const active = option === priority;
-                  return (
-                    <Pressable
-                      key={option}
-                      onPress={() => setPriority(option)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                      accessibilityLabel={`${PRIORITY_LABEL[option]} priority`}
-                      style={[s.chip, s.priorityChip, active && s.chipActive]}
-                    >
-                      <Text style={[s.chipText, active && s.chipTextActive]}>
-                        {PRIORITY_LABEL[option]}
                       </Text>
                     </Pressable>
                   );

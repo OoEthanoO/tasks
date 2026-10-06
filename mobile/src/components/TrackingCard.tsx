@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { Pressable, Switch, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
+import { Pressable, Text, TextInput, View, type StyleProp, type TextStyle } from "react-native";
 import { sanitizeEndTime } from "../../../lib/app-state";
-import { formatDuration, RESET_PROGRESS_CONFIRMATION } from "../../../lib/tracking";
+import { dayEnd, formatDuration, outingAdvice, RESET_PROGRESS_CONFIRMATION, TURN_MS } from "../../../lib/tracking";
 import { describeFocus } from "../../../lib/focus";
-import { clampWhole, DayPlan, sanitizeClockTime, SPLIT_PARTS } from "../../../lib/plan";
-import { MINIMUM_MINUTES } from "../../../lib/minimum";
+import { clampWhole, DayPlan, sanitizeClockTime } from "../../../lib/plan";
 import { Tracker } from "../useTracking";
 import { themed, useStyles, useTheme } from "../theme";
 import { Banner, Btn, Card, CardHead } from "./ui";
@@ -30,79 +29,75 @@ function TimeField({ label, value, onCommit, style }: { label: string; value: st
     onEndEditing={e => { const clean = sanitizeClockTime(e.nativeEvent.text, value); setDraft(clean); if (clean !== value) onCommit(clean); }} />;
 }
 
-export default function TrackingCard({ tracker: t, endTime, onEndTimeChange, plan, onPlanChange, unweighted, onUnweightedChange, minimumEnabled, onMinimumChange, minimumMinutes, onMinimumMinutesChange }: {
-  tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void; plan: DayPlan; onPlanChange: (value: DayPlan) => void;
-  unweighted: boolean; onUnweightedChange: (value: boolean) => void;
-  minimumEnabled: boolean; onMinimumChange: (value: boolean) => void;
-  minimumMinutes: number; onMinimumMinutesChange: (value: number) => void;
+export default function TrackingCard({ tracker: t, endTime, onEndTimeChange }: {
+  tracker: Tracker; endTime: string; onEndTimeChange: (value: string) => void;
+  plan?: DayPlan; onPlanChange?: (value: DayPlan) => void;
+  unweighted?: boolean; onUnweightedChange?: (value: boolean) => void;
+  minimumEnabled?: boolean; onMinimumChange?: (value: boolean) => void;
+  minimumMinutes?: number; onMinimumMinutesChange?: (value: number) => void;
 }) {
   const s = useStyles(styles);
   const { c } = useTheme();
   const state = t.state;
   const [confirmReset, setConfirmReset] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [outingOpen, setOutingOpen] = useState(false);
+  const [travel, setTravel] = useState(0), [reserved, setReserved] = useState(0);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
   const f = describeFocus(state, t.progress, t.ready);
-  const working = f.working;
+  const last = state.tasks.find(task => task.id === state.pacing?.turn?.taskId && !task.completed);
+  const offerContinue = !f.working && last && state.pacing?.turn && state.pacing.turn.elapsedMs >= TURN_MS && last.id !== f.next?.id;
+  const outing = outingAdvice(state, state.cursor, travel, reserved);
+  const clockTime = (at: number) => new Intl.DateTimeFormat(undefined, { timeZone: state.timeZone, hour: "numeric", minute: "2-digit" }).format(at);
   return <Card>
     <CardHead title="Today’s focus" />
-    <Text style={s.hint}>Work day {plan.startTime}–{endTime}</Text>
-    <Text style={[s.label, !working && { color: c.dim }]}>{f.label}</Text>
+    <Text style={s.hint}>30-minute turns · same rule every day</Text>
+    <Text style={[s.label, !f.working && { color: c.dim }]}>{f.label}</Text>
     <Text style={s.title}>{f.title}</Text>
     <Text style={s.clock} accessibilityRole="timer" accessibilityLabel={f.clockLabel}>{formatDuration(f.clock, true)}</Text>
     <Text style={s.hint}>{f.hint}</Text>
     {f.advice && <Banner tone="warn">{f.advice}</Banner>}
-    <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (!working && !f.canStart)} label={t.busy ? "Syncing…" : working ? "Pause tracking" : "Start working"} onPress={() => void t.command({ type: working ? "pause" : "start" })} />
+    <Btn style={{ marginVertical: 16 }} tone="primary" disabled={!t.ready || t.busy || (!f.working && !f.canStart)} label={t.busy ? "Syncing…" : f.working ? "Pause tracking" : f.done ? "Track extra work" : "Start suggested task"} onPress={() => void t.command({ type: f.working ? "pause" : "start" })} />
+    {offerContinue && <Btn label={"Continue " + last.title} disabled={t.busy || !t.ready} onPress={() => void t.command({ type: "continue" })} />}
     {t.error && <Banner tone="danger" action={<Btn label="Refresh timer" onPress={() => void t.refresh()} />}>{t.error}</Banner>}
     {t.message && <Banner tone="ok" action={<Btn label="Dismiss" onPress={t.dismissMessage} />}>{t.message}</Banner>}
     <View style={s.totals}>
       <View><Text style={s.hint}>Worked today</Text><Text style={s.total}>{formatDuration(state.workMs, true)}</Text></View>
-      <View><Text style={s.hint}>Work left</Text><Text style={s.total}>{formatDuration(f.workLeft)}</Text></View>
-      <View><Text style={s.hint}>{f.idleStat.label}</Text><Text style={s.total}>{formatDuration(f.idleStat.value)}</Text></View>
+      <View><Text style={s.hint}>Recommended left</Text><Text style={s.total}>{t.ready ? formatDuration(f.workLeft) : "—"}</Text></View>
+      <View><Text style={s.hint}>Recommended</Text><Text style={s.total}>{t.ready ? f.goalText : "—"}</Text></View>
     </View>
-    <Pressable style={s.settingsHeader} accessibilityRole="button" accessibilityLabel="Day settings" accessibilityState={{ expanded: settingsOpen }} onPress={() => setSettingsOpen(!settingsOpen)}>
-      <View style={{ flex: 1 }}><Text style={s.settingsTitle}>Day settings</Text><Text style={s.hint}>{plan.workParts}:{plan.idleParts} work:idle · {unweighted ? "Equal weights" : "Weighted"} · {minimumEnabled ? `${minimumMinutes}m minimum` : "No minimum"}</Text></View>
-      <Text style={s.settingsTitle}>{settingsOpen ? "−" : "+"}</Text>
+    <Pressable style={s.settingsHeader} accessibilityRole="button" accessibilityState={{ expanded: outingOpen }} onPress={() => setOutingOpen(!outingOpen)}>
+      <Text style={s.settingsTitle}>Can I go out now? {outingOpen ? "−" : "+"}</Text>
+    </Pressable>
+    {outingOpen && <View style={s.settingsBody}>
+      <Text style={s.hint}>Travel, round trip (minutes)</Text>
+      <WholeField style={s.input} label="Round-trip travel minutes" value={travel} range={{ min: 0, max: 1440 }} onCommit={setTravel} />
+      <Text style={s.hint}>Other time to keep free (meals, etc., minutes)</Text>
+      <WholeField style={s.input} label="Other reserved minutes" value={reserved} range={{ min: 0, max: 1440 }} onCommit={setReserved} />
+      <Text style={s.total}>{state.cursor >= dayEnd(state) ? "Bedtime has passed." : outing.availableMs > 0
+        ? "Up to " + formatDuration(outing.availableMs) + " there; leave by " + clockTime(outing.latestReturn + travel * 30_000) + "."
+        : "No outing time fits alongside the remaining recommendation."}</Text>
+      <Text style={s.hint}>Assumes you leave now, split travel equally each way, and can do the remaining work afterward. This fits your recommendation, not a promise that all tasks will be finished.</Text>
+      {f.working && <Text style={s.hint}>Pause tracking before you go.</Text>}
+    </View>}
+    <Pressable style={s.settingsHeader} accessibilityRole="button" accessibilityLabel="Pacing and settings" accessibilityState={{ expanded: settingsOpen }} onPress={() => setSettingsOpen(!settingsOpen)}>
+      <Text style={s.settingsTitle}>Pacing and settings {settingsOpen ? "−" : "+"}</Text>
     </Pressable>
     {settingsOpen && <View style={s.settingsBody}>
-    <View style={s.controls}>
-      <Text style={s.hint}>Work day starts at</Text>
-      <TimeField style={s.input} label="Work day start time, 24 hour clock" value={plan.startTime} onCommit={startTime => onPlanChange({ ...plan, startTime })} />
-    </View>
-    <View style={s.controls}>
-      <Text style={s.hint}>Work day ends at</Text>
-      <TimeField style={s.input} label="Work day end time, 24 hour clock" value={endTime} onCommit={value => onEndTimeChange(sanitizeEndTime(value))} />
-    </View>
-    <View style={[s.controls, s.wrap]}>
-      <Text style={s.hint}>Work : idle</Text>
-      <WholeField style={[s.input, s.minutes]} label="Work parts of the ratio" value={plan.workParts} range={SPLIT_PARTS} onCommit={workParts => onPlanChange({ ...plan, workParts })} />
-      <Text style={s.hint}>:</Text>
-      <WholeField style={[s.input, s.minutes]} label="Idle parts of the ratio" value={plan.idleParts} range={SPLIT_PARTS} onCommit={idleParts => onPlanChange({ ...plan, idleParts })} />
-    </View>
-    <Text style={s.hint}>Untracked time is idle. 1:1 is recommended.</Text>
-    <View style={s.controls}>
-      <Text style={s.hint}>Unweighted</Text>
-      <Switch value={unweighted} onValueChange={onUnweightedChange} accessibilityLabel="Unweighted" accessibilityHint="Give every open task equal weight." trackColor={{ true: c.accent, false: c.line }} />
-    </View>
-    <Text style={s.hint}>Give every open task equal weight.</Text>
-    <View style={s.controls}>
-      <Text style={s.hint}>Daily minimum</Text>
-      <Switch value={minimumEnabled} onValueChange={onMinimumChange} accessibilityLabel="Daily minimum" accessibilityHint={`Skip tasks whose daily target is under ${minimumMinutes} minutes. The first eligible task is always kept.`} trackColor={{ true: c.accent, false: c.line }} />
-    </View>
-    <View style={s.controls}>
-      <WholeField style={[s.input, s.minutes]} label="Minimum daily target in minutes" value={minimumMinutes} range={MINIMUM_MINUTES} onCommit={onMinimumMinutesChange} />
-      <Text style={s.hint}>min per task</Text>
-    </View>
-    <Text style={s.hint}>Skip daily targets below {minimumMinutes} minutes. The first eligible task is always kept.</Text>
-    <Text style={s.hint}>{state.timeZone} · settings save automatically</Text>
-    <View style={s.settingsSection}>
-      <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
-      <Text style={s.hint}>Alerts follow the device that last started, paused or reset tracking; until one has, every device alerts. Open this app to refresh alerts after changing the timer elsewhere.</Text>
-    </View>
-    <View style={s.settingsSection}>
-      <Text style={s.explainer}>Remaining targets shrink to fit the time until your day ends. Only explicit tracking adds worked time; pausing never does. Time already logged stays unchanged. Each day starts fresh at midnight.</Text>
-      <Btn tone="ghost" label="Reset today’s progress…" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} />
-    </View>
+      <Text style={s.explainer}>Each unfinished task adds 60 minutes ÷ (days until due + 1). Today and overdue count as zero days. Round up to 30 minutes, capped at 3 hours every day. This is pacing advice, not an estimate of all the work required.</Text>
+      <Text style={s.explainer}>All open tasks get turns. Near deadlines receive at most a 2× boost. Rotation continues across days; daily counters reset at midnight. Pausing never adds work or debt. Extra work is always optional.</Text>
+      <View style={s.controls}>
+        <Text style={s.hint}>Bedtime (outing advice only)</Text>
+        <TimeField style={s.input} label="Bedtime, 24 hour clock" value={endTime} onCommit={value => onEndTimeChange(sanitizeEndTime(value))} />
+      </View>
+      <Text style={s.hint}>{state.timeZone} · settings save automatically</Text>
+      <View style={s.settingsSection}>
+        <Btn tone="ghost" label={t.permission} onPress={() => void t.enableNotifications()} />
+        <Text style={s.hint}>Alerts follow the device that last controlled tracking. Open this app to refresh alerts after changing the timer elsewhere.</Text>
+      </View>
+      <View style={s.settingsSection}>
+        <Btn tone="ghost" label="Reset today’s progress…" disabled={!t.ready || t.busy} onPress={() => setConfirmReset(true)} />
+      </View>
     </View>}
     {confirmReset && <ConfirmSheet title="Reset today’s progress?" body={RESET_PROGRESS_CONFIRMATION} confirmLabel="Reset progress" cancelLabel="Keep progress" onCancel={() => setConfirmReset(false)} onConfirm={() => { setConfirmReset(false); void t.command({ type: "reset" }); }} />}
   </Card>;

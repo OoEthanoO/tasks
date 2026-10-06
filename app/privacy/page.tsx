@@ -33,7 +33,7 @@ export default function PrivacyPage() {
           The short version
         </h2>
         <p>
-          YanTasks stores your tasks, tracked work and rest time, and account. There is
+          YanTasks stores your tasks, tracked work, rotation history, and account. There is
           no analytics, no advertising or cross-site tracking, and nothing is sold
           or handed to anyone else. You can delete your account, and everything in it,
           from inside the app at any time.
@@ -68,7 +68,7 @@ export default function PrivacyPage() {
             description field the way you would any note you keep online.
           </li>
           <li>
-            <strong>Your timer and preferences</strong>: daily work and rest totals, per-task time, active timer timestamps, the timer’s time zone, a random app-generated controller ID, and the work-day end time. Legacy schedules and recommendations may remain from older versions.
+            <strong>Your timer and preferences</strong>: daily work totals, per-task time, long-term rotation service, turn progress, the daily recommendation, active timer timestamps, the timer’s time zone, a random app-generated controller ID, and bedtime. Legacy rest counters, day settings, schedules and recommendations may remain from older versions.
           </li>
           <li>
             <strong>Session tokens</strong>, stored only as a SHA-256 digest, so a copy

@@ -1,9 +1,9 @@
 # YanTasks
 
-A task manager that decides what you should work on next. Tasks are weighted by
-how urgent they are and the priority you give them. Set when your work day starts
-and ends; the day splits into work and idle time (1:1 by default). Track the work
-whenever it suits you while proportional daily targets divide it among your tasks.
+A deadline-paced work tracker. Add tasks and due dates, then start when you can
+work and pause when you cannot. A daily recommendation scales with deadline
+pressure, while a persistent fair rotation gives even distant tasks a turn.
+There are no school-day categories, look-ahead cutoffs, or idle allowances.
 
 The [Windows desktop app](desktop/README.md) adds native background alerts,
 taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync.
@@ -135,134 +135,81 @@ past (an overdue task) and rolls to next year beyond that. Anything unrecognized
 is left alone as part of the name, and the date defaults to today. You can
 always override the date by hand in the details section or by editing the task.
 
-## Weights
+## Daily recommendation
 
-With `n` = days until due (negative once overdue):
+For each unfinished task, let `d = max(0, calendar days until due)`. Its contribution
+is `60 / (d + 1)` minutes. Add the contributions, round **up** to the nearest
+30 minutes, and cap at **3 hours every day**. No tasks means no recommended work.
 
-| Situation | Weight |
-| --- | --- |
-| Due tomorrow | `1` |
-| Due the day after tomorrow | `1/2` |
-| Due in `n` days | `1 / n` |
-| Due today | `2` |
-| Due yesterday | `3` |
-| Due `d` days ago | `d + 2` |
-| Completed | `0` |
+For example, tasks due today, tomorrow and in 5 days contribute 60 + 30 + 10 =
+100 minutes, rounded to 2 hours. All open tasks count, even those far in the
+future. Completed tasks do not. The 3-hour ceiling protects time away from work;
+this recommendation is a pacing heuristic, **not an estimate or guarantee of
+finishing every task**. The UI warns when uncapped pressure exceeds the ceiling.
 
-In one line: `n >= 1 → 1/n`, otherwise `2 - n`.
+Waiting never consumes a work/idle quota or shrinks the recommendation. It
+recalculates when tasks are added, removed, completed or rescheduled, and on the
+next account-local calendar day. Changes never erase earned work. Existing
+priorities, start times, ratios, minimum settings and schedule data remain
+readable for compatibility, but do not affect pacing and have no current controls.
 
-Each task also has a **priority** that multiplies that curve:
+## Fair 30-minute turns
 
-| Priority | Multiplier |
-| --- | --- |
-| Low (default) | `×1` |
-| Medium | `×2` |
-| High | `×4` |
+Each open task has a rotation weight of `1 + 1 / (d + 1)`, between 1× and 2×.
+Near deadlines get a bounded boost rather than exclusive access. Actual tracked
+time divided by the weight at the time it was worked accumulates as virtual
+service. The task with the least service is suggested next; exact ties use due
+date then creation order. New tasks join at the current service frontier, with
+no debt for time before they existed. Rotation history carries across days, so
+a small daily recommendation cannot repeatedly starve the same later tasks.
 
-So a high-priority task due in four days (`4 × 1/4 = 1`) pulls exactly as hard
-as a low-priority task due tomorrow. Tasks created before priorities existed
-read as low. Weights display as exact fractions (`2/3`, `4/5`), never rounded.
+Start resumes a partial turn or begins the suggested task. You can choose any
+open task instead. Tracking pauses at 30 minutes and alerts you; choose the next
+task or **Continue** the same one. It never silently starts logging a different
+task. Completing or deleting the active task pauses, preserving all earned time.
+Only the task checkbox means the task itself is finished.
 
-Open tasks aim for proportional **work time** by weight. The day's work time
-comes from the work day and its split (see below). The app balances final task
-totals by weight while treating logged time as a lower bound. Tasks already above
-that balance receive no extra time; all unfinished targets together fit the work
-still left today.
+The daily recommendation also pauses the timer when reached. You may explicitly
+track extra work, including after bedtime. Daily counters reset at account-local
+midnight and tracking pauses, but rotation and an unfinished turn are retained.
+Nothing untracked becomes work or debt.
 
-Specifically, weighted water filling finds a level `L` such that
-`sum(max(0, weight * L - tracked)) = remaining available work` over open tasks.
-Each final target is `max(tracked, weight * L)`. This keeps overruns fixed instead
-of asking other tasks to make up more time than the day contains. Completed or
-deleted tasks keep their historical work but receive no new allocation.
-The **Work left** display is the day's work time not yet tracked. A task whose
-tracked time meets its current target is **Done for today**, not permanently
-completed. Changing tasks or the work day recalculates future targets while
-preserving earned time.
+**Reset today’s progress** clears daily work and pauses after confirmation. It
+does not erase task metadata or the long-term rotation. The daily reset cannot
+be undone.
 
-**30-minute minimum.** A task whose whole day would come to less than 30
-minutes (time already logged plus its share of what is left) is skipped for the
-day: a few minutes on something due weeks away barely counts. Tasks are
-considered from least to most important (lowest weight first; among equal
-weights, lowest on the list first), and each skipped share goes only to the
-tasks above it, never to less urgent ones. The most important open task is never skipped, so a short day is not
-wasted, and a task with 30 minutes already logged is never skipped. Skipped
-tasks show a 0% share and cannot be tracked that day. The decision is
-recalculated whenever tasks, the work day or the split change.
+## Optional outings
 
-## Work and idle tracking
+**Can I go out now?** reserves the remaining recommendation, round-trip travel,
+and any other time you want to keep free (meals, commitments, buffer) before
+bedtime. The rest is the suggested maximum time at the outing. It assumes leaving
+now, equal travel each way, and availability to work afterward. Pause tracking
+before going. This checks whether the recommendation fits, not whether real task
+completion is guaranteed. Bedtime affects this advice only.
 
-The work day runs from its **start** (default 09:00) to its **end** (default
-23:00). The **work : idle** split (default and recommended 1:1, each side 1–20)
-divides that window into the day's work time and idle allowance: 09:00–23:00 at
-1:1 is seven hours of each; at 2:1 it is 9h20m of work and 4h40m of idle time.
+## Synchronization and alerts
 
-Worked time increases only while you track it. Start takes the first unfinished
-daily target in list order (nearest due date, then creation order); weight
-decides how much time a task gets, not when. The timer keeps following the
-list, so a task added or moved above the current one takes over at once.
-Reaching a target alerts you and moves on to the next unfinished task down the
-list. Each task also has a Track button; a task picked with it stays until its
-target is met, then the list resumes. There are no breaks: pause whenever you like.
+Signed-in users share one timestamp-based timer and rotation in Postgres.
+Revision-checked commands prevent simultaneous devices overwriting one another.
+Web/iOS poll while open and project the same timestamps; Windows uses its
+battery-aware main-process engine. Only one explicitly chosen task is credited,
+even while an app is closed. Offline elapsed work stops at the same turn/goal
+boundary; changing an account timer requires a server connection.
 
-Every minute of the work day that you are not tracking uses **idle** time, counted
-down from the allowance to zero. Once less than half of the allowance is left and work remains, the
-app advises you to start working. Five minutes before the allowance runs out it
-warns you; when it runs out, the timer shows **Paused** until you choose
-**Start working** or **Track**. Remaining work is the smaller of the untracked
-work goal and the time until the day's end. After idle is used up, the available
-work clock and unfinished task targets shrink as time passes, even while paused;
-this never adds tracked work. Targets rebalance by weight using only that available
-time, and already logged work stays unchanged. Nothing is borrowed from another
-day. Tracking never starts on its own, and you can always pause. Once all
-of the work time is tracked, tracking stops, Start is unavailable and the rest
-of the day is idle. Before the start time nothing counts and tracking cannot
-start.
+Existing timers migrate once: elapsed time is checkpointed under the frozen
+previous calculation before pacing begins, preserving today's total/per-task
+work, current tracking state, and notification owner. Old whole-state preference
+saves cannot overwrite the timer. Guest timers import only into accounts without
+a timer and always import paused. Refresh clients and rebuild native clients
+together when deploying a calculation change.
 
-The start, end and split sit together under **Day settings** and follow your
-account to every device. Changing them mid-day keeps the work already tracked
-and recalculates the goal and the allowance, so a smaller allowance can leave
-no idle time remaining. Timers saved by older apps keep their tracked work; a break in
-progress becomes idle time.
-
-Daily tracked counters reset at midnight; the new day begins idle with its normal
-work goal and idle allowance. Neither unfinished work nor used-up idle time
-carries over. Upgrading an older borrowing timer discards its debt, but preserves
-today's total and per-task work, including elapsed work from a running session.
-The same checkpoint protects running fixed-goal timers when upgrading to end-capped targets.
-The first device starting an account timer establishes its time zone, which all
-clients share.
-
-Use **Reset today’s progress** to start fresh without waiting for midnight.
-After confirmation, it clears all of today's tracked work and pauses the shared
-timer. Time already passed today still counts as idle, so a late reset can leave
-no idle time remaining. Tasks, permanent completion and the work day settings stay
-unchanged. The reset cannot be undone.
-
-Signed-in users share one timestamp-based session in a separate Postgres row.
-Revision-checked commands prevent two devices from overwriting the same timer.
-Clients refresh it every three seconds, and compute elapsed time locally from
-the same timestamps. An active timer continues when the app is closed or the
-network drops; changing a signed-in timer requires the server. Legacy
-whole-state saves cannot overwrite tracked time.
-Existing timers are upgraded at a shared checkpoint: elapsed time under the old
-allocation is preserved before the corrected calculation starts. Refresh web
-clients and install the latest mobile build to use the same calculation everywhere.
-
-Enable alerts to receive task completion, the advice to start working at half the
-idle allowance, a warning five minutes before idle time runs out, when idle time
-is used up, and the end of today's work. The button reads the device's current permission
-on launch and on returning to the app, so its status survives refreshes and
-reflects permission changes in settings. iOS schedules these with the operating system;
-web notifications require the page to remain open. Alerts belong to the device
-that last started, paused or reset the timer; until one has, every device alerts,
-because idle reminders come due without anyone pressing anything. If the timer is changed elsewhere while
-the phone is suspended, open the phone app to refresh its scheduled alerts;
-otherwise a previously scheduled alert can be stale. This is a local-notification
-implementation, not a background cross-device push service.
-
-Old schedule data remains readable for compatibility, but no schedule is
-generated or displayed. It is never converted into worked time. Guest timer
-data migrates only into an account that has no timer, and imports paused.
+Alerts cover the end of a turn, reaching the recommendation, and an actively
+tracked turn crossing midnight. Alerts follow the last controlling device.
+Browser alerts require the page open; iOS schedules with the OS; Windows needs
+an awake PC with the app running. OS notification settings may silence delivery.
+Open iOS after changing tracking elsewhere to replace stale scheduled alerts;
+this is not a cross-device background push service. Permission state is read
+on launch and on foreground, without re-prompting on refresh.
 
 ## Appearance
 
@@ -303,7 +250,11 @@ light — changing it needs a native rebuild, not just a reload.
 npm test
 ```
 
-Assertions covering date parsing, the weight formulas, the absolute Rest
+Current pacing tests cover uniform daily rules, distant-task fairness across days,
+explicit turns, outing arithmetic, goal changes, clock/DST boundaries, revision
+races and 500 legacy migration samples. A frozen legacy suite guards the exact
+calculation used for existing elapsed time. Additional assertions cover date
+parsing, the old weight formulas, the absolute Rest
 share, proportional and evenly spread block allocation, block boundaries,
 when a schedule goes stale, when regenerating is worth asking about,
 loading older named breaks as plain Rest without changing their allocation,

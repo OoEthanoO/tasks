@@ -1,14 +1,11 @@
 import { Pressable, Text, View } from "react-native";
 import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
 import { dueBucket } from "../../../lib/grouping";
-import { skippedExplanation, TaskProgress, formatDuration } from "../../../lib/tracking";
+import { TaskProgress, formatDuration } from "../../../lib/tracking";
 import { Btn } from "./ui";
 import {
-  DEFAULT_PRIORITY,
-  PRIORITY_LABEL,
   WeightedTask,
   formatProbability,
-  formatWeight,
 } from "../../../lib/weights";
 import { radius, themed, useStyles, useTheme } from "../theme";
 
@@ -75,14 +72,9 @@ export default function TaskRow({
           </Text>
         ) : null}
         {progress && !task.completed && <>
-          {progress.skipped ? <>
-            <Text style={s.metaText}>{formatDuration(progress.trackedMs)} today</Text>
-            <Text style={s.metaText} accessibilityHint={skippedExplanation(progress.minimumMs)}>Skipped today: under {formatDuration(progress.minimumMs)}</Text>
-          </> : <>
-            <Text style={s.metaText}>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</Text>
-            <Text style={[s.metaText, { color: progress.doneToday ? c.ok : c.accent }]}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</Text>
-          </>}
-          <Btn label={active ? "Tracking" : "Track"} disabled={trackingDisabled || progress.doneToday || active} onPress={onTrack} />
+          <Text style={s.metaText}>{formatDuration(progress.trackedMs)} worked today</Text>
+          <Text style={[s.metaText, { color: active ? c.accent : c.dim }]}>{active ? `${formatDuration(progress.remainingMs)} until pause` : progress.partialTurn ? `Turn paused · ${formatDuration(progress.remainingMs)} left` : `Rotation #${progress.queuePosition}`}</Text>
+          <Btn label={active ? "Tracking" : "Track"} disabled={trackingDisabled || active} onPress={onTrack} />
         </>}
         <View style={s.meta}>
           <Text style={[s.metaText, { color: dueColor }]}>
@@ -92,16 +84,8 @@ export default function TaskRow({
             <>
               <Text style={s.sep}>·</Text>
               <Text style={s.metaText}>{describeDelta(task.dueDate, today)}</Text>
-              {task.priority !== DEFAULT_PRIORITY && (
-                <>
-                  <Text style={s.sep}>·</Text>
-                  <Text style={[s.metaText, s.priority, task.priority === "high" && s.priorityHigh]}>
-                    {PRIORITY_LABEL[task.priority]} priority
-                  </Text>
-                </>
-              )}
               <Text style={s.sep}>·</Text>
-              <Text style={s.metaText}>weight {formatWeight(weight)}</Text>
+              <Text style={s.metaText}>{weight.toFixed(2)}× rotation weight</Text>
             </>
           )}
         </View>
@@ -113,7 +97,7 @@ export default function TaskRow({
           accessibilityLabel={
             task.completed
               ? "Completed tasks are never picked"
-              : `${formatProbability(probability)} share of work time`
+              : `${formatProbability(probability)} long-run share when following the rotation, not a daily quota`
           }
         >
           {task.completed ? "—" : formatProbability(probability)}

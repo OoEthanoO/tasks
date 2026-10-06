@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { createTrackingHook } = require("../.test-build/use-tracking.js");
-const { createTracking } = require("../.test-build/tracking.js");
+const { createTracking, actOnTracking } = require("../.test-build/tracking.js");
+const legacyCreate = require("../.test-build/legacy-tracking.js").createTracking;
 const { api } = require("../.test-build/remote.js");
 
 // Exercise the shared hook through its injected hook/adapter boundary without
@@ -98,7 +99,7 @@ console.log("5 alert permission lifecycle scenarios passed");
 
 const realNow=Date.now, start=Date.parse("2026-09-14T08:00:00Z"), minute=60_000;
 const tasks=["a","b"].map(id=>({id,title:id,description:"",dueDate:"2026-09-14",createdAt:new Date(start).toISOString(),completed:false,completedAt:null}));
-const legacy={...createTracking(tasks,"10:00","UTC",start,PLAN),mode:"work",taskId:"a",controllerId:"test-device"};
+const legacy={...legacyCreate(tasks,"10:00","UTC",start,PLAN),mode:"work",taskId:"a",controllerId:"test-device"};
 delete legacy.allocationVersion;
 let saved=JSON.stringify(legacy), writes=0;
 Date.now=()=>start+60*minute;
@@ -109,7 +110,7 @@ try {
   assert.equal(tracker.value.state.allocationVersion,2);
   assert.equal(tracker.value.state.taskMs.a,60*minute);
   assert.equal(tracker.value.state.taskMs.b??0,0);
-  assert.equal(tracker.value.remainingWorkMs,30*minute);
+  assert.equal(tracker.value.remainingWorkMs,60*minute);
   await tracker.value.refresh(); await tracker.flush();
   assert.equal(writes,1,"polling must not repeat the migration");
   assert.equal(JSON.parse(saved).revision,1);
@@ -117,7 +118,7 @@ try {
 console.log("1 guest allocation upgrade scenario passed");
 
 Date.now = () => start + 70 * minute;
-saved = JSON.stringify({ ...createTracking(tasks, "10:00", "UTC", start, PLAN), workOnlyVersion: 1, mode: "work", taskId: "a", controllerId: "test-device" });
+saved = JSON.stringify({ ...legacyCreate(tasks, "10:00", "UTC", start, PLAN), workOnlyVersion: 1, mode: "work", taskId: "a", controllerId: "test-device" });
 writes = 0;
 const workOnlyAdapter = { ...adapter, read: async () => saved, write: async value => { saved = value; writes++; } };
 tracker = mount(workOnlyAdapter, { tasks, endTime: "10:00" });
@@ -133,7 +134,7 @@ try {
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 guest work-only rollback and remount scenario passed");
 
-const coverage = { ...createTracking(tasks, "18:00", "UTC", start, PLAN), coverageVersion: 1, coverageDays: 3, coverageGoalMs: 100 * minute, mode: "work", taskId: "a", controllerId: "test-device" };
+const coverage = { ...legacyCreate(tasks, "18:00", "UTC", start, PLAN), coverageVersion: 1, coverageDays: 3, coverageGoalMs: 100 * minute, mode: "work", taskId: "a", controllerId: "test-device" };
 Date.now = () => start + 70 * minute;
 saved = JSON.stringify(coverage); writes = 0;
 const rollbackAdapter = { ...adapter, read: async () => saved, write: async value => { saved = value; writes++; } };
@@ -155,50 +156,32 @@ saved = JSON.stringify(createTracking(tasks, "18:00", "UTC", start, PLAN));
 const persistentAdapter = { ...adapter, read: async () => saved, write: async value => { saved = value; } };
 tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
 try {
-  await tracker.flush(); tracker.setUnweighted(true); await tracker.flush();
-  assert.equal(tracker.value.state.unweighted, true);
-  assert.equal(JSON.parse(saved).unweighted, true);
-  assert.ok(tracker.value.progress.every(p => p.weight === 1));
-  tracker.unmount();
-  tracker = mount(persistentAdapter, { tasks, endTime: "18:00", unweighted: true });
-  await tracker.flush(); await tracker.value.command({ type: "start" }); await tracker.flush();
-  assert.equal(tracker.value.state.unweighted, true, "refresh and commands preserve the preference");
-  tracker.setUnweighted(false); await tracker.flush();
-  assert.equal(JSON.parse(saved).unweighted, false);
-  assert.ok(tracker.value.progress.every(p => p.weight === 2));
-} finally { tracker.unmount(); Date.now = realNow; }
-console.log("1 guest unweighted persistence scenario passed");
-
-Date.now = () => start;
-saved = JSON.stringify(createTracking(tasks, "08:20", "UTC", start, PLAN));
-tracker = mount(persistentAdapter, { tasks, endTime: "08:20" });
-try {
   await tracker.flush();
-  assert.equal(tracker.value.progress[1].skipped, true);
-  tracker.setMinimumMinutes(5); await tracker.flush();
-  assert.equal(JSON.parse(saved).minimumMinutes, 5);
-  assert.equal(tracker.value.progress[1].skipped, false);
-  tracker.setMinimumEnabled(false); await tracker.flush();
-  assert.equal(JSON.parse(saved).minimumEnabled, false);
-  assert.ok(tracker.value.progress.every(p => !p.skipped));
-  tracker.unmount();
-  tracker = mount(persistentAdapter, { tasks, endTime: "08:20", minimumEnabled: false, minimumMinutes: 5 });
-  await tracker.flush(); await tracker.value.command({ type: "start" }); await tracker.flush();
-  assert.equal(tracker.value.state.minimumEnabled, false);
-  assert.equal(tracker.value.state.minimumMinutes, 5);
-  Date.now = () => start + minute;
-  tracker.setMinimumEnabled(true); await tracker.flush();
-  assert.equal(tracker.value.progress[1].skipped, false);
-  tracker.setMinimumMinutes(15); await tracker.flush();
-  assert.equal(JSON.parse(saved).minimumEnabled, true);
-  assert.equal(tracker.value.state.workMs, minute);
-  assert.equal(tracker.value.progress[1].skipped, true);
-} finally { tracker.unmount(); Date.now = realNow; }
-console.log("1 guest minimum toggle persistence scenario passed");
+  const goal = tracker.value.remainingWorkMs;
+  tracker.setUnweighted(true); tracker.setMinimumEnabled(false); tracker.setMinimumMinutes(5);
+  await tracker.flush();
+  assert.equal(tracker.value.remainingWorkMs,goal,"retired allocation controls cannot change pacing");
+  assert.ok(tracker.value.progress.every(p=>p.weight===2 && !p.skipped));
+  await tracker.value.command({type:"start"}); await tracker.flush();
+  Date.now = () => start + 10*minute;
+  await tracker.value.command({type:"pause"}); await tracker.flush();
+  assert.equal(tracker.value.state.workMs,10*minute);
+  tracker.unmount(); Date.now = () => start + 60*minute;
+  tracker=mount(persistentAdapter,{tasks,endTime:"18:00"});
+  await tracker.flush();
+  assert.equal(tracker.value.state.workMs,10*minute);
+  assert.equal(tracker.value.state.pacing.turn.elapsedMs,10*minute);
+  assert.equal(tracker.value.remainingWorkMs,goal-10*minute,"paused time leaves the recommendation alone");
+  await tracker.value.command({type:"start"}); await tracker.flush();
+  Date.now=()=>start+90*minute; await tracker.value.refresh(); await tracker.flush();
+  assert.equal(tracker.value.state.workMs,30*minute,"resume stops at the original turn boundary");
+  assert.equal(tracker.value.state.mode,"idle");
+} finally { tracker.unmount(); Date.now=realNow; }
+console.log("1 guest pacing, retired-settings and partial-turn persistence scenario passed");
 
 // Persist the no-borrowing checkpoint without a command, preserving today's
 // work on both the first load and a remount. Tomorrow starts without old debt.
-const beforeBorrowing = createTracking(tasks, "18:00", "UTC", start, PLAN);
+const beforeBorrowing = legacyCreate(tasks, "18:00", "UTC", start, PLAN);
 delete beforeBorrowing.idlePolicyVersion;
 delete beforeBorrowing.workLimitVersion;
 beforeBorrowing.carryMs = 60 * minute;
@@ -224,14 +207,14 @@ try {
   tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
   await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);
-  assert.equal(tracker.value.remainingWorkMs, 450 * minute);
+  assert.equal(tracker.value.remainingWorkMs, 120 * minute);
   assert.equal(tracker.value.state.workMs, 0); assert.equal(tracker.value.state.mode, "idle");
   await tracker.value.command({ type: "reset" }); await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 data-preserving guest no-borrowing upgrade, remount and rollover scenario passed");
 
-const fixedGoal = createTracking(tasks, "18:00", "UTC", start, PLAN);
+const fixedGoal = legacyCreate(tasks, "18:00", "UTC", start, PLAN);
 delete fixedGoal.workLimitVersion;
 Object.assign(fixedGoal, { mode: "work", taskId: "a", workMs: 140 * minute, taskMs: { a: 140 * minute }, cursor: start + 400 * minute, controllerId: "test-device" });
 Date.now = () => start + 450 * minute;
@@ -245,7 +228,7 @@ try {
   assert.equal(JSON.parse(saved).workLimitVersion, 1);
   assert.equal(tracker.value.state.workMs, 190 * minute);
   assert.deepEqual(tracker.value.state.taskMs, { a: 190 * minute });
-  assert.equal(tracker.value.remainingWorkMs, 150 * minute);
+  assert.equal(tracker.value.remainingWorkMs, 0);
   tracker.unmount();
   tracker = mount(capAdapter, { tasks, endTime: "18:00" });
   await tracker.flush();
@@ -255,7 +238,7 @@ try {
   Date.now = () => start + 460 * minute;
   await tracker.value.refresh(); await tracker.flush();
   assert.equal(tracker.value.state.workMs, 190 * minute);
-  assert.equal(tracker.value.remainingWorkMs, 140 * minute);
+  assert.equal(tracker.value.remainingWorkMs, 0);
   assert.equal(tracker.value.state.mode, "idle");
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 guest capped-target migration and paused-time regression scenario passed");
@@ -273,7 +256,7 @@ globalThis.setInterval = (fn, delay) => { const id = ++nextTimer; intervals.set(
 globalThis.clearInterval = id => intervals.delete(id);
 Date.now = () => wall;
 let responseDelay = 0;
-let remote = { ...createTracking(tasks, "18:00", "UTC", start, PLAN), revision: 2 };
+let remote = { ...actOnTracking(createTracking(tasks, "18:00", "UTC", start, PLAN), { type: "start" }, "test-device", start), revision: 2 };
 api.loadTracking = async () => ({ tracking: remote, serverNow: wall + 8000 - responseDelay });
 tracker = mount(adapter, { tasks, endTime: "18:00", accountId: "account" });
 const tickAt = async when => {
@@ -287,13 +270,13 @@ try {
   await tracker.flush();
   assert.equal(Math.floor(tracker.value.state.cursor / 1000) * 1000, start + 8000);
   await tickAt(start + 1000);
-  const initialIdle = tracker.value.idleLeftMs;
+  const initialRemaining = tracker.value.remainingWorkMs;
   assert.equal(tracker.value.state.cursor, start + 9000);
   wall = start + 1300; responseDelay = 800;
   await tracker.value.refresh(); await tracker.flush();
   assert.equal(tracker.value.state.cursor, start + 9000, "a slow response must not rewind or insert a partial display second");
   await tickAt(start + 2000);
-  assert.equal(tracker.value.idleLeftMs, initialIdle - 1000);
+  assert.equal(tracker.value.remainingWorkMs, initialRemaining - 1000);
   wall = start + 2300; responseDelay = 20;
   await tracker.value.refresh(); await tracker.flush();
   assert.equal(tracker.value.state.cursor, start + 10_000, "a fast response must not accelerate the display");
@@ -301,12 +284,12 @@ try {
   await tracker.value.refresh(); await tracker.flush();
   await tickAt(start + 3000);
   assert.equal(tracker.value.state.cursor, start + 11_000, "a stale revision cannot alter the clock offset");
-  assert.equal(tracker.value.idleLeftMs, initialIdle - 2000);
+  assert.equal(tracker.value.remainingWorkMs, initialRemaining - 2000);
   remote = { ...remote, revision: 2 }; responseDelay = 50;
   wall = start + 5 * minute + 650;
   foreground(); await tracker.flush();
   assert.equal(tracker.value.state.cursor, start + 5 * minute + 8000, "foreground catches up immediately after throttling");
-  assert.equal(tracker.value.state.workMs, 0, "display refreshes must not track work");
+  assert.equal(tracker.value.state.workMs, 5 * minute + 8000, "foreground catches up only the explicitly tracked task");
 } finally {
   tracker.unmount();
   Date.now = realNow; api.loadTracking = realLoadTracking;
