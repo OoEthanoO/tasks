@@ -9,7 +9,8 @@ const {commandTracking,loadTracking,readAccountTracking,configureAccountTracking
 const {saveState,loadState}=require("../.test-build/db.js");
 const MIN=60_000,T=Date.parse("2026-10-05T12:00:00Z");
 const task=(id,dueDate="2026-10-05",priority="low")=>({id,title:id,description:"",dueDate,priority,createdAt:new Date(T).toISOString(),completed:false,completedAt:null});
-const fresh=(tasks=[task("a"),task("b","2026-10-12")],now=T)=>t.createTracking(tasks,"13:00","UTC",now,{startTime:"12:00",workParts:1,idleParts:1});
+// Retain seven-day regression fixtures while separately exercising the new default.
+const fresh=(tasks=[task("a"),task("b","2026-10-12")],now=T,days=7)=>t.createTracking(tasks,"13:00","UTC",now,{startTime:"12:00",workParts:1,idleParts:1},undefined,undefined,undefined,days);
 const near=(a,b)=>assert.ok(Math.abs(a-b)<.01,a+" != "+b);
 let count=0;
 const check=(name,fn)=>{fn();count++;console.log("✓ "+name);};
@@ -19,7 +20,7 @@ check("Oct 5 includes Oct 12 and overdue tasks, never Oct 13 or completed tasks"
  assert.equal(t.coverageCutoff(s),"2026-10-12");
  const p=t.taskProgress(s);assert.deepEqual(p.map(x=>x.weight),[3,2,1/7,0,0]);
  assert.ok(eligible(p).every(x=>x.targetMs+1>=30*MIN));assert.equal(p[3].skipped,true);assert.equal(p[4].skipped,false);
- assert.match(t.skippedExplanation(),/more than seven days/);near(t.workBudget(s),1080*MIN);
+ assert.match(t.skippedExplanation(7),/Outside the next 7 days/);near(t.workBudget(s),1080*MIN);
 });
 check("smallest whole-minute budgets respect weights, priority and upward rounding",()=>{
  const s=fresh(),p=t.taskProgress(s);near(t.workBudget(s),450*MIN);near(p[0].targetMs,420*MIN);near(p[1].targetMs,30*MIN);
@@ -35,7 +36,7 @@ check("smallest whole-minute budgets respect weights, priority and upward roundi
 check("retired clocks, ratios, unweighted and minimum preferences have no effect",()=>{
  const tasks=[task("a"),task("b","2026-10-12")];
  for(const clock of ["00:00","13:00","23:59"]){
-  const s=t.createTracking(tasks,clock,"UTC",T,{startTime:clock,workParts:20,idleParts:1},true,false,1440);
+  const s=t.createTracking(tasks,clock,"UTC",T,{startTime:clock,workParts:20,idleParts:1},true,false,1440,7);
   near(t.workBudget(s),450*MIN);assert.deepEqual(t.taskProgress(s).map(p=>p.weight),[2,1/7]);
   assert.ok(t.canTrackWork(s));assert.equal(t.actOnTracking(s,{type:"start"},"pc",T).mode,"work");
  }
@@ -103,7 +104,7 @@ check("capped, fixed, borrowing and old allocation timers checkpoint exactly onc
  }
 });
 check("midnight resets and advances the inclusive horizon using the shared time zone",()=>{
- const now=Date.parse("2026-10-06T03:50:00Z"),s=t.createTracking([task("edge","2026-10-13")],"08:00","America/Toronto",now);
+ const now=Date.parse("2026-10-06T03:50:00Z"),s=t.createTracking([task("edge","2026-10-13")],"08:00","America/Toronto",now,undefined,undefined,undefined,undefined,7);
  assert.equal(s.dayKey,"2026-10-05");near(t.workLeftMs(s),0);
  const next=t.advanceTracking({...s,controllerId:"pc",revision:9},Date.parse("2026-10-06T04:00:00Z")).state;
  assert.equal(next.dayKey,"2026-10-06");near(t.workLeftMs(next),30*MIN);assert.equal(next.mode,"idle");assert.equal(next.controllerId,"pc");assert.equal(next.revision,9);
@@ -149,7 +150,7 @@ check("400 randomized histories meet coverage and one fewer minute cannot",()=>{
  let seed=17;const random=()=>((seed=(seed*1664525+1013904223)>>>0)/2**32);
  for(let run=0;run<400;run++){
   const list=Array.from({length:1+Math.floor(random()*15)},(_,i)=>task(String(i),new Date(T+(Math.floor(random()*15)-3)*86400000).toISOString().slice(0,10),["low","medium","high"][Math.floor(random()*3)]));
-  const s=fresh(list);s.workMs=0;s.taskMs={};
+  const s=fresh(list,T,Math.floor(random()*15));s.workMs=0;s.taskMs={};
   for(const x of list){const logged=Math.floor(random()*60000*90);s.taskMs[x.id]=logged;s.workMs+=logged;}
   s.coverageGoalMs=t.minimumCoverageGoal(s);const p=t.taskProgress(s);
   assert.ok(eligible(p).every(p=>p.targetMs+.001>=30*MIN));near(p.reduce((sum,e)=>sum+e.remainingMs,0),t.workLeftMs(s));
@@ -157,7 +158,86 @@ check("400 randomized histories meet coverage and one fewer minute cannot",()=>{
    if(lower>=s.workMs)assert.ok(eligible(t.taskProgress({...s,coverageGoalMs:lower})).some(p=>p.targetMs<30*MIN));}
  }
 });
-console.log(count+" seven-day allocation scenarios passed");
+check("new timers default to three days, inclusive of Oct 8 on Oct 5",()=>{
+ const s=t.createTracking([task("old","2026-10-04"),task("edge","2026-10-08"),task("later","2026-10-09","high")],"13:00","UTC",T);
+ assert.equal(t.DEFAULT_COVERAGE_DAYS,3);assert.equal(s.coverageDays,3);assert.equal(t.coverageCutoff(s),"2026-10-08");
+ assert.deepEqual(t.taskProgress(s).map(p=>p.skipped),[false,false,true]);
+ near(t.taskProgress(s)[1].targetMs,30*MIN);
+});
+check("zero, one and 365 days keep exact inclusive boundaries and overdue tasks",()=>{
+ for(const days of [0,1,3,7,365]){
+  const date=offset=>new Date(T+offset*86400000).toISOString().slice(0,10);
+  const s=fresh([task("old",date(-2)),task("edge",date(days)),task("later",date(days+1),"high")],T,days);
+  assert.equal(t.coverageCutoff(s),date(days));assert.deepEqual(t.taskProgress(s).map(p=>p.skipped),[false,false,true]);
+  assert.ok(eligible(t.taskProgress(s)).every(p=>p.targetMs>=30*MIN-1));
+ }
+});
+check("changing days preserves work, pause and alert owner; new tasks get a minimum",()=>{
+ let s=t.actOnTracking(fresh(),{type:"start",taskId:"b"},"owner",T);
+ s=t.actOnTracking(s,{type:"pause"},"owner",T+10*MIN);
+ const saved=JSON.stringify(s),changed=t.actOnTracking(s,{type:"set-coverage-days",days:3},"other",T+20*MIN);
+ assert.equal(changed.mode,"idle");assert.equal(changed.controllerId,"owner");near(changed.workMs,10*MIN);assert.deepEqual(changed.taskMs,s.taskMs);
+ assert.equal(changed.coverageDays,3);assert.equal(t.taskProgress(changed)[1].skipped,true);near(t.workLeftMs(changed),30*MIN);
+ const back=t.actOnTracking(changed,{type:"set-coverage-days",days:7},"other",T+30*MIN);
+ assert.equal(back.mode,"idle");assert.equal(back.controllerId,"owner");assert.deepEqual(back.taskMs,s.taskMs);near(t.taskProgress(back)[1].targetMs,30*MIN);
+ assert.equal(JSON.stringify(s),saved);
+});
+check("a running horizon edit checkpoints the old task before selecting an included one",()=>{
+ const start=t.actOnTracking(fresh(),{type:"start",taskId:"b"},"owner",T);
+ const next=t.actOnTracking(start,{type:"set-coverage-days",days:3},"other",T+10*MIN);
+ near(next.workMs,10*MIN);near(next.taskMs.b,10*MIN);assert.equal(next.taskId,"a");assert.equal(next.mode,"work");assert.equal(next.controllerId,"owner");
+ const out=t.advanceTracking(next,T+40*MIN);near(out.state.taskMs.a,30*MIN);assert.equal(out.state.mode,"idle");
+ assert.deepEqual(out.events.map(e=>e.type),["task-complete","work-complete"]);
+ const only=fresh([task("later","2026-10-12")]);
+ const empty=t.actOnTracking(t.actOnTracking(only,{type:"start"},"pc",T),{type:"set-coverage-days",days:0},"phone",T+MIN);
+ near(empty.workMs,MIN);assert.equal(empty.mode,"idle");near(t.workLeftMs(empty),0);
+});
+check("reapplying the same number does not shrink a partly worked fixed goal",()=>{
+ let s=t.actOnTracking(fresh([task("a"),task("b","2026-10-06")],T,3),{type:"start",taskId:"b"},"pc",T);
+ s=t.advanceTracking(s,T+60*MIN).state;
+ const next=t.actOnTracking(s,{type:"set-coverage-days",days:3},"other",s.cursor);
+ near(t.workLeftMs(next),30*MIN);assert.equal(next.controllerId,"pc");
+});
+check("days ahead persists through parsing, task edits, reset and midnight",()=>{
+ for(const days of [0,1,14,365]){
+  let s=t.parseTracking(JSON.parse(JSON.stringify(fresh([task("a")],T,days))));
+  s=t.configureTracking(s,[task("a"),task("b")],"00:00",T);
+  assert.equal(s.coverageDays,days);
+  s=t.actOnTracking(s,{type:"reset"},"pc",T);assert.equal(s.coverageDays,days);
+  s=t.advanceTracking(s,t.nextMidnight(s)).state;assert.equal(s.coverageDays,days);assert.equal(s.mode,"idle");
+ }
+});
+check("fixed-seven-day snapshots checkpoint history once then adopt the three-day default",()=>{
+ for(const active of [true,false]){
+  let fixed=t.actOnTracking(fresh(),{type:"start",taskId:"b"},"owner",T);
+  if(!active)fixed=t.actOnTracking(fixed,{type:"pause"},"owner",T+10*MIN);
+  delete fixed.coverageDays;
+  const copy=JSON.stringify(fixed),up=t.advanceTracking(t.parseTracking(JSON.parse(copy)),T+10*MIN);
+  assert.equal(up.state.coverageDays,3);near(up.state.workMs,10*MIN);near(up.state.taskMs.b,10*MIN);assert.equal(up.state.controllerId,"owner");
+  assert.equal(up.state.mode,active?"work":"idle");assert.equal(up.state.taskId,active?"a":null);assert.deepEqual(up.events,[]);
+  assert.equal(JSON.stringify(fixed),copy);assert.deepEqual(t.advanceTracking(up.state,up.state.cursor).state,up.state);
+ }
+});
+check("shared command and input validation rejects invalid ranges without mutation",()=>{
+ for(const days of [-1,366,1.5,NaN,Infinity,"3",null,undefined]){
+  assert.equal(t.parseTrackingAction({type:"set-coverage-days",days}),null);
+  assert.throws(()=>t.actOnTracking(fresh(),{type:"set-coverage-days",days},"pc",T),/Invalid/);
+  if(days!==undefined)assert.equal(t.parseTracking({...fresh(),coverageDays:days}),null);
+ }
+ for(const days of [0,3,365])assert.deepEqual(t.parseTrackingAction({type:"set-coverage-days",days}),{type:"set-coverage-days",days});
+ for(const value of [""," ","-1","366","1.5","1e2","0x10","abc"])assert.equal(t.parseCoverageDaysInput(value),null);
+ assert.equal(t.parseCoverageDaysInput(" 3 "),3);assert.equal(t.parseCoverageDaysInput("0"),0);
+ for(const action of [null,{},"start",{type:"start",taskId:5}])assert.equal(t.parseTrackingAction(action),null);
+});
+check("focus and excluded-task copy follow zero, singular and custom ranges",()=>{
+ for(const days of [0,1,3,14]){
+  const s=fresh([],T,days),focus=describeFocus(s,[],true);
+  assert.equal(focus.days,days);assert.equal(focus.cutoff,t.coverageCutoff(s));assert.ok(focus.hint.includes(t.coverageLabel(days)));
+  assert.equal(t.skippedLabel(days),days===0?"Due after today":`Outside the next ${days} ${days===1?"day":"days"}`);
+  assert.ok(t.skippedExplanation(days).includes(t.skippedLabel(days)));
+ }
+});
+console.log(count+" weighted coverage scenarios passed");
 const pg=new PGlite(),realNow=Date.now;Date.now=()=>T;
 setSql({query:async(text,params=[]) => (await pg.query(text,params)).rows,transaction:async statements=>pg.transaction(async tx=>{for(const s of statements)await tx.query(s.text,s.params??[]);})});
 try{
@@ -189,5 +269,18 @@ try{
  await importAccountTracking("alice",fresh(),tasks,"00:00",plan,T+49*MIN);near((await loadTracking("alice")).workMs,edited.workMs);
  await importAccountTracking("bob",edited,edited.tasks,"00:00",plan,T+50*MIN);
  const imported=await loadTracking("bob");near(imported.workMs,edited.workMs);assert.equal(imported.mode,"idle");assert.equal(imported.controllerId,null);
+ const horizon=await commandTracking("alice",edited.revision,{type:"set-coverage-days",days:7},"other_device","UTC",edited.tasks,"00:00",plan,T+51*MIN);
+ assert.equal(horizon.coverageDays,7);assert.deepEqual(horizon.taskMs,edited.taskMs);assert.equal(horizon.controllerId,edited.controllerId);assert.equal(horizon.mode,"idle");
+ assert.deepEqual(await readAccountTracking("alice",T+52*MIN),horizon);assert.equal((await loadTracking("bob")).coverageDays,3);
+ await assert.rejects(commandTracking("alice",edited.revision,{type:"set-coverage-days",days:0},"stale_device","UTC",edited.tasks,"00:00",plan,T+52*MIN),TrackingConflict);
+ Date.now=()=>T+53*MIN;
+ await saveState("alice",{...await loadState("alice"),tracking:{...fresh(),coverageDays:0}});
+ assert.equal((await loadTracking("alice")).coverageDays,7);
+ const fixed={...horizon};delete fixed.coverageDays;
+ await pg.query("UPDATE tracking SET state=$1 WHERE user_id=$2",[JSON.stringify(fixed),"alice"]);
+ const upgrades=await Promise.all([readAccountTracking("alice",T+54*MIN),readAccountTracking("alice",T+54*MIN)]);
+ assert.deepEqual(upgrades[0],upgrades[1]);assert.equal(upgrades[0].coverageDays,3);assert.equal(upgrades[0].revision,horizon.revision+1);
+ assert.deepEqual(upgrades[0].taskMs,horizon.taskMs);near(upgrades[0].workMs,horizon.workMs);
+ assert.equal((await readAccountTracking("alice",T+55*MIN)).revision,upgrades[0].revision);
  console.log("Shared account coverage, migration, conflicts, reset, isolation and import checks passed");
 }finally{Date.now=realNow;await pg.close();setSql(null);}

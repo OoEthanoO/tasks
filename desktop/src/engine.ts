@@ -25,8 +25,11 @@ function checkpointEvents(previous: TrackingState, next: TrackingState): { event
   const rejected = { events: projected.events, confirmed: false };
   if (next.cursor <= previous.cursor || next.dayKey !== previous.dayKey || next.timeZone !== previous.timeZone ||
       next.controllerId !== previous.controllerId || !samePlan(dayPlan(previous), dayPlan(next))) return rejected;
-  const expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, dayPlan(next), next.unweighted, next.minimumEnabled, next.minimumMinutes);
-  if (expected.mode !== next.mode || expected.taskId !== next.taskId || expected.allocationVersion !== next.allocationVersion || expected.idlePolicyVersion !== next.idlePolicyVersion || expected.workLimitVersion !== next.workLimitVersion || expected.coverageVersion !== next.coverageVersion) return rejected;
+  let expected = configureTracking(projected.state, next.tasks, next.endTime, next.cursor, dayPlan(next), next.unweighted, next.minimumEnabled, next.minimumMinutes);
+  if (next.coverageDays !== undefined && expected.coverageDays !== next.coverageDays) {
+    expected = actOnTracking(expected, { type: "set-coverage-days", days: next.coverageDays }, next.controllerId ?? "", next.cursor);
+  }
+  if (expected.mode !== next.mode || expected.taskId !== next.taskId || expected.allocationVersion !== next.allocationVersion || expected.idlePolicyVersion !== next.idlePolicyVersion || expected.workLimitVersion !== next.workLimitVersion || expected.coverageVersion !== next.coverageVersion || expected.coverageDays !== next.coverageDays) return rejected;
   const equalTime = (a: number, b: number) => Math.abs(a - b) <= 1;
   // Compare only earned work; paused wall-clock time is not tracked.
   if (!equalTime(expected.workMs, next.workMs) || !equalTime(expected.carryMs ?? 0, next.carryMs ?? 0) || !equalTime(expected.coverageGoalMs ?? 0, next.coverageGoalMs ?? 0)) return rejected;
@@ -252,7 +255,7 @@ export class TrackerEngine {
       this.snapshot = state;
       // Checkpoint on transitions and once per active minute; timestamps preserve all
       // intervening elapsed time if the app is restarted between checkpoints.
-      if (events.length || this.guest.idlePolicyVersion !== state.idlePolicyVersion || this.guest.workLimitVersion !== state.workLimitVersion || this.guest.coverageVersion !== state.coverageVersion || this.guest.carryMs !== undefined || state.dayKey !== this.guest.dayKey || (state.mode !== "idle" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
+      if (events.length || this.guest.idlePolicyVersion !== state.idlePolicyVersion || this.guest.workLimitVersion !== state.workLimitVersion || this.guest.coverageVersion !== state.coverageVersion || this.guest.coverageDays !== state.coverageDays || this.guest.carryMs !== undefined || state.dayKey !== this.guest.dayKey || (state.mode !== "idle" && Math.floor(previous / 60_000) !== Math.floor(now / 60_000))) this.persist();
     }
     this.publish();
   }

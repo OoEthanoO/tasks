@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from "react-native";
 import { DateKey, describeDelta, formatDueDate } from "../../../lib/dates";
 import { dueBucket } from "../../../lib/grouping";
-import { skippedExplanation, TaskProgress, formatDuration } from "../../../lib/tracking";
+import { skippedExplanation, skippedLabel, TaskProgress, formatDuration } from "../../../lib/tracking";
 import { Btn } from "./ui";
 import {
   DEFAULT_PRIORITY,
@@ -77,7 +77,7 @@ export default function TaskRow({
         {progress && !task.completed && <>
           {progress.skipped ? <>
             <Text style={s.metaText}>{formatDuration(progress.trackedMs)} today</Text>
-            <Text style={s.metaText} accessibilityHint={skippedExplanation(progress.minimumMs)}>Outside the next 7 days</Text>
+            <Text style={s.metaText} accessibilityHint={skippedExplanation(progress.coverageDays)}>{skippedLabel(progress.coverageDays)}</Text>
           </> : <>
             <Text style={s.metaText}>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</Text>
             <Text style={[s.metaText, { color: progress.doneToday ? c.ok : c.accent }]}>{progress.doneToday ? "Done for today" : active ? "Tracking now" : `${formatDuration(progress.remainingMs)} left`}</Text>

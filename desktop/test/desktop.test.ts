@@ -127,6 +127,35 @@ test("reallocating the goal after task completion preserves this alert and subse
   assert.deepEqual(x.notifications.map(e => e.type), ["task-complete", "task-complete", "work-complete"]);
 });
 
+test("changing days at a task boundary preserves the elapsed completion and later alerts", async () => {
+  const fixture=await accountBeforeBoundary(),{x}=fixture;
+  fixture.remote={...actOnTracking(taskBoundary(),{type:"set-coverage-days",days:7},"other_device",x.now),revision:1};
+  await x.engine.refresh();x.engine.tick();
+  assert.equal(x.engine.view().state.coverageDays,7);assert.equal(x.engine.view().state.controllerId,"windows_test");
+  assert.equal(x.notifications.filter(e=>e.type==="task-complete").length,1);
+  for(let i=0;i<120;i++){x.now+=15000;await x.engine.refresh();x.engine.tick();}
+  assert.deepEqual(x.notifications.map(e=>e.type),["task-complete","task-complete","work-complete"]);
+});
+
+test("desktop horizon preferences survive restart and reset without taking notification ownership", async () => {
+  const saved={...createTracking([task],"23:00","UTC",T),controllerId:"phone_device",workMs:5*MIN,taskMs:{a:5*MIN}};
+  const x=setup(saved);await x.engine.identity(null);
+  await x.engine.command({type:"set-coverage-days",days:14});
+  assert.equal(x.written?.coverageDays,14);assert.equal(x.written?.controllerId,"phone_device");assert.equal(x.written?.workMs,5*MIN);
+  const reboot=setup(x.written);await reboot.engine.identity(null);
+  assert.equal(reboot.engine.view().state.coverageDays,14);assert.equal(reboot.engine.view().state.workMs,5*MIN);
+  await reboot.engine.command({type:"reset"});assert.equal(reboot.engine.view().state.coverageDays,14);
+  for(const days of [-1,366,1.5,"7",null])assert.throws(()=>validateAction({type:"set-coverage-days",days}),/Invalid/);
+  assert.deepEqual(validateAction({type:"set-coverage-days",days:0}),{type:"set-coverage-days",days:0});
+});
+
+test("desktop migrates a fixed seven-day snapshot once while paused",async()=>{
+  const fixed=createTracking([task],"23:00","UTC",T,PLAN,undefined,undefined,undefined,7);
+  delete fixed.coverageDays;fixed.workMs=5*MIN;fixed.taskMs={a:5*MIN};
+  const x=setup(fixed);await x.engine.identity(null);x.engine.tick();
+  assert.equal(x.engine.view().state.coverageDays,3);assert.equal(x.written?.coverageDays,3);assert.equal(x.written?.workMs,5*MIN);
+});
+
 // 10:00–18:00 split 1:1, not started: half the idle time is used at 12:00 and it runs out at 14:00.
 function reallocationSession() {
   const tasks = ["Physics", "Essay", "Reading"].map((title, i) => ({ ...task, id: String(i), title, createdAt: new Date(T + i).toISOString() }));

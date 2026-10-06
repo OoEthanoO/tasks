@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { createTrackingHook } = require("../.test-build/use-tracking.js");
-const { createTracking } = require("../.test-build/tracking.js");
+const { createTracking, actOnTracking } = require("../.test-build/tracking.js");
 const old=require("../.test-build/legacy-tracking.js");
 const { api } = require("../.test-build/remote.js");
 
@@ -137,6 +137,31 @@ for(const kind of ["capped","fixed","borrowing"]){
  }finally{tracker.unmount();Date.now=realNow;}
 }
 console.log("Guest fixed, capped and borrowing migrations preserve work and reset without debt");
+
+Date.now=()=>start;
+const fixed=createTracking(tasks,"18:00","UTC",start,PLAN,undefined,undefined,undefined,7);
+delete fixed.coverageDays;Object.assign(fixed,{workMs:5*minute,taskMs:{a:5*minute},controllerId:"phone_device"});
+saved=JSON.stringify(fixed);writes=0;tracker=mount(persistentAdapter,{tasks});
+try{
+ await tracker.flush();assert.equal(writes,1);assert.equal(tracker.value.state.coverageDays,3);assert.equal(tracker.value.state.workMs,5*minute);
+ await tracker.value.refresh();await tracker.flush();assert.equal(writes,1);
+ await tracker.value.command({type:"set-coverage-days",days:14});await tracker.flush();
+ assert.equal(JSON.parse(saved).coverageDays,14);assert.equal(tracker.value.state.controllerId,"phone_device");assert.equal(tracker.value.state.workMs,5*minute);
+ tracker.unmount();tracker=mount(persistentAdapter,{tasks});await tracker.flush();assert.equal(tracker.value.state.coverageDays,14);
+ await tracker.value.command({type:"reset"});await tracker.flush();assert.equal(tracker.value.state.coverageDays,14);
+}finally{tracker.unmount();Date.now=realNow;}
+const savedLoad=api.loadTracking,savedTrack=api.track;
+let shared=createTracking(tasks,"18:00","UTC",start);
+shared.controllerId="phone_device";Date.now=()=>start;
+api.loadTracking=async()=>({tracking:shared,serverNow:start});
+api.track=async input=>{assert.equal(input.revision,shared.revision);shared={...actOnTracking(shared,input.action,input.controllerId,start),revision:shared.revision+1};return{tracking:shared,serverNow:start};};
+tracker=mount(adapter,{tasks,accountId:"account"});
+try{
+ await tracker.flush();await tracker.value.command({type:"set-coverage-days",days:7});await tracker.flush();assert.equal(tracker.value.state.coverageDays,7);assert.equal(shared.controllerId,"phone_device");
+ shared={...actOnTracking(shared,{type:"set-coverage-days",days:0},"another_device",start),revision:shared.revision+1};
+ await tracker.value.refresh();await tracker.flush();assert.equal(tracker.value.state.coverageDays,0);
+}finally{tracker.unmount();Date.now=realNow;api.loadTracking=savedLoad;api.track=savedTrack;}
+console.log("Custom horizon migration, remount, reset and cross-client preference sync passed");
 
 // Poll responses used to reset both the offset and the repaint phase, causing
 // seconds to repeat or skip as response latency changed. Fake only scheduling;

@@ -1,12 +1,16 @@
 "use client";
-import { useEffect, useState } from "react";
-import { formatDuration, RESET_PROGRESS_CONFIRMATION } from "@/lib/tracking";
+import { useEffect, useId, useState } from "react";
+import { coverageDays, formatDuration, MAX_COVERAGE_DAYS, parseCoverageDaysInput, RESET_PROGRESS_CONFIRMATION } from "@/lib/tracking";
 import { describeFocus } from "@/lib/focus";
 import { Tracker } from "./useTracking";
 import ConfirmDialog from "./ConfirmDialog";
 
 export default function TrackingPanel({ tracker: t }: { tracker: Tracker }) {
   const [confirmReset, setConfirmReset] = useState(false);
+  const daysId = useId();
+  const [daysDraft, setDaysDraft] = useState(() => String(coverageDays(t.state)));
+  const days = coverageDays(t.state), draft = parseCoverageDaysInput(daysDraft);
+  useEffect(() => { setDaysDraft(String(days)); }, [days, t.ready]);
   useEffect(() => { if (!t.ready) setConfirmReset(false); }, [t.ready]);
   const s = t.state, f = describeFocus(s, t.progress, t.ready);
   return (
@@ -27,10 +31,20 @@ export default function TrackingPanel({ tracker: t }: { tracker: Tracker }) {
         <div><span>Work left</span><strong>{t.ready ? formatDuration(f.workLeft) : "—"}</strong></div>
         <div><span>Daily goal</span><strong>{t.ready ? formatDuration(f.budgetMs) : "—"}</strong></div>
       </div>
-      <p className="tracking-explainer">Weighted time for {f.includedCount} open {f.includedCount === 1 ? "task" : "tasks"} due within seven days, including overdue tasks. Every included task gets at least 30 minutes. Later tasks are excluded.</p>
+      <p className="tracking-explainer">Weighted time for {f.includedCount} open {f.includedCount === 1 ? "task" : "tasks"} due {f.rangeLabel}{f.days > 0 ? ", including overdue tasks." : "."} Every included task gets at least 30 minutes. Later tasks are excluded.</p>
       <details className="day-settings">
-        <summary><span><strong>Tracking options</strong><span className="settings-summary">Alerts and progress</span></span></summary>
+        <summary><span><strong>Tracking options</strong><span className="settings-summary">{days} {days === 1 ? "day" : "days"} ahead · Alerts and progress</span></span></summary>
         <div className="settings-body">
+          <form onSubmit={e => { e.preventDefault(); if (t.ready && !t.busy && draft !== null && draft !== days) void t.command({ type: "set-coverage-days", days: draft }); }}>
+            <div className="setting-row">
+              <label htmlFor={daysId}><strong>Days ahead</strong><span className="setting-help">Include tasks due this many days from today.</span></label>
+              <div className="duration-field">
+                <input id={daysId} aria-label="Days ahead" aria-describedby={`${daysId}-help`} aria-invalid={draft === null} type="number" inputMode="numeric" min={0} max={MAX_COVERAGE_DAYS} step={1} className="minutes-input" value={daysDraft} disabled={!t.ready || t.busy} onChange={e => setDaysDraft(e.target.value)} />
+                <button type="submit" className="btn btn-ghost" aria-label="Apply days ahead" disabled={!t.ready || t.busy || draft === null || draft === days}>{draft === days ? "Saved" : "Apply"}</button>
+              </div>
+            </div>
+            <p className="setting-help" id={`${daysId}-help`}>{draft === null ? `Enter a whole number from 0 to ${MAX_COVERAGE_DAYS}. ` : ""}Default: 3. Set 0 for today and overdue tasks only. Changes sync across devices and preserve tracked work.</p>
+          </form>
           <div className="setting-section">
             <button type="button" className="btn btn-ghost" onClick={() => void t.enableNotifications()}>{t.permission}</button>
             <p className="setting-help">{("notificationHelp" in t && typeof t.notificationHelp === "string") ? t.notificationHelp : "Browser alerts need this page open. Phone alerts can fire while locked. Completion alerts follow the device that last started, paused or reset tracking."}</p>

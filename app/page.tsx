@@ -640,7 +640,7 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
               <code>×4</code>.
             </div>
             <div>
-              Only open tasks due within seven days, including today and overdue tasks, receive work time. The daily goal is the smallest whole-minute budget that gives each included task at least 30 minutes while balancing targets by due-date and priority weights. Later tasks are excluded. There is no work-day start, end, work:idle ratio, or unweighted mode. Work counts only while tracking; pausing does not reduce your targets. Task edits recalculate future targets without changing logged work. Daily tracked counters reset at midnight in the shared timer’s time zone.
+              Days ahead in Tracking options chooses which open tasks receive work time: 3 days by default, with an inclusive cutoff and overdue tasks always included. Choose any whole number from 0 to 365; 0 includes only today and overdue tasks. The daily goal is the smallest whole-minute budget that gives each included task at least 30 minutes while balancing targets by due-date and priority weights. Later tasks are excluded. There is no work-day start, end, work:idle ratio, or unweighted mode. Work counts only while tracking; pausing does not reduce your targets. Task and date-range edits recalculate future targets without changing logged work. The setting syncs across devices and survives resets. Daily tracked counters reset at midnight in the shared timer’s time zone.
             </div>
           </div>
         </div>

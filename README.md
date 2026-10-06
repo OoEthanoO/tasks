@@ -2,8 +2,9 @@
 
 A task manager that decides what you should work on next. Tasks are weighted by
 how urgent they are and the priority you give them. The daily work goal is the
-smallest whole-minute budget that gives every open task due within seven days
-at least 30 minutes. Track the work whenever it suits you; pausing freezes it.
+smallest whole-minute budget that gives every open task in your chosen date range
+at least 30 minutes. The default is three days ahead. Track whenever it suits you;
+pausing freezes remaining work.
 
 The [Windows desktop app](desktop/README.md) adds native background alerts,
 taskbar/tray controls and an always-on-top mini tracker, with battery-aware sync.
@@ -164,7 +165,7 @@ as a low-priority task due tomorrow. Tasks created before priorities existed
 read as low. Weights display as exact fractions (`2/3`, `4/5`), never rounded.
 
 Included tasks aim for proportional **work time** by weight. The day's work time
-comes from the seven-day coverage goal below. The app balances final task totals
+comes from the coverage goal below. The app balances final task totals
 by weight while treating logged time as a lower bound. Tasks already above that
 balance receive no extra time; all unfinished targets together fit the remaining
 work goal.
@@ -178,20 +179,25 @@ The **Work left** display is the day's work time not yet tracked. A task whose
 tracked time meets its current target is **Done for today**, not permanently
 completed. Changing included tasks' due dates, priorities or completion
 recalculates future targets while preserving earned time. Later tasks show a 0%
-share and cannot be tracked until they enter the seven-day window.
+share and cannot be tracked until they enter the selected date range.
 
-## Seven-day work targets
+## Upcoming work targets
 
-Only open tasks due on or before **today plus seven calendar days** are included.
+Only open tasks due on or before **today plus Days ahead** are included.
 Overdue tasks are included; later and permanently completed tasks receive no
-allocation. On 2026-10-05, the inclusive cutoff is 2026-10-12.
+allocation. **Tracking options → Days ahead** accepts whole numbers from 0 to 365
+and defaults to **3**. Zero includes only today and overdue tasks. On 2026-10-05,
+the default inclusive cutoff is 2026-10-08; choosing 7 extends it to 2026-10-12.
+The setting syncs with the account timer and survives restarts, progress resets
+and midnight. Changing it checkpoints running work before recalculating future
+targets; it never erases logged work, starts a paused timer or takes over alerts.
 
 The daily goal is the **smallest whole-minute budget** that gives every included
 task at least **30 minutes**, with targets proportional to due-date and priority
 weights. With no logged work, the least-weighted included task gets 30 minutes
 and every other task gets `30 × its weight / the smallest weight` minutes; round
 the summed goal up to a whole minute. For example, tasks due today (weight 2)
-and in seven days (weight 1/7) need 420 and 30 minutes: a 450-minute goal.
+and in three days (weight 1/3) need 180 and 30 minutes: a 210-minute goal.
 
 There are no start/end hours, work:idle ratio, unweighted mode or adjustable
 minimum. A goal is not capped by the time left today and may exceed the remaining
@@ -217,7 +223,9 @@ Signed-in clients share one timestamp-based Postgres timer. Revision-checked
 commands prevent devices from overwriting each other. Closing an app does not
 pause active tracking; changes require a fresh server connection. On upgrade,
 `lib/legacy-tracking.ts` checkpoints elapsed work under the prior policy once,
-then saves the new goal. Retired settings and schedule fields remain readable
+then saves the new goal. Timers from the fixed-seven-day release likewise
+checkpoint with their original horizon before adopting the three-day default.
+Retired settings and schedule fields remain readable
 for compatibility but do not control new budgets. Whole-state saves cannot
 overwrite timer counters; guest imports seed only empty accounts and start paused.
 

@@ -13,7 +13,7 @@ import {
   formatWeight,
 } from "@/lib/weights";
 import PriorityPicker from "./PriorityPicker";
-import { skippedExplanation, TaskProgress, formatDuration } from "@/lib/tracking";
+import { skippedExplanation, skippedLabel, TaskProgress, formatDuration } from "@/lib/tracking";
 
 type Props = {
   entries: WeightedTask[];
@@ -144,7 +144,7 @@ function TaskRow({
         {task.description && <p className="task-desc">{task.description}</p>}
         {progress && !task.completed && progress.skipped && <div className="task-progress">
           <span>{formatDuration(progress.trackedMs)} today</span>
-          <span className="daily-skipped" title={skippedExplanation(progress.minimumMs)}>Outside the next 7 days</span>
+          <span className="daily-skipped" title={skippedExplanation(progress.coverageDays)}>{skippedLabel(progress.coverageDays)}</span>
         </div>}
         {progress && !task.completed && !progress.skipped && <div className="task-progress">
           <span>{formatDuration(progress.trackedMs)} / {formatDuration(progress.targetMs)} today</span>
@@ -181,7 +181,7 @@ function TaskRow({
         task.completed
           ? "Completed tasks have weight 0 and are never picked"
           : progress?.skipped
-            ? skippedExplanation(progress.minimumMs)
+            ? skippedExplanation(progress.coverageDays)
             : `${formatProbability(probability)} share of work time`
       }>
         <span className={`prob-value${probability <= 0 ? " is-zero" : ""}`}>

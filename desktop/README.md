@@ -22,8 +22,9 @@ release should be signed with the project's own code-signing certificate.
   needed for Windows notification identity.
 - Alerts follow the device that last started, paused or reset tracking, avoiding a
   second set of PC alerts for a timer controlled from the phone or website.
-- The daily goal covers only open tasks due within seven days, each with at least
-  30 weighted minutes. Pausing freezes remaining work. There are no work-day
+- Set **Tracking options → Days ahead** to include tasks due within 0–365 days
+  (default 3), including overdue tasks, each with at least 30 weighted minutes.
+  The choice syncs and survives resets and midnight. Pausing freezes remaining work. There are no work-day
   hours, idle allowance or automatic restarts. Daily totals reset at midnight.
 - Quitting does **not** pause an account timer. Pause tracking first if finished.
 

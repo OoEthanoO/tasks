@@ -26,6 +26,9 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
   assert.equal(state.node, "undefined"); assert.equal(state.bridge, "object");
   assert.match(state.text, /YanTasks/);
   // Verify retired controls are gone in the actual bundled UI.
+  // Settings acknowledgements are broadcast only to visible windows. Exercise
+  // the real UI without taking focus or interfering with the user's desktop.
+  main.setOpacity(0); main.setIgnoreMouseEvents(true); main.showInactive();
   const waitFor = async (expression: string) => {
     for (let i = 0; i < 50; i++) {
       if (await main.webContents.executeJavaScript(expression)) return;
@@ -36,11 +39,25 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
   await waitFor("!!document.querySelector('.day-settings')");
   assert.equal(await main.webContents.executeJavaScript("document.querySelector('.day-settings').open"), false);
   await main.webContents.executeJavaScript("document.querySelector('.day-settings > summary').click()");
-  assert.equal(await main.webContents.executeJavaScript("!!document.querySelector('#start-time,#end-time,#unweighted,#minimum-enabled,input[type=number]')"), false);
+  assert.equal(await main.webContents.executeJavaScript("!!document.querySelector('#start-time,#end-time,#unweighted,#minimum-enabled')"), false);
   const options = await main.webContents.executeJavaScript("document.querySelector('.day-settings').innerText");
   assert.match(options, /Tracking options/); assert.match(options, /Reset today/);
+  await waitFor("document.querySelector('input[aria-label=\"Days ahead\"]')?.disabled === false");
+  assert.equal(await main.webContents.executeJavaScript("document.querySelector('input[aria-label=\"Days ahead\"]').value"), "3");
+  await main.webContents.executeJavaScript(`(() => {
+    const input=document.querySelector('input[aria-label="Days ahead"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'14');
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+  })()`);
+  await waitFor("document.querySelector('button[aria-label=\"Apply days ahead\"]')?.disabled === false");
+  await main.webContents.executeJavaScript("document.querySelector('button[aria-label=\"Apply days ahead\"]').click()");
+  await waitFor("document.querySelector('button[aria-label=\"Apply days ahead\"]')?.textContent === 'Saved'");
+  assert.equal(engine.view().state.coverageDays,14,"real settings UI persists the custom horizon through IPC");
+  await assert.rejects(main.webContents.executeJavaScript("window.desktop.command({type:'set-coverage-days',days:366})"));
   main.webContents.reload(); await ready(main);
   await waitFor("!!document.querySelector('.focus-clock')");
+  await waitFor("document.querySelector('input[aria-label=\"Days ahead\"]')?.value === '14'");
+  assert.equal(engine.view().state.coverageDays,14,"renderer reload cannot reset the saved horizon");
   await assert.rejects(main.webContents.executeJavaScript("window.desktop.api({path:'https://example.com', method:'GET'})"));
   assert.equal((await request("/api/state")).status, 503);
   // Check Electron's real session transport preserves httpOnly cookies. This

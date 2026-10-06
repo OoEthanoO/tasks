@@ -6,33 +6,62 @@ import { DEFAULT_PLAN, type DayPlan } from "./plan";
 import * as legacy from "./legacy-tracking";
 
 export { formatDuration, localTimeZone, trackingDay, validTimeZone, ownsAlerts, dayPlan } from "./legacy-tracking";
-export type TrackingAction = legacy.TrackingAction;
+export type TrackingAction = legacy.TrackingAction | { type: "set-coverage-days"; days: number };
 export type TrackingEvent = legacy.TrackingEvent;
-export type TaskProgress = legacy.TaskProgress;
+export type TaskProgress = legacy.TaskProgress & { coverageDays: number };
 export type TrackingState = legacy.TrackingState & {
   /** Fixed weighted goal. Checkpoint on task edits/rollover, never on a clock tick. */
   coverageVersion?: 1;
   coverageGoalMs?: number;
+  /** Missing only on snapshots from the original fixed seven-day policy. */
+  coverageDays?: number;
 };
 export const MIN_DAILY_TARGET_MS = 30 * 60_000;
-export const COVERAGE_DAYS = 7;
+export const DEFAULT_COVERAGE_DAYS = 3;
+export const MAX_COVERAGE_DAYS = 365;
 export const RESET_PROGRESS_CONFIRMATION = "Clear all of today’s tracked work? Tracking will pause on your synced devices. Your tasks stay unchanged, and today’s weighted targets will be recalculated. This cannot be undone.";
 const EPSILON = 1;
 const MINUTE = 60_000;
 
-export function coverageCutoff(state: Pick<TrackingState, "dayKey">): string {
+export function validCoverageDays(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_COVERAGE_DAYS;
+}
+export function parseCoverageDaysInput(value: string): number | null {
+  const days = /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN;
+  return validCoverageDays(days) ? days : null;
+}
+export function coverageDays(state: Pick<TrackingState, "coverageDays">): number {
+  return state.coverageDays ?? DEFAULT_COVERAGE_DAYS;
+}
+/** Shared validation for HTTP commands, desktop IPC and direct/guest actions. */
+export function parseTrackingAction(value: unknown): TrackingAction | null {
+  if (!value || typeof value !== "object") return null;
+  const a = value as Record<string, unknown>;
+  if (a.type === "set-coverage-days") return validCoverageDays(a.days) ? { type: a.type, days: a.days } : null;
+  if (a.taskId !== undefined && (typeof a.taskId !== "string" || a.taskId.length > 100)) return null;
+  if (a.type === "pause" || a.type === "reset") return { type: a.type };
+  if (a.type === "start") return { type: "start", ...(a.taskId ? { taskId: a.taskId as string } : {}) };
+  return null;
+}
+export function coverageCutoff(state: Pick<TrackingState, "dayKey" | "coverageDays">): string {
   const [year, month, day] = state.dayKey.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day + COVERAGE_DAYS)).toISOString().slice(0, 10);
+  return new Date(Date.UTC(year, month - 1, day + coverageDays(state))).toISOString().slice(0, 10);
 }
-export function includedTask(task: Task, dayKey: string): boolean {
-  return !task.completed && diffDays(task.dueDate, dayKey) <= COVERAGE_DAYS;
+export function includedTask(task: Task, dayKey: string, days = DEFAULT_COVERAGE_DAYS): boolean {
+  return !task.completed && diffDays(task.dueDate, dayKey) <= days;
 }
-export function skippedExplanation(_minimumMs = MIN_DAILY_TARGET_MS): string {
-  return "This task is due more than seven days away. It will be included when its due date enters the seven-day window.";
+export function coverageLabel(days: number): string {
+  return days === 0 ? "today or earlier" : `within ${days} ${days === 1 ? "day" : "days"}`;
+}
+export function skippedLabel(days: number): string {
+  return days === 0 ? "Due after today" : `Outside the next ${days} ${days === 1 ? "day" : "days"}`;
+}
+export function skippedExplanation(days = DEFAULT_COVERAGE_DAYS): string {
+  return `${skippedLabel(days)}. This task will be included when it enters your chosen date range. Change Days ahead in Tracking options to include it sooner.`;
 }
 function entriesFor(state: TrackingState) {
   return state.tasks.map(task => ({ task,
-    weight: includedTask(task, state.dayKey) ? taskWeight(task, state.dayKey) : 0,
+    weight: includedTask(task, state.dayKey, coverageDays(state)) ? taskWeight(task, state.dayKey) : 0,
     trackedMs: Object.hasOwn(state.taskMs, task.id) ? state.taskMs[task.id] : 0,
   }));
 }
@@ -63,16 +92,18 @@ export function workLeftMs(state: TrackingState, _now = state.cursor): number {
 }
 export const remainingWorkTime = workLeftMs;
 export function canTrackWork(state: TrackingState, _now = state.cursor): boolean {
-  return workLeftMs(state) > EPSILON && state.tasks.some(t => includedTask(t, state.dayKey));
+  return workLeftMs(state) > EPSILON && state.tasks.some(t => includedTask(t, state.dayKey, coverageDays(state)));
 }
 
 /** Retired preference arguments are accepted for old clients/storage, but ignored. */
 export function trackingConfigKey(tasks: Task[], _endTime?: string, _plan?: DayPlan, _unweighted?: boolean, _minimumEnabled?: boolean, _minimumMinutes?: number): string {
   return JSON.stringify(tasks.map(t => [t.id, t.title, t.dueDate, t.priority ?? "low", t.completed, t.createdAt]));
 }
-export function createTracking(tasks: Task[], endTime = "23:00", timeZone = legacy.localTimeZone(), now = Date.now(), plan = DEFAULT_PLAN, _unweighted?: boolean, _minimumEnabled?: boolean, _minimumMinutes?: number): TrackingState {
+export function createTracking(tasks: Task[], endTime = "23:00", timeZone = legacy.localTimeZone(), now = Date.now(), plan = DEFAULT_PLAN, _unweighted?: boolean, _minimumEnabled?: boolean, _minimumMinutes?: number, days = DEFAULT_COVERAGE_DAYS): TrackingState {
+  if (!validCoverageDays(days)) throw new Error(`Days ahead must be a whole number from 0 to ${MAX_COVERAGE_DAYS}.`);
   const state: TrackingState = legacy.createTracking(tasks, endTime, timeZone, now, plan);
   state.coverageVersion = 1;
+  state.coverageDays = days;
   state.coverageGoalMs = minimumCoverageGoal(state);
   return state;
 }
@@ -91,7 +122,7 @@ export function taskProgress(state: TrackingState): TaskProgress[] {
   const totalWeight = open.reduce((sum, e) => sum + e.weight, 0);
   return entries.map(e => {
     const remainingMs = e.weight > 0 ? Math.max(0, e.weight * level - e.trackedMs) : 0;
-    return { ...e, probability: totalWeight > 0 ? e.weight / totalWeight : 0,
+    return { ...e, coverageDays: coverageDays(state), probability: totalWeight > 0 ? e.weight / totalWeight : 0,
       minimumMs: MIN_DAILY_TARGET_MS, targetMs: e.trackedMs + remainingMs, remainingMs,
       doneToday: remainingMs <= EPSILON, skipped: !e.task.completed && e.weight === 0 };
   });
@@ -144,22 +175,31 @@ function integrate(state: TrackingState, until: number): { state: TrackingState;
 export function advanceTracking(original: TrackingState, now: number): { state: TrackingState; events: TrackingEvent[] } {
   if (!Number.isFinite(now) || now < original.cursor) return { state: { ...original, taskMs: { ...original.taskMs } }, events: [] };
   if (legacy.trackingDay(now, original.timeZone) !== original.dayKey) {
-    return { state: { ...createTracking(original.tasks, original.endTime, original.timeZone, now, legacy.dayPlan(original)), revision: original.revision, controllerId: original.controllerId }, events: [] };
+    return { state: { ...createTracking(original.tasks, original.endTime, original.timeZone, now, legacy.dayPlan(original), undefined, undefined, undefined, coverageDays(original)), revision: original.revision, controllerId: original.controllerId }, events: [] };
   }
   if (original.coverageVersion !== 1) {
     // Preserve elapsed work under the old allocation exactly once before changing goals.
     const result = legacy.advanceTracking(original, now);
     const state: TrackingState = result.state;
-    state.coverageVersion = 1; state.coverageGoalMs = minimumCoverageGoal(state);
+    state.coverageVersion = 1; state.coverageDays = coverageDays(original); state.coverageGoalMs = minimumCoverageGoal(state);
     state.unweighted = false; state.minimumEnabled = true; state.minimumMinutes = 30;
     if (state.mode === "work") select(state, workingTask(state));
     return { state, events: [] }; // Retired idle/cutoff alerts must never replay on upgrade.
+  }
+  if (original.coverageDays === undefined) {
+    // The fixed-seven-day release must finish attributing elapsed work with
+    // its old horizon before applying the new default. Never retime history.
+    const state = integrate({ ...original, coverageDays: 7, taskMs: { ...original.taskMs } }, now).state;
+    state.coverageDays = DEFAULT_COVERAGE_DAYS;
+    state.coverageGoalMs = minimumCoverageGoal(state);
+    if (state.mode === "work") select(state, workingTask(state));
+    return { state, events: [] };
   }
   return integrate({ ...original, taskMs: { ...original.taskMs } }, now);
 }
 export function configureTracking(original: TrackingState, tasks: Task[], _endTime: string, now: number, _plan?: DayPlan, _unweighted?: boolean, _minimumEnabled?: boolean, _minimumMinutes?: number): TrackingState {
   const state = advanceTracking(original, now).state;
-  const allocationKey = (items: Task[]) => JSON.stringify(items.filter(t => includedTask(t, state.dayKey))
+  const allocationKey = (items: Task[]) => JSON.stringify(items.filter(t => includedTask(t, state.dayKey, coverageDays(state)))
     .map(t => [t.id, t.dueDate, t.priority ?? "low"]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
   const changed = allocationKey(state.tasks) !== allocationKey(tasks);
   state.tasks = tasks;
@@ -168,9 +208,18 @@ export function configureTracking(original: TrackingState, tasks: Task[], _endTi
   return state;
 }
 export function actOnTracking(original: TrackingState, action: TrackingAction, controllerId: string, now: number): TrackingState {
+  if (!parseTrackingAction(action)) throw new Error("Invalid timer command.");
   const state = advanceTracking(original, now).state;
+  if (action.type === "set-coverage-days") {
+    if (coverageDays(state) !== action.days) {
+      state.coverageDays = action.days;
+      state.coverageGoalMs = minimumCoverageGoal(state);
+      if (state.mode === "work") select(state, workingTask(state));
+    }
+    return state; // A preference edit never takes over notification ownership.
+  }
   state.controllerId = controllerId;
-  if (action.type === "reset") return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, legacy.dayPlan(state)), revision: state.revision, controllerId };
+  if (action.type === "reset") return { ...createTracking(state.tasks, state.endTime, state.timeZone, now, legacy.dayPlan(state), undefined, undefined, undefined, coverageDays(state)), revision: state.revision, controllerId };
   if (action.type === "pause") { select(state, undefined); return state; }
   const listed = nextTask(state);
   const next = action.taskId ? taskProgress(state).find(p => p.task.id === action.taskId && p.weight > 0 && !p.doneToday) : listed;
@@ -188,6 +237,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   const state = legacy.parseTracking(value) as TrackingState | null;
   if (!state) return null;
   if (state.coverageVersion !== undefined && state.coverageVersion !== 1) return null;
+  if (state.coverageDays !== undefined && !validCoverageDays(state.coverageDays)) return null;
   if (state.coverageVersion === 1 && (typeof state.coverageGoalMs !== "number" || !Number.isFinite(state.coverageGoalMs) || state.coverageGoalMs < 0)) return null;
   return state;
 }
