@@ -31,6 +31,15 @@ export function compareListOrder(a: Task, b: Task): number {
   return a.dueDate.localeCompare(b.dueDate) || a.createdAt.localeCompare(b.createdAt);
 }
 
+/** Completion recency, not due date. Missing dates go last; ties stay stable. */
+export function compareCompletedOrder(a: Task, b: Task): number {
+  const at = a.completedAt ? Date.parse(a.completedAt) : NaN;
+  const bt = b.completedAt ? Date.parse(b.completedAt) : NaN;
+  if (!Number.isFinite(at)) return Number.isFinite(bt) ? 1 : 0;
+  if (!Number.isFinite(bt)) return -1;
+  return bt - at;
+}
+
 export type TaskGroup = {
   key: string;
   label: string;
@@ -72,7 +81,7 @@ export function groupTasks(entries: WeightedTask[], today: DateKey): TaskGroup[]
   overdue.sort(byDue);
   dueToday.sort(byDue);
   upcoming.sort(byDue);
-  done.sort((a, b) => (b.task.completedAt ?? "").localeCompare(a.task.completedAt ?? ""));
+  done.sort((a, b) => compareCompletedOrder(a.task, b.task));
 
   return [
     { key: "overdue", label: "Overdue", tone: "overdue" as const, items: overdue },

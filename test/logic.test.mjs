@@ -1355,7 +1355,7 @@ eq(await db.findUserByUsername("alice").then((u) => u.id), alice.id, "the origin
 
 // This is the migration itself: the guest payload written under a new account.
 const guestState = {
-  tasks: [goodTask, { ...goodTask, id: "t2", title: "Second", completed: true, completedAt: "2026-08-12T09:00:00.000Z" }],
+  tasks: [goodTask, { ...goodTask, id: "t2", title: "Second", completed: true, completedAt: new Date().toISOString() }],
   recommendation: { taskId: "t1", title: "Write it up", generatedAt: "2026-08-12T08:00:00.000Z" },
   schedule: {
     blocks: [{ start: "2026-08-12T08:32:00.000Z", end: "2026-08-12T09:00:00.000Z", taskId: "t1", title: "Write it up" }],

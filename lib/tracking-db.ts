@@ -5,6 +5,7 @@ import { ensureSchema, getSql } from "./sql";
 import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, parseTracking, trackingConfigKey, trackingDay, TrackingAction, TrackingState } from "./tracking";
 import { Task } from "./types";
 import type { DayPlan } from "./plan";
+import { pruneCompletedTasks } from "./task-retention";
 
 export class TrackingConflict extends Error {
   constructor() { super("The timer changed on another device. It has been refreshed; please try again."); }
@@ -52,15 +53,18 @@ export async function configureAccountTracking(userId: string, tasks: Task[], en
 export async function readAccountTracking(userId: string, now = Date.now()): Promise<TrackingState | null> {
   for (let attempt = 0; attempt < 8; attempt++) {
     const previous = await loadTracking(userId);
-    if (!previous || (previous.rotation?.version === 1 && previous.dayKey === trackingDay(now, previous.timeZone))) return previous;
-    let restored = previous;
+    if (!previous) return null;
+    const tasks = pruneCompletedTasks(previous.tasks, now);
+    const currentPolicy = previous.rotation?.version === 1 && previous.dayKey === trackingDay(now, previous.timeZone);
+    if (currentPolicy && tasks === previous.tasks) return previous;
+    let restored = tasks === previous.tasks ? previous : { ...previous, tasks };
     if (previous.coverageVersion === 1) {
       // The range-based release ignored these settings but left the account's
       // preferences intact. Restore them without editing tasks or history.
       const [prefs] = await getSql().query<{ end_time: string; day_plan: string | null; unweighted: boolean; minimum_enabled: boolean; minimum_minutes: number }>(
         "SELECT end_time, day_plan, unweighted, minimum_enabled, minimum_minutes FROM prefs WHERE user_id = $1", [userId],
       );
-      if (prefs) restored = { ...previous, endTime: sanitizeEndTime(prefs.end_time), plan: sanitizePlan(prefs.day_plan ? JSON.parse(prefs.day_plan) : null), unweighted: prefs.unweighted === true, minimumEnabled: prefs.minimum_enabled !== false, minimumMinutes: sanitizeMinimumMinutes(prefs.minimum_minutes) };
+      if (prefs) restored = { ...restored, endTime: sanitizeEndTime(prefs.end_time), plan: sanitizePlan(prefs.day_plan ? JSON.parse(prefs.day_plan) : null), unweighted: prefs.unweighted === true, minimumEnabled: prefs.minimum_enabled !== false, minimumMinutes: sanitizeMinimumMinutes(prefs.minimum_minutes) };
     }
     if (previous.workOnlyVersion === 1) {
       // Its calculation ignored this preference. Restore the saved day plan,
@@ -68,7 +72,9 @@ export async function readAccountTracking(userId: string, now = Date.now()): Pro
       const [prefs] = await getSql().query<{ day_plan: string | null }>("SELECT day_plan FROM prefs WHERE user_id = $1", [userId]);
       if (prefs) restored = { ...restored, plan: sanitizePlan(prefs.day_plan ? JSON.parse(prefs.day_plan) : null) };
     }
-    try { return await replace(userId, previous, advanceTracking(restored, now).state); }
+    // Removing completed metadata must not checkpoint or reset an active turn.
+    // The earned time maps are deliberately retained even after a task expires.
+    try { return await replace(userId, previous, currentPolicy ? restored : advanceTracking(restored, now).state); }
     catch (error) { if (!(error instanceof TrackingConflict)) throw error; }
   }
   throw new TrackingConflict();

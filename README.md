@@ -147,7 +147,12 @@ duration.
 The web UI shows the current task, remaining turn time, a subtle preview of the
 next task, and each task's cumulative tracked time. Edit changes the title,
 description, or due date and also offers deletion. Completed tasks can be
-reopened from the Completed section.
+reopened from the Completed section, which shows the most recently completed
+tasks first. Completed tasks expire one calendar month after completion (UTC,
+clamped to the last day of shorter months). Cleanup runs automatically on
+account load/sync and save, and locally for guests, including while the app is
+open. Reopening a task cancels expiry; completing it again starts a new month.
+Deleting a task does not subtract its already-tracked time.
 
 There are no priorities, weights, daily recommendations, work windows, rest
 budgets, outing advice, or settings controls. Legacy fields still round-trip

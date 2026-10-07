@@ -17,6 +17,8 @@ import { ApiError, api, setApiBase } from "../lib/remote";
 import { shouldAdoptRemote } from "../lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
 import { taskProgress } from "../lib/tracking";
+import { createTaskRetentionHook } from "../lib/use-task-retention";
+import { pruneCompletedTasks } from "../lib/task-retention";
 import { DEFAULT_PRIORITY } from "../lib/weights";
 import { useTracking } from "./src/useTracking";
 import AccountSheet from "./src/components/AccountSheet";
@@ -39,6 +41,7 @@ function storeKey(user: User | null): string {
 const SAVE_DEBOUNCE_MS = 500;
 /** How often a foregrounded app asks whether anything changed elsewhere. */
 const REFRESH_MS = 5_000;
+const useTaskRetention = createTaskRetentionHook({ useEffect });
 
 function YanTasks() {
   const insets = useSafeAreaInsets();
@@ -66,6 +69,15 @@ function YanTasks() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useTaskRetention(tasks, setTasks, ready && !authLoading && !account);
+  useEffect(() => {
+    if (!ready || authLoading || account) return;
+    const sub = RNAppState.addEventListener("change", next => {
+      if (next === "active") setTasks(current => pruneCompletedTasks(current));
+    });
+    return () => sub.remove();
+  }, [ready, authLoading, account]);
 
   // Which store the current state came from, and what was last written to it.
   // Together these stop a load from echoing straight back out as a save, and

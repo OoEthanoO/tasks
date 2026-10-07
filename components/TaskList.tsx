@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import { type DateKey, formatDueDate } from "@/lib/dates";
-import { compareListOrder, dueBucket } from "@/lib/grouping";
+import { compareCompletedOrder, compareListOrder, dueBucket } from "@/lib/grouping";
 import type { Task } from "@/lib/types";
 import { type TaskProgress, formatDuration } from "@/lib/tracking";
 
@@ -27,9 +27,8 @@ export default function TaskList({ entries, today, activeId, onToggle, onDelete,
     );
   }
 
-  const sorted = [...entries].sort((a, b) => compareListOrder(a.task, b.task));
-  const open = sorted.filter(entry => !entry.task.completed);
-  const completed = sorted.filter(entry => entry.task.completed);
+  const open = entries.filter(entry => !entry.task.completed).sort((a, b) => compareListOrder(a.task, b.task));
+  const completed = entries.filter(entry => entry.task.completed).sort((a, b) => compareCompletedOrder(a.task, b.task));
   const renderEntry = (entry: TaskProgress) => (
     <li key={entry.task.id}>
       {editingId === entry.task.id ? (
@@ -67,7 +66,8 @@ export default function TaskList({ entries, today, activeId, onToggle, onDelete,
       {completed.length > 0 && (
         <details className="completed-tasks">
           <summary>Completed · {completed.length}</summary>
-          <ul className="task-list" aria-label="Completed tasks">{completed.map(renderEntry)}</ul>
+          <p className="hint">Newest first · Automatically deleted after one month.</p>
+          <ul className="task-list" aria-label="Completed tasks, newest first">{completed.map(renderEntry)}</ul>
         </details>
       )}
     </>

@@ -3,6 +3,7 @@ import { sanitizePlan } from "./plan";
 import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 import { AppState, Recommendation, Task } from "./types";
 import { parseTracking } from "./tracking";
+import { pruneCompletedTasks } from "./task-retention";
 
 // Unchanged key names: data written before accounts existed still loads, which
 // is exactly the data a migration offers to move.
@@ -47,11 +48,15 @@ function write(key: string, value: unknown): void {
 export const localStore = {
   load(): AppState {
     const tracking = parseTracking(read<unknown>("yantasks.tracking.v1", null));
+    const storedTasks = read<unknown>(KEYS.tasks, []);
+    const tasks = pruneCompletedTasks(sanitizeState({ tasks: storedTasks }).tasks);
+    // Persist cleanup (and repaired missing completion dates) even if no edit follows.
+    if (JSON.stringify(storedTasks) !== JSON.stringify(tasks)) write(KEYS.tasks, tasks);
     return {
       ...(tracking ? { tracking } : {}),
       // Same coercion the phone and server apply, so tasks saved before a
       // field existed (priority, most recently) come back with its default.
-      tasks: sanitizeState({ tasks: read<unknown>(KEYS.tasks, []) }).tasks,
+      tasks,
       recommendation: read<Recommendation | null>(KEYS.recommendation, null),
       schedule: sanitizeSchedule(read<unknown>(KEYS.schedule, null)),
       endTime: sanitizeEndTime(read<string>(KEYS.endTime, "23:00")),
@@ -63,7 +68,7 @@ export const localStore = {
   },
 
   save(state: AppState): void {
-    write(KEYS.tasks, state.tasks);
+    write(KEYS.tasks, pruneCompletedTasks(state.tasks));
     write(KEYS.recommendation, state.recommendation);
     write(KEYS.schedule, state.schedule);
     write(KEYS.endTime, state.endTime);

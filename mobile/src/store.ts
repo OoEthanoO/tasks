@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { sanitizeState } from "../../lib/app-state";
 import { AppState } from "../../lib/types";
+import { pruneCompletedTasks } from "../../lib/task-retention";
 
 // The signed-out store. The web app keeps the same four keys in localStorage;
 // these are this device's copy and never leave it until a migration moves them.
@@ -44,13 +45,19 @@ export const guestStore = {
     ]);
     // Everything read back off the device goes through the same coercion the
     // server applies, so a half-written key cannot take the app down.
-    return sanitizeState({ tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes, tracking });
+    const state = sanitizeState({ tasks, recommendation, schedule, endTime, plan, unweighted, minimumEnabled, minimumMinutes, tracking });
+    state.tasks = pruneCompletedTasks(state.tasks);
+    if (JSON.stringify(tasks) !== JSON.stringify(state.tasks)) {
+      try { await AsyncStorage.setItem(KEYS.tasks, JSON.stringify(state.tasks)); }
+      catch { /* Storage unavailable; the in-memory list is still cleaned. */ }
+    }
+    return state;
   },
 
   async save(state: AppState): Promise<void> {
     try {
       await AsyncStorage.multiSet([
-        [KEYS.tasks, JSON.stringify(state.tasks)],
+        [KEYS.tasks, JSON.stringify(pruneCompletedTasks(state.tasks))],
         [KEYS.recommendation, JSON.stringify(state.recommendation)],
         [KEYS.schedule, JSON.stringify(state.schedule)],
         [KEYS.endTime, JSON.stringify(state.endTime)],

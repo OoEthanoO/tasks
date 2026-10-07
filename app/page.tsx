@@ -15,6 +15,8 @@ import { ApiError, api, getStateRefreshInterval } from "@/lib/remote";
 import { localStore, newId } from "@/lib/storage";
 import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
+import { createTaskRetentionHook } from "@/lib/use-task-retention";
+import { pruneCompletedTasks } from "@/lib/task-retention";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -22,6 +24,7 @@ function storeKey(user: User | null): string {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
+const useTaskRetention = createTaskRetentionHook({ useEffect });
 
 export default function Page() {
   const [ready, setReady] = useState(false);
@@ -43,6 +46,18 @@ export default function Page() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useTaskRetention(tasks, setTasks, ready && !authLoading && !account);
+  useEffect(() => {
+    if (!ready || authLoading || account) return;
+    const clean = () => { if (document.visibilityState === "visible") setTasks(current => pruneCompletedTasks(current)); };
+    window.addEventListener("focus", clean);
+    document.addEventListener("visibilitychange", clean);
+    return () => {
+      window.removeEventListener("focus", clean);
+      document.removeEventListener("visibilitychange", clean);
+    };
+  }, [ready, authLoading, account]);
 
   // Which store the current state came from, and what was last written to it.
   // Together these stop a load from echoing straight back out as a save, and

@@ -59,6 +59,24 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
   main.webContents.reload(); await ready(main);
   await waitFor("!!document.querySelector('.focus-action') && !document.querySelector('.focus-action').disabled");
   assert.match(await main.webContents.executeJavaScript("document.body.innerText"), /Windows smoke test/);
+  // Retention and ordering through the shipped UI and this disposable store.
+  await main.webContents.executeJavaScript(`{
+    const key='yantasks.tasks.v1', tasks=JSON.parse(localStorage.getItem(key));
+    const make=(id,at,due)=>({id,title:id,description:'',dueDate:due,priority:'low',completed:true,completedAt:at,createdAt:new Date().toISOString()});
+    tasks.push(make('Older completion',new Date(Date.now()-86400000).toISOString(),'2020-01-01'),
+      make('Newest completion',new Date().toISOString(),'2099-12-31'),
+      make('Expired completion','2020-01-01T00:00:00Z','2020-01-01'));
+    localStorage.setItem(key,JSON.stringify(tasks));
+  }`);
+  main.webContents.reload(); await ready(main);
+  await waitFor("document.querySelectorAll('.completed-tasks .task-title').length === 2");
+  assert.deepEqual(await main.webContents.executeJavaScript("Array.from(document.querySelectorAll('.completed-tasks .task-title'),e=>e.textContent)"), ["Newest completion", "Older completion"]);
+  assert.equal(await main.webContents.executeJavaScript("JSON.parse(localStorage.getItem('yantasks.tasks.v1')).some(t=>t.id==='Expired completion')"), false);
+  await main.webContents.executeJavaScript("document.querySelector('.completed-tasks').open=true; document.querySelector('input[aria-label=\"Complete Windows smoke test\"]').click()");
+  await waitFor("document.querySelector('.completed-tasks .task-title')?.textContent === 'Windows smoke test'");
+  await main.webContents.executeJavaScript("document.querySelector('input[aria-label=\"Reopen Windows smoke test\"]').click()");
+  await waitFor("document.querySelectorAll('.completed-tasks .task-title').length === 2 && !document.querySelector('.focus-action').disabled");
+  console.log("RETENTION CHECK PASS: expired records deleted, newest completions first, reopening preserved.");
   assert.deepEqual(await main.webContents.executeJavaScript("Array.from(document.querySelectorAll('.app-footer a'), a => a.href)"),
     ["https://tasks.ethanyanxu.com/support", "https://tasks.ethanyanxu.com/privacy"]);
   await assert.rejects(main.webContents.executeJavaScript("window.desktop.api({path:'https://example.com', method:'GET'})"));

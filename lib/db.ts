@@ -10,6 +10,7 @@ import { sanitizePlan } from "./plan";
 import { sanitizeMinimumMinutes } from "./minimum";
 import { configureAccountTracking, importAccountTracking } from "./tracking-db";
 import { AppState, Recommendation, Task, User } from "./types";
+import { isExpiredCompletedTask, pruneCompletedTasks } from "./task-retention";
 
 type UserRow = {
   id: string;
@@ -199,12 +200,25 @@ type TaskRow = {
   completed_at: string | null;
 };
 
-export async function loadState(userId: string): Promise<AppState> {
-  const rows = await query<TaskRow>(
+export async function loadState(userId: string, now = Date.now()): Promise<AppState> {
+  const readTasks = () => query<TaskRow>(
     `SELECT id, title, description, due_date, priority, completed, created_at, completed_at
        FROM tasks WHERE user_id = $1 ORDER BY position ASC`,
     [userId],
   );
+  let rows = await readTasks();
+  const expired = rows.filter(row => isExpiredCompletedTask({ completed: row.completed, completedAt: row.completed_at }, now));
+  if (expired.length) {
+    // Recheck the completion and its timestamp inside DELETE: a concurrent
+    // reopen/recompletion must survive. Never touch another account or timer.
+    await query(
+      `DELETE FROM tasks AS t USING jsonb_to_recordset($2::jsonb) AS expired(id TEXT, completed_at TEXT)
+        WHERE t.user_id = $1 AND t.id = expired.id AND t.completed = TRUE
+          AND t.completed_at = expired.completed_at`,
+      [userId, JSON.stringify(expired.map(row => ({ id: row.id, completed_at: row.completed_at })))],
+    );
+    rows = await readTasks();
+  }
 
   const tasks: Task[] = rows.map((row) => ({
     id: row.id,
@@ -273,6 +287,8 @@ export async function saveState(
   preserve: { priority?: ReadonlySet<string>; plan?: boolean; unweighted?: boolean; minimumEnabled?: boolean; minimumMinutes?: boolean } = {},
 ): Promise<void> {
   const state = sanitizeState(incoming);
+  // Old/offline clients cannot reinsert expired completions on their next save.
+  state.tasks = pruneCompletedTasks(state.tasks);
   const keepPriority = preserve.priority ?? new Set<string>();
 
   if (preserve.plan) {
