@@ -179,6 +179,28 @@ try {
 } finally { tracker.unmount(); Date.now=realNow; }
 console.log("1 guest rotation, retired-settings and partial-turn persistence scenario passed");
 
+// Upgrade a paused v1 turn without making the guest press Start or losing work.
+Date.now = () => start;
+const unaligned = createTracking(tasks, "18:00", "UTC", start, PLAN);
+unaligned.rotation.version = 1;
+unaligned.rotation.totals = { a: 66 * minute, b: 50 * minute };
+unaligned.rotation.turn = { taskId: "b", elapsedMs: 40 * minute, durationMs: 56 * minute };
+unaligned.taskMs = { a: 66 * minute, b: 50 * minute }; unaligned.workMs = 116 * minute;
+unaligned.controllerId = "test-device";
+saved = JSON.stringify(unaligned); writes = 0;
+const alignmentAdapter = { ...adapter, read: async () => saved, write: async value => { saved = value; writes++; } };
+tracker = mount(alignmentAdapter, { tasks, endTime: "18:00" });
+try {
+  await tracker.flush();
+  assert.equal(tracker.value.state.rotation.version, 2); assert.equal(tracker.value.remainingWorkMs, 10 * minute);
+  assert.equal(tracker.value.state.mode, "idle"); assert.equal(tracker.value.state.workMs, 116 * minute);
+  assert.deepEqual(tracker.value.state.rotation.totals, unaligned.rotation.totals); assert.equal(writes, 1);
+  await tracker.value.refresh(); await tracker.flush(); assert.equal(writes, 1);
+  tracker.unmount(); tracker = mount(alignmentAdapter, { tasks, endTime: "18:00" });
+  await tracker.flush(); assert.equal(writes, 1); assert.equal(tracker.value.remainingWorkMs, 10 * minute);
+} finally { tracker.unmount(); Date.now = realNow; }
+console.log("1 hour-boundary guest upgrade and remount scenario passed");
+
 // Persist the no-borrowing checkpoint without a command, preserving today's
 // work on both the first load and a remount. Tomorrow starts without old debt.
 const beforeBorrowing = legacyCreate(tasks, "18:00", "UTC", start, PLAN);
@@ -207,7 +229,7 @@ try {
   tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
   await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);
-  assert.equal(tracker.value.remainingWorkMs, 20 * minute, "catch-up time stays saved across days");
+  assert.equal(tracker.value.remainingWorkMs, 30 * minute, "the first task's partial hour stays credited across days");
   assert.equal(tracker.value.state.workMs, 0); assert.equal(tracker.value.state.mode, "idle");
   await tracker.value.command({ type: "reset" }); await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);

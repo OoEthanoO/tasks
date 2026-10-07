@@ -25,6 +25,7 @@ function check(name,fn){fn();count++;console.log("✓ "+name);}
 check("only matching tracking protocols may read or command the new calculation",()=>{
  assert.equal(protocol.supportsTrackingProtocol(new Headers()),false);
  assert.equal(protocol.supportsTrackingProtocol(new Headers({[protocol.TRACKING_PROTOCOL_HEADER]:"pacing-v1"})),false);
+ assert.equal(protocol.supportsTrackingProtocol(new Headers({[protocol.TRACKING_PROTOCOL_HEADER]:"rotation-v1"})),false);
  assert.equal(protocol.supportsTrackingProtocol(new Headers({[protocol.TRACKING_PROTOCOL_HEADER]:protocol.TRACKING_PROTOCOL})),true);
 });
 
@@ -56,9 +57,58 @@ check("a new task at the top catches up before adding time to later tasks",()=>{
  s=tr.advanceTracking(s,T+2*H).state;assert.deepEqual(s.rotation.totals,{a:2*H,b:2*H,c:2*H});assert.equal(s.taskId,"a");
 });
 check("fractional catch-up stops exactly at the preceding total",()=>{
- let s=start(totals(fresh(),[2.25,0.5,2.25]));assert.equal(s.taskId,"b");near(tr.turnLeftMs(s),H);
- s=tr.advanceTracking(s,T+H).state;assert.equal(s.taskId,"b");near(tr.turnLeftMs(s),45*MIN);
- const r=tr.advanceTracking(s,T+105*MIN);near(r.state.rotation.totals.b,2.25*H);assert.ok(ordered(r.state));assert.equal(r.events[0].title,"Caught up");
+ let s=start(totals(fresh(),[2.25,0.5,2.25]));assert.equal(s.taskId,"b");near(tr.turnLeftMs(s),30*MIN);
+ s=tr.advanceTracking(s,T+H).state;assert.equal(s.taskId,"b");near(tr.turnLeftMs(s),30*MIN);
+ const r=tr.advanceTracking(s,T+105*MIN);near(r.state.rotation.totals.b,2.25*H);assert.ok(ordered(r.state));assert.equal(r.events.at(-1).title,"Caught up");
+});
+check("66 minutes on the first task and 50 on the second means 10 left, then the third task",()=>{
+ let s=start(totals(fresh(),[66/60,50/60,0]));
+ assert.equal(s.taskId,"b");near(tr.turnLeftMs(s),10*MIN);
+ const progress=tr.taskProgress(s).find(p=>p.task.id==="b");
+ near(progress.turnElapsedMs,50*MIN);near(progress.turnDurationMs,H);
+ const forecast=tr.upcomingTrackingEvents(s,T);near(forecast[0].at,T+10*MIN);assert.match(forecast[0].body,/Now tracking c/);
+ s=tr.advanceTracking(s,T+10*MIN).state;
+ assert.equal(s.taskId,"c");near(s.rotation.totals.b,H);near(tr.turnLeftMs(s),H);
+ s=tr.advanceTracking(s,T+70*MIN).state;
+ assert.equal(s.taskId,"a");near(tr.turnLeftMs(s),54*MIN);
+});
+check("every round credits partial prior hours instead of scheduling another full hour",()=>{
+ for(const round of [0,1,2,10]){
+  const s=start(totals(fresh(),[round+1.1,round+50/60,round]));
+  assert.equal(s.taskId,"b");near(tr.turnLeftMs(s),10*MIN);
+  assert.equal(tr.advanceTracking(s,T+10*MIN).state.taskId,"c");
+ }
+ const s=start(totals(fresh([tasks[0]]),[50/60]));near(tr.turnLeftMs(s),10*MIN);
+ near(tr.turnLeftMs(tr.advanceTracking(s,T+10*MIN).state),H);
+});
+check("ordinary fractional gaps do not steal a turn from an untouched later task",()=>{
+ const s=start(totals(fresh(),[66/60,1,0]));assert.equal(s.taskId,"c");near(tr.turnLeftMs(s),H);
+ const next=start(totals(fresh(),[45/60,30/60,0]));assert.equal(next.taskId,"a");near(tr.turnLeftMs(next),15*MIN);
+});
+const oldFractionalTurn=()=>{
+ const s=totals(fresh(),[3991017/H,3050392/H,0]);
+ s.rotation.version=1;s.rotation.turn={taskId:"b",elapsedMs:1979779,durationMs:2920404.000000001};
+ s.taskMs={a:3991017,b:3050392};s.workMs=7041409;s.controllerId="owner";s.mode="idle";s.taskId=null;
+ return s;
+};
+check("the reported paused snapshot migrates from 15m40s to 9m09s without altering recorded work",()=>{
+ const s=oldFractionalTurn(),copy=structuredClone(s),r=tr.advanceTracking(s,T);
+ assert.equal(tr.parseTracking(s).rotation.version,1);
+ assert.deepEqual(r.state.rotation.totals,s.rotation.totals);assert.deepEqual(r.state.taskMs,s.taskMs);near(r.state.workMs,s.workMs);
+ assert.equal(r.state.mode,"idle");assert.equal(r.state.taskId,null);assert.equal(r.state.controllerId,"owner");
+ near(tr.turnLeftMs(r.state),549608);near(r.state.rotation.turn.elapsedMs,3050392);near(r.state.rotation.turn.durationMs,H);
+ assert.deepEqual(r.events,[]);assert.deepEqual(s,copy);assert.equal(r.state.rotation.version,2);
+ assert.deepEqual(tr.advanceTracking(r.state,T).state,r.state);
+ const resumed=tr.actOnTracking(r.state,{type:"start"},"owner",T+H);
+ assert.equal(tr.advanceTracking(resumed,T+H+549608).state.taskId,"c");
+});
+check("migration accounts for elapsed work under v1 before switching future hour boundaries",()=>{
+ const s=oldFractionalTurn();s.mode="work";s.taskId="b";
+ const r=tr.advanceTracking(s,T+20*MIN);
+ near(r.state.rotation.totals.a,3991017);near(r.state.rotation.totals.b,3991017);
+ near(r.state.rotation.totals.c,259375);near(r.state.workMs,s.workMs+20*MIN);
+ assert.equal(r.state.taskId,"c");assert.equal(r.state.controllerId,"owner");assert.equal(r.state.rotation.commandSeq,s.rotation.commandSeq);
+ near(tr.turnLeftMs(r.state),H-259375);assert.deepEqual(r.events,[]);
 });
 check("arbitrary integer and fractional histories converge without erasing time",()=>{
  for(let seed=0;seed<150;seed++){
@@ -190,7 +240,7 @@ check("special object keys are safe task IDs",()=>{
 });
 check("parser rejects malformed rotation state",()=>{
  const s=start(fresh());
- for(const patch of[{version:2},{commandSeq:-1},{totals:[]},{totals:{a:NaN}},{totals:{a:-1}},{turn:null},{turn:{taskId:"b",elapsedMs:0,durationMs:H}},{turn:{taskId:"a",elapsedMs:H+1,durationMs:H}},{turn:{taskId:"a",elapsedMs:0,durationMs:0}},{turn:{taskId:"a",elapsedMs:0,durationMs:2*H}}])
+ for(const patch of[{version:3},{commandSeq:-1},{totals:[]},{totals:{a:NaN}},{totals:{a:-1}},{turn:null},{turn:{taskId:"b",elapsedMs:0,durationMs:H}},{turn:{taskId:"a",elapsedMs:H+1,durationMs:H}},{turn:{taskId:"a",elapsedMs:0,durationMs:0}},{turn:{taskId:"a",elapsedMs:0,durationMs:2*H}}])
   assert.equal(tr.parseTracking({...s,rotation:{...s.rotation,...patch}}),null);
  assert.deepEqual(tr.parseTracking(JSON.parse(JSON.stringify(s))),s);
 });
@@ -206,7 +256,7 @@ check("500 migrations checkpoint old actual time exactly, never old weighted sco
   const now=T+(60+seed%400)*MIN,copy=structuredClone(s),expected=source.advanceTracking(s,now).state;
   const r=tr.advanceTracking(s,now);
   for(const key of["workMs","taskMs","controllerId","dayKey","cursor","revision"])assert.deepEqual(r.state[key],expected[key],"seed "+seed+" "+key);
-  assert.deepEqual(r.state.rotation.totals,expected.taskMs);assert.equal(r.state.rotation.version,1);assert.equal(r.state.pacing,undefined);
+  assert.deepEqual(r.state.rotation.totals,expected.taskMs);assert.equal(r.state.rotation.version,2);assert.equal(r.state.pacing,undefined);
   assert.deepEqual(r.events,[]);assert.deepEqual(s,copy);assert.deepEqual(tr.advanceTracking(r.state,now).state,r.state);
  }
 });
@@ -219,7 +269,7 @@ console.log("== account synchronization (in-process Postgres) ==");
 const pg=new PGlite();
 setSql({query:async(text,params=[])=>(await pg.query(text,params)).rows,transaction:async statements=>pg.transaction(async tx=>{for(const s of statements)await tx.query(s.text,s.params??[]);})});
 await ensureSchema();
-for(const id of["alice","bob","migration"])await pg.query("INSERT INTO users(id,username,username_lower,password_hash,created_at) VALUES($1,$1,$1,'test',$2)",[id,new Date(T).toISOString()]);
+for(const id of["alice","bob","migration","hour-boundary"])await pg.query("INSERT INTO users(id,username,username_lower,password_hash,created_at) VALUES($1,$1,$1,'test',$2)",[id,new Date(T).toISOString()]);
 const prefs={tasks,recommendation:null,schedule:null,endTime:"21:30",plan:PLAN};
 await saveState("alice",prefs);
 let shared=await db.commandTracking("alice",0,{type:"start"},"web","UTC",tasks,"21:30",PLAN,T);
@@ -244,11 +294,16 @@ assert.deepEqual(await db.readAccountTracking("migration",T+71*MIN),migrated);
 await assert.rejects(db.commandTracking("migration",0,{type:"pause"},"stale","UTC",tasks,"21:30",PLAN,T+72*MIN),db.TrackingConflict);count++;
 const active=await db.commandTracking("migration",1,{type:"start"},"owner","UTC",tasks,"21:30",PLAN,T+72*MIN);
 const checkpoint=await db.readAccountTracking("migration",T+24*H);
-assert.equal(checkpoint.mode,"work");assert.equal(checkpoint.rotation.version,1);assert.ok(Object.values(checkpoint.rotation.totals).reduce((a,b)=>a+b,0)>12*H);
+assert.equal(checkpoint.mode,"work");assert.equal(checkpoint.rotation.version,2);assert.ok(Object.values(checkpoint.rotation.totals).reduce((a,b)=>a+b,0)>12*H);
 assert.deepEqual(await db.readAccountTracking("migration",T+24*H+MIN),checkpoint);count++;
 const remaining=tasks.filter(t=>t.id!==checkpoint.taskId);
 await db.configureAccountTracking("migration",remaining,"21:30",PLAN,T+24*H+2*MIN);
 const edited=await db.loadTracking("migration");assert.equal(edited.mode,"work");assert.notEqual(edited.taskId,checkpoint.taskId);assert.equal(edited.controllerId,"owner");count++;
 await pg.query("DELETE FROM users WHERE id=$1",["migration"]);assert.equal(await db.loadTracking("migration"),null);count++;
+await pg.query("INSERT INTO tracking(user_id,state) VALUES($1,$2)",["hour-boundary",JSON.stringify(oldFractionalTurn())]);
+const aligned=await db.readAccountTracking("hour-boundary",T);
+assert.equal(aligned.revision,1);assert.equal(aligned.rotation.version,2);near(tr.turnLeftMs(aligned),549608);
+assert.equal(aligned.mode,"idle");assert.deepEqual(aligned.rotation.totals,oldFractionalTurn().rotation.totals);
+assert.deepEqual(await db.readAccountTracking("hour-boundary",T+MIN),aligned);count++;
 await pg.close();setSql(null);
 console.log(count+" rotation and database scenarios passed (including 150 generated histories and 500 migrations)");

@@ -112,15 +112,35 @@ test("fractional catch-up progress and wakeups use the actual turn duration", as
   const saved = createTracking([task, second], "23:00", "UTC", T, PLAN);
   saved.rotation!.totals = { a: 2 * HOUR, b: HOUR + 30 * MIN };
   const x = setup(saved); await x.engine.identity(null); await x.engine.command({ type: "start" });
-  assert.equal(x.engine.view().state.rotation?.turn?.durationMs, 30 * MIN);
+  assert.equal(x.engine.view().state.rotation?.turn?.durationMs, HOUR);
+  assert.equal(x.engine.view().state.rotation?.turn?.elapsedMs, 30 * MIN);
   const key = eventScheduleKey(x.engine.view().state);
   tickMinutes(x, 15);
   const m = statusModel(x.engine.view());
-  assert.equal(m.progress, 0.5); assert.equal(m.remaining, 15 * MIN);
+  assert.equal(m.progress, 0.75); assert.equal(m.remaining, 15 * MIN);
   assert.equal(eventScheduleKey(x.engine.view().state), key);
   tickMinutes(x, 15);
   assert.equal(x.engine.view().state.taskId, "a");
-  assert.equal(x.notifications[0].title, "Caught up");
+  assert.equal(x.notifications[0].title, "One-hour turn complete");
+});
+
+test("50 tracked minutes leave 10 on Windows and switch to the untouched task at one hour", async () => {
+  const saved = createTracking([task, second, third], "23:00", "UTC", T, PLAN);
+  saved.rotation!.totals = { a: 66 * MIN, b: 50 * MIN, c: 0 };
+  saved.rotation!.version = 1;
+  saved.rotation!.turn = { taskId: "b", elapsedMs: 40 * MIN, durationMs: 56 * MIN };
+  saved.workMs = 116 * MIN; saved.taskMs = { a: 66 * MIN, b: 50 * MIN };
+  saved.controllerId = "windows_test";
+  const x = setup(saved); await x.engine.identity(null); x.engine.tick();
+  const view = x.engine.view(), m = statusModel(view);
+  assert.equal(x.written?.rotation?.version, 2); assert.equal(m.remaining, 10 * MIN);
+  assert.equal(view.state.mode, "idle"); assert.equal(view.state.workMs, saved.workMs);
+  assert.deepEqual(view.state.rotation?.totals, saved.rotation?.totals);
+  assert.equal(view.state.controllerId, "windows_test"); assert.equal(x.notifications.length, 0);
+  const writes = x.writes; x.engine.tick(); assert.equal(x.writes, writes);
+  await x.engine.command({ type: "start" }); tickMinutes(x, 10);
+  assert.equal(x.engine.view().state.taskId, "c"); assert.equal(x.engine.view().state.rotation?.totals.b, HOUR);
+  assert.equal(x.notifications.length, 1); assert.match(x.notifications[0].body, /Now tracking Read/);
 });
 
 test("completion and removal immediately switch active work to an eligible task", async () => {
@@ -189,7 +209,7 @@ test("legacy and pacing migrations persist once without losing work, ownership o
     Object.assign(saved, { workMs: 45 * MIN, taskMs: { a: 45 * MIN }, controllerId: "windows_test" });
     const x = setup(saved); x.engine.settings = { alerts: false, sound: false, mini: true, launchAtLogin: true };
     await x.engine.identity(null); x.engine.tick();
-    assert.equal(x.written?.rotation?.version, 1); assert.equal(x.written?.pacing, undefined);
+    assert.equal(x.written?.rotation?.version, 2); assert.equal(x.written?.pacing, undefined);
     assert.equal(x.written?.workMs, 45 * MIN); assert.deepEqual(x.written?.rotation?.totals, { a: 45 * MIN });
     assert.equal(x.written?.controllerId, "windows_test");
     assert.deepEqual(x.engine.view().settings, { alerts: false, sound: false, mini: true, launchAtLogin: true });
@@ -214,7 +234,7 @@ test("account timer creation preserves saved compatibility fields", async () => 
     : { state: { tasks: [task], endTime: "23:00", unweighted: true, minimumEnabled: false, minimumMinutes: 15 } } }));
   await x.engine.identity("user");
   assert.equal(x.engine.view().state.unweighted, true); assert.equal(x.engine.view().state.minimumEnabled, false);
-  assert.equal(x.engine.view().state.minimumMinutes, 15); assert.equal(x.engine.view().state.rotation?.version, 1);
+  assert.equal(x.engine.view().state.minimumMinutes, 15); assert.equal(x.engine.view().state.rotation?.version, 2);
 });
 
 test("sync checkpoints cannot swallow or duplicate boundaries in either timer/refresh ordering", async () => {
@@ -290,10 +310,10 @@ test("a server migration checkpoint preserves command sequence, ownership and fo
   assert.equal(x.engine.view().state.controllerId, "windows_test");
   remote = { ...actOnTracking(remote, { type: "start" }, "windows_test", T), revision: 5 };
   await x.engine.refresh();
-  x.now = T + 10 * MIN - 1000; await x.engine.refresh(); x.engine.tick();
+  x.now = T + 50 * MIN - 1000; await x.engine.refresh(); x.engine.tick();
   x.now += 1025; await x.engine.refresh(); x.engine.tick();
-  assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].title, "Caught up");
-  assert.equal(x.engine.view().state.taskId, "a");
+  assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].title, "One-hour turn complete");
+  assert.equal(x.engine.view().state.taskId, "b");
 });
 
 test("delayed polls cannot replace a newer checkpoint or replay a delivered alert", async () => {

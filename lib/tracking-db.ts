@@ -2,7 +2,7 @@ import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 import { sanitizeEndTime } from "./app-state";
 import { sanitizePlan } from "./plan";
 import { ensureSchema, getSql } from "./sql";
-import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, parseTracking, trackingConfigKey, trackingDay, TrackingAction, TrackingState } from "./tracking";
+import { actOnTracking, advanceTracking, configureTracking, createTracking, dayPlan, parseTracking, ROTATION_VERSION, trackingConfigKey, trackingDay, TrackingAction, TrackingState } from "./tracking";
 import { Task } from "./types";
 import type { DayPlan } from "./plan";
 import { pruneCompletedTasks } from "./task-retention";
@@ -40,7 +40,7 @@ export async function commandTracking(userId: string, revision: number, action: 
 export async function configureAccountTracking(userId: string, tasks: Task[], endTime: string, plan: DayPlan, now = Date.now(), unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): Promise<void> {
   for (let attempt = 0; attempt < 8; attempt++) {
     const previous = await loadTracking(userId);
-    if (!previous || (previous.rotation?.version === 1 && trackingConfigKey(previous.tasks, previous.endTime, dayPlan(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes))) return;
+    if (!previous || (previous.rotation?.version === ROTATION_VERSION && trackingConfigKey(previous.tasks, previous.endTime, dayPlan(previous), previous.unweighted, previous.minimumEnabled, previous.minimumMinutes) === trackingConfigKey(tasks, endTime, plan, unweighted, minimumEnabled, minimumMinutes))) return;
     try {
       await replace(userId, previous, configureTracking(previous, tasks, endTime, now, plan, unweighted, minimumEnabled, minimumMinutes));
       return;
@@ -55,7 +55,7 @@ export async function readAccountTracking(userId: string, now = Date.now()): Pro
     const previous = await loadTracking(userId);
     if (!previous) return null;
     const tasks = pruneCompletedTasks(previous.tasks, now);
-    const currentPolicy = previous.rotation?.version === 1 && previous.dayKey === trackingDay(now, previous.timeZone);
+    const currentPolicy = previous.rotation?.version === ROTATION_VERSION && previous.dayKey === trackingDay(now, previous.timeZone);
     if (currentPolicy && tasks === previous.tasks) return previous;
     let restored = tasks === previous.tasks ? previous : { ...previous, tasks };
     if (previous.coverageVersion === 1) {

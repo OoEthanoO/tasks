@@ -7,9 +7,11 @@ import * as paced from "./paced-tracking";
 
 export { dayEnd, dayStart, dayPlan, formatDuration, localTimeZone, trackingDay, validTimeZone, ownsAlerts } from "./legacy-tracking";
 export const TURN_MS = 60 * 60_000;
+export const ROTATION_VERSION = 2;
 export const RESET_PROGRESS_CONFIRMATION = "Clear today’s counter and pause tracking? Your tasks and accumulated task hours will stay unchanged.";
 export type Rotation = {
-  version: 1;
+  /** v1 used fresh turns from arbitrary totals; v2 ends at cumulative hour marks. */
+  version: 1 | 2;
   commandSeq: number;
   /** Actual milliseconds, never weighted, normalized, or reset at midnight. */
   totals: Record<string, number>;
@@ -38,6 +40,7 @@ function pick(state: TrackingState, queue = rotationQueue(state)): { task: Task;
   if (!queue.length) return null;
   const totals = state.rotation?.totals ?? state.taskMs;
   const time = (i: number) => own(totals, queue[i].id);
+  const aligned = state.rotation?.version === ROTATION_VERSION;
   let index = -1;
   // Repair rises first: new/reordered tasks catch up before another round.
   for (let i = 0; i < queue.length - 1; i++) {
@@ -47,14 +50,24 @@ function pick(state: TrackingState, queue = rotationQueue(state)): { task: Task;
       break;
     }
   }
-  if (index < 0) index = queue.findIndex((_, i) => i > 0 && time(i) + EPSILON < time(i - 1));
+  if (index < 0) index = queue.findIndex((_, i) => i > 0 && (aligned
+    ? time(i) + hourLeft(time(i)) <= time(i - 1) + EPSILON
+    : time(i) + EPSILON < time(i - 1)));
   if (index < 0) index = 0;
   // Partial old turns/edits may leave a fractional gap. Never overshoot it.
-  return { task: queue[index], durationMs: index === 0 ? TURN_MS : Math.min(TURN_MS, time(index - 1) - time(index)) };
+  const quantum = aligned ? hourLeft(time(index)) : TURN_MS;
+  return { task: queue[index], durationMs: index === 0 ? quantum : Math.min(quantum, time(index - 1) - time(index)) };
 }
+/** Credit all existing work toward this hour, including earlier partial turns. */
+function hourElapsed(total: number): number {
+  const elapsed = total % TURN_MS;
+  return elapsed <= EPSILON || TURN_MS - elapsed <= EPSILON ? 0 : elapsed;
+}
+function hourLeft(total: number): number { return TURN_MS - hourElapsed(total); }
 function beginTurn(state: TrackingState, queue = rotationQueue(state)) {
   const chosen = pick(state, queue);
-  state.rotation!.turn = chosen ? { taskId: chosen.task.id, elapsedMs: 0, durationMs: chosen.durationMs } : null;
+  const elapsedMs = chosen && state.rotation!.version === ROTATION_VERSION ? hourElapsed(own(state.rotation!.totals, chosen.task.id)) : 0;
+  state.rotation!.turn = chosen ? { taskId: chosen.task.id, elapsedMs, durationMs: elapsedMs + chosen.durationMs } : null;
   state.taskId = chosen?.task.id ?? null;
   if (!chosen) state.mode = "idle";
 }
@@ -71,7 +84,7 @@ function upgrade(original: TrackingState, now: number): TrackingState {
     : checkpoint(original, Math.max(original.cursor, nextMidnight(original) - 0.001)).state.taskMs;
   const totals = { ...history };
   if (old.dayKey !== original.dayKey) for (const [id, ms] of Object.entries(old.taskMs)) put(totals, id, own(totals, id) + ms);
-  state.rotation = { version: 1, commandSeq: original.pacing?.commandSeq ?? 0, totals, turn: null };
+  state.rotation = { version: ROTATION_VERSION, commandSeq: original.pacing?.commandSeq ?? 0, totals, turn: null };
   delete state.pacing; delete state.chosen;
   // Historical weighted virtual-service scores are not actual work: never invent hours.
   if (state.mode === "work") beginTurn(state);
@@ -79,7 +92,7 @@ function upgrade(original: TrackingState, now: number): TrackingState {
 }
 export function createTracking(tasks: Task[], endTime = "23:00", timeZone = legacy.localTimeZone(), now = Date.now(), plan: DayPlan = DEFAULT_PLAN, unweighted = false, minimumEnabled = true, minimumMinutes = DEFAULT_MINIMUM_MINUTES): TrackingState {
   const state = legacy.createTracking(tasks, endTime, timeZone, now, plan, unweighted, minimumEnabled, minimumMinutes);
-  return { ...state, rotation: { version: 1, commandSeq: 0, totals: {}, turn: null } };
+  return { ...state, rotation: { version: ROTATION_VERSION, commandSeq: 0, totals: {}, turn: null } };
 }
 /** Retired preferences stay in storage for compatibility, never in the picker. */
 export function trackingConfigKey(tasks: Task[], _endTime?: string, _plan?: DayPlan, _unweighted?: boolean, _minimumEnabled?: boolean, _minimumMinutes?: number): string {
@@ -110,7 +123,8 @@ export function taskProgress(state: TrackingState): TaskProgress[] {
   const positions = new Map(queue.map((task, index) => [task.id, index + 1]));
   return state.tasks.map(task => {
     const trackedMs = own(state.rotation?.totals ?? state.taskMs, task.id), ownsTurn = turn?.taskId === task.id;
-    const elapsedMs = ownsTurn ? turn.elapsedMs : 0, durationMs = ownsTurn ? turn.durationMs : TURN_MS;
+    const elapsedMs = ownsTurn ? turn.elapsedMs : state.rotation?.version === ROTATION_VERSION ? hourElapsed(trackedMs) : 0;
+    const durationMs = ownsTurn ? turn.durationMs : TURN_MS;
     const remainingMs = task.completed ? 0 : durationMs - elapsedMs;
     return { task, trackedMs, remainingMs, targetMs: trackedMs + remainingMs, turnElapsedMs: elapsedMs, turnDurationMs: durationMs,
       partialTurn: ownsTurn && elapsedMs > 0, queuePosition: positions.get(task.id) ?? 0,
@@ -121,6 +135,19 @@ export function taskProgress(state: TrackingState): TaskProgress[] {
 export function advanceTracking(original: TrackingState, now: number): { state: TrackingState; events: TrackingEvent[] } {
   if (!Number.isFinite(now) || now < original.cursor) return { state: copy(original), events: [] };
   if (!original.rotation) return { state: upgrade(original, now), events: [] };
+  if (original.rotation.version !== ROTATION_VERSION) {
+    // First account for elapsed work using the exact old picker and turn.
+    // Only future time follows the new boundaries; no history is reassigned.
+    const state = advanceRotation(original, now).state;
+    const paused = state.mode !== "work";
+    state.rotation!.version = ROTATION_VERSION;
+    beginTurn(state);
+    if (paused) { state.mode = "idle"; state.taskId = null; }
+    return { state, events: [] };
+  }
+  return advanceRotation(original, now);
+}
+function advanceRotation(original: TrackingState, now: number): { state: TrackingState; events: TrackingEvent[] } {
   const state = copy(original), events: TrackingEvent[] = [], queue = rotationQueue(state);
   const r = state.rotation!;
   if (state.mode === "work" && (!r.turn || !queue.some(t => t.id === r.turn!.taskId))) beginTurn(state, queue);
@@ -211,7 +238,7 @@ export function parseTracking(value: unknown): TrackingState | null {
   const r = raw.rotation;
   const counters = (v: unknown, maxEntries: number) => !!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length <= maxEntries &&
     Object.values(v).every(n => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER);
-  if (!r || r.version !== 1 || !Number.isSafeInteger(r.commandSeq) || r.commandSeq < 0 || !counters(r.totals, 20_000)) return null;
+  if (!r || (r.version !== 1 && r.version !== ROTATION_VERSION) || !Number.isSafeInteger(r.commandSeq) || r.commandSeq < 0 || !counters(r.totals, 20_000)) return null;
   if (!counters(raw.taskMs, 20_000) || !Number.isFinite(raw.workMs) || raw.workMs < 0 || raw.workMs > 2 * 86_400_000) return null;
   if (r.turn !== null && (!r.turn || typeof r.turn.taskId !== "string" || !Number.isFinite(r.turn.durationMs) || r.turn.durationMs <= EPSILON || r.turn.durationMs > TURN_MS ||
     !Number.isFinite(r.turn.elapsedMs) || r.turn.elapsedMs < 0 || r.turn.elapsedMs > r.turn.durationMs)) return null;

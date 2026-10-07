@@ -134,15 +134,20 @@ always override the date by hand in the details section or by editing the task.
 
 Tasks are displayed by due date, then creation time. The shared picker decides
 which open task to track; the only timer controls are **Start** and **Pause**.
-A normal turn lasts one hour, then the next turn starts automatically. Start
+A normal turn ends at the next cumulative hour mark, then the next eligible
+task starts automatically. Earlier partial work counts: 50 minutes tracked
+means 10 minutes remain until the first hour, not another full hour. Start
 resumes a partially tracked turn. Only a task's checkbox marks it complete.
 
 Tracked hours accumulate across days. New tasks start at zero and catch up to
 the preceding task before the next round. For example, totals of **2h, 0h, 2h**
 give the middle task two consecutive one-hour turns. When earlier tracked time
-leaves a fractional gap, a catch-up turn can be shorter than an hour so it
-never overtakes the preceding task. The progress bar uses the actual turn
-duration.
+leaves a fractional gap, a later task is eligible only if its next hour mark
+fits beneath the preceding task's total. Thus 1h 6m, 1h, 0h gives the third
+task a turn, rather than adding six more minutes to the second task. A
+shorter catch-up is allowed when repairing an actual rise in historical or
+reordered totals, so it never overtakes the preceding task. The progress bar
+credits work already tracked toward the current hour.
 
 The web UI shows the current task, remaining turn time, a subtle preview of the
 next task, and each task's cumulative tracked time. Edit changes the title,
@@ -170,7 +175,7 @@ Existing timers checkpoint under their previous calculation before migrating,
 preserving recorded work. Whole-state preference saves cannot overwrite the
 account timer. Guest timers import only into accounts without a timer and
 import paused. Rebuild clients together when deploying a calculation change.
-Tracking requests require the `rotation-v1` protocol; old clients receive an
+Tracking requests require the `rotation-v2` protocol; old clients receive an
 update-required response instead of interpreting the new timer with old rules.
 Previously installed phone builds need a separate native update.
 
