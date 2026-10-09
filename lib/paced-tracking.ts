@@ -1,6 +1,6 @@
 // Frozen deadline-pacing policy, used only to checkpoint pre-rotation timers once.
 import type { Task } from "./types";
-import { compareListOrder } from "./grouping";
+import { compareLegacyListOrder as compareListOrder } from "./grouping";
 import { DEFAULT_PLAN, sanitizePlan, type DayPlan } from "./plan";
 import { DEFAULT_MINIMUM_MINUTES } from "./minimum";
 import * as legacy from "./legacy-tracking";

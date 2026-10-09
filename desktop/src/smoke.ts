@@ -77,6 +77,60 @@ export async function runSmoke({ main, mini, engine, icons, request, tray, stats
   await main.webContents.executeJavaScript("document.querySelector('input[aria-label=\"Reopen Windows smoke test\"]').click()");
   await waitFor("document.querySelectorAll('.completed-tasks .task-title').length === 2 && !document.querySelector('.focus-action').disabled");
   console.log("RETENTION CHECK PASS: expired records deleted, newest completions first, reopening preserved.");
+  // Manual ordering uses real React buttons, guest persistence and native engine
+  // configuration, all within this disposable profile (never a real account).
+  await main.webContents.executeJavaScript(`{
+    const key='yantasks.tasks.v1', tasks=JSON.parse(localStorage.getItem(key));
+    const make=(id,due,offset)=>({id,title:id,description:'',dueDate:due,priority:'low',completed:false,completedAt:null,createdAt:new Date(Date.now()+offset).toISOString()});
+    tasks.push(make('Same-date peer','2099-01-01',1000),make('Newer same-date task','2099-01-01',2000),make('Later due date','2099-01-02',3000));
+    localStorage.setItem(key,JSON.stringify(tasks));
+  }`);
+  main.webContents.reload(); await ready(main);
+  const openTitles = "Array.from(document.querySelectorAll('.task-list[aria-label^=Open] .task-title'),e=>e.textContent)";
+  const button = (title: string, direction: "up" | "down") => `document.querySelector(${JSON.stringify(`button[aria-label="Move ${title} ${direction}"]`)})`;
+  await waitFor(`${button("Newer same-date task", "up")} && !${button("Newer same-date task", "up")}.disabled`);
+  assert.deepEqual(await main.webContents.executeJavaScript(openTitles), ["Windows smoke test", "Same-date peer", "Newer same-date task", "Later due date"]);
+  assert.equal(await main.webContents.executeJavaScript(`${button("Windows smoke test", "up")}.disabled`), true);
+  assert.equal(await main.webContents.executeJavaScript(`${button("Newer same-date task", "down")}.disabled`), true);
+  assert.equal(await main.webContents.executeJavaScript(`!!${button("Later due date", "up")}`), false);
+  assert.equal(await main.webContents.executeJavaScript("document.querySelectorAll('.completed-tasks .task-move').length"), 0);
+  for (const index of [1, 0]) {
+    await main.webContents.executeJavaScript(`${button("Newer same-date task", "up")}.click()`);
+    await waitFor(`(${openTitles})[${index}] === 'Newer same-date task'`);
+  }
+  assert.equal(await main.webContents.executeJavaScript(`${button("Newer same-date task", "up")}.disabled`), true);
+  await main.webContents.executeJavaScript(`${button("Newer same-date task", "down")}.click()`);
+  await waitFor(`(${openTitles})[1] === 'Newer same-date task'`);
+  await waitFor("JSON.parse(localStorage.getItem('yantasks.tasks.v1')).filter(t=>!t.completed)[1]?.id === 'Newer same-date task'");
+  main.webContents.reload(); await ready(main);
+  await waitFor(`(${openTitles})[1] === 'Newer same-date task'`);
+  await waitFor("window.desktop.snapshot().then(v => v.state.tasks.filter(t=>!t.completed)[1]?.id === 'Newer same-date task')");
+  assert.equal(engine.view().state.mode, "idle"); assert.equal(engine.view().state.workMs, 0);
+  // A narrow viewport covers the shared website's touch layout too.
+  const originalBounds = main.getBounds(), originalMinimum = main.getMinimumSize();
+  main.setMinimumSize(360, 550); main.setContentSize(390, 850);
+  await waitFor("innerWidth === 390");
+  await main.webContents.executeJavaScript("document.querySelector('.task-list[aria-label^=Open]').scrollIntoView()");
+  assert.equal(await main.webContents.executeJavaScript("document.documentElement.scrollWidth <= innerWidth"), true);
+  assert.equal(await main.webContents.executeJavaScript("Array.from(document.querySelectorAll('.task-move')).every(b=>b.getBoundingClientRect().width>=44 && b.getBoundingClientRect().height>=44)"), true);
+  if (process.argv.includes("--screenshot")) {
+    const directory = app.getPath("userData");
+    assert.ok(path.basename(directory).startsWith("yantasks-smoke-"));
+    const target = path.join(directory, "task-order-narrow.png");
+    fs.writeFileSync(target, (await main.webContents.capturePage()).toPNG());
+    console.log(`SMOKE SCREENSHOT: ${target}`);
+  }
+  main.setBounds(originalBounds); main.setMinimumSize(originalMinimum[0], originalMinimum[1]);
+  await waitFor("innerWidth >= 740");
+  if (process.argv.includes("--screenshot")) {
+    const directory = app.getPath("userData");
+    assert.ok(path.basename(directory).startsWith("yantasks-smoke-"));
+    const target = path.join(directory, "task-order-desktop.png");
+    fs.writeFileSync(target, (await main.webContents.capturePage()).toPNG());
+    console.log(`SMOKE SCREENSHOT: ${target}`);
+  }
+  await main.webContents.executeJavaScript("scrollTo(0,0)");
+  console.log("TASK ORDER CHECK PASS: same-date controls, date boundaries, reload persistence, engine order and touch layout.");
   assert.deepEqual(await main.webContents.executeJavaScript("Array.from(document.querySelectorAll('.app-footer a'), a => a.href)"),
     ["https://tasks.ethanyanxu.com/support", "https://tasks.ethanyanxu.com/privacy"]);
   await assert.rejects(main.webContents.executeJavaScript("window.desktop.api({path:'https://example.com', method:'GET'})"));

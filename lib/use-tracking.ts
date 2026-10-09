@@ -165,6 +165,10 @@ export function createTrackingHook({ useState, useRef, useEffect, useCallback, u
 
     useEffect(() => {
       if (!projected) return;
+      if (snapshot && projected.state.dayKey !== snapshot.dayKey) {
+        setMessage(null); recovered.current.clear(); seen.current.clear(); lastCheck.current = clock;
+        return;
+      }
       // Keep fractional future boundaries until the aligned display clock reaches them.
       const candidates = new Map([...projected.events, ...recovered.current.values()].map(e => [e.id, e]));
       const fresh = [...candidates.values()].filter(e => !seen.current.has(e.id) && e.at >= lastCheck.current && e.at <= clock);

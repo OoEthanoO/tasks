@@ -192,7 +192,7 @@ const alignmentAdapter = { ...adapter, read: async () => saved, write: async val
 tracker = mount(alignmentAdapter, { tasks, endTime: "18:00" });
 try {
   await tracker.flush();
-  assert.equal(tracker.value.state.rotation.version, 2); assert.equal(tracker.value.remainingWorkMs, 10 * minute);
+  assert.equal(tracker.value.state.rotation.version, 3); assert.equal(tracker.value.remainingWorkMs, 10 * minute);
   assert.equal(tracker.value.state.mode, "idle"); assert.equal(tracker.value.state.workMs, 116 * minute);
   assert.deepEqual(tracker.value.state.rotation.totals, unaligned.rotation.totals); assert.equal(writes, 1);
   await tracker.value.refresh(); await tracker.flush(); assert.equal(writes, 1);
@@ -200,6 +200,35 @@ try {
   await tracker.flush(); assert.equal(writes, 1); assert.equal(tracker.value.remainingWorkMs, 10 * minute);
 } finally { tracker.unmount(); Date.now = realNow; }
 console.log("1 hour-boundary guest upgrade and remount scenario passed");
+
+// A v2 timer can contain prior-day rotation totals even after its daily counter
+// was reset. Migrate without losing work actually tracked today.
+Date.now = () => start;
+const carried = structuredClone(unaligned);
+carried.rotation.version = 2;
+carried.rotation.turn = { taskId: "b", elapsedMs: 50 * minute, durationMs: 60 * minute };
+carried.taskMs = { b: 5 * minute }; carried.workMs = 5 * minute;
+saved = JSON.stringify(carried); writes = 0;
+tracker = mount(alignmentAdapter, { tasks, endTime: "18:00" });
+try {
+  await tracker.flush();
+  assert.equal(writes, 1); assert.equal(tracker.value.state.workMs, 5 * minute);
+  assert.deepEqual(tracker.value.state.rotation.totals, { b: 5 * minute });
+  assert.equal(tracker.value.state.mode, "idle"); assert.equal(tracker.value.remainingWorkMs, 60 * minute);
+  tracker.unmount(); tracker = mount(alignmentAdapter, { tasks, endTime: "18:00" });
+  await tracker.flush(); assert.equal(writes, 1);
+  Date.now = () => start + 24 * 60 * minute;
+  foreground(); await tracker.flush();
+  assert.equal(writes, 2); assert.equal(tracker.value.state.workMs, 0);
+  assert.deepEqual(tracker.value.state.taskMs, {}); assert.deepEqual(tracker.value.state.rotation.totals, {});
+  assert.equal(tracker.value.state.rotation.turn, null); assert.equal(tracker.value.state.mode, "idle");
+  await tracker.value.refresh(); await tracker.flush(); assert.equal(writes, 2);
+  tracker.unmount(); tracker = mount(alignmentAdapter, { tasks, endTime: "18:00" });
+  await tracker.flush(); assert.equal(writes, 2); assert.equal(tracker.value.remainingWorkMs, 60 * minute);
+  await tracker.value.command({ type: "start" }); await tracker.flush();
+  assert.equal(tracker.value.state.taskId, "a"); assert.equal(tracker.value.state.mode, "work");
+} finally { tracker.unmount(); Date.now = realNow; }
+console.log("1 daily guest migration, midnight reset and remount scenario passed");
 
 // Persist the no-borrowing checkpoint without a command, preserving today's
 // work on both the first load and a remount. Tomorrow starts without old debt.
@@ -229,7 +258,7 @@ try {
   tracker = mount(persistentAdapter, { tasks, endTime: "18:00" });
   await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);
-  assert.equal(tracker.value.remainingWorkMs, 30 * minute, "the first task's partial hour stays credited across days");
+  assert.equal(tracker.value.remainingWorkMs, 60 * minute, "the first task starts a fresh hour on the next day");
   assert.equal(tracker.value.state.workMs, 0); assert.equal(tracker.value.state.mode, "idle");
   await tracker.value.command({ type: "reset" }); await tracker.flush();
   assert.equal(JSON.parse(saved).carryMs, undefined);
@@ -348,7 +377,11 @@ for (const scenario of ["poll-first", "tick-first", "midnight", "fractional", "p
     server.revision = 11;
     wallTime = boundary + 100;
     await tracker.value.refresh(); await tracker.flush();
-    const suppressed = ["pause", "reset", "owner", "counter"].includes(scenario);
+    const suppressed = ["pause", "reset", "owner", "counter", "midnight"].includes(scenario);
+    if (scenario === "midnight") {
+      assert.equal(tracker.value.state.mode, "idle"); assert.equal(tracker.value.state.workMs, 0);
+      assert.deepEqual(tracker.value.state.rotation.totals, {}); assert.equal(tracker.value.remainingWorkMs, 60 * minute);
+    }
     assert.equal(notices.length, suppressed || scenario === "fractional" ? 0 : 1, scenario + " after checkpoint");
     wallTime = Math.ceil((boundary + 100) / 1000) * 1000;
     foreground(); await tracker.flush();

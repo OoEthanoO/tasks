@@ -19,6 +19,7 @@ import { AppState, Recommendation, Schedule, Task, User } from "../lib/types";
 import { taskProgress } from "../lib/tracking";
 import { createTaskRetentionHook } from "../lib/use-task-retention";
 import { pruneCompletedTasks } from "../lib/task-retention";
+import { moveTaskWithinDueDate, type TaskMoveDirection } from "../lib/grouping";
 import { DEFAULT_PRIORITY } from "../lib/weights";
 import { useTracking } from "./src/useTracking";
 import AccountSheet from "./src/components/AccountSheet";
@@ -439,6 +440,10 @@ function YanTasks() {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
 
+  const moveTask = useCallback((id: string, direction: TaskMoveDirection) => {
+    setTasks(prev => moveTaskWithinDueDate(prev, id, direction));
+  }, []);
+
   // Notices are informational; they should not pile up.
   useEffect(() => {
     if (!notice) return;
@@ -531,6 +536,7 @@ function YanTasks() {
               activeId={tracker.ready && tracker.state.mode === "work" ? tracker.state.taskId : null}
               onToggle={toggleTask}
               onEdit={setEditing}
+              onMove={moveTask}
             />
           ) : (
             <Text style={s.loading}>Loading…</Text>

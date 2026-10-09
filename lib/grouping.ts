@@ -22,13 +22,34 @@ export function dueBucket(task: Task, today: DateKey): DueBucket {
 }
 
 /**
- * The order tasks appear in the list: nearest due date first, ties broken by
- * creation order so the list never reshuffles under you (and, past that, by
- * saved order, since the sort is stable). The one-hour rotation follows
+ * Nearest due date first. The stable sort preserves saved array order for
+ * same-date tasks, including manual moves. The one-hour rotation follows
  * this exact order. Due dates never change the length of a turn.
  */
 export function compareListOrder(a: Task, b: Task): number {
+  return a.dueDate.localeCompare(b.dueDate);
+}
+
+/** Frozen ordering for checkpointing work accrued under the old algorithms. */
+export function compareLegacyListOrder(a: Task, b: Task): number {
   return a.dueDate.localeCompare(b.dueDate) || a.createdAt.localeCompare(b.createdAt);
+}
+
+export type TaskMoveDirection = "up" | "down";
+
+/** Swap with the adjacent open task of the same date, leaving all data intact. */
+export function moveTaskWithinDueDate(tasks: Task[], id: string, direction: TaskMoveDirection): Task[] {
+  if (direction !== "up" && direction !== "down") return tasks;
+  const from = tasks.findIndex(task => task.id === id && !task.completed);
+  if (from < 0) return tasks;
+  const step = direction === "up" ? -1 : 1;
+  for (let to = from + step; to >= 0 && to < tasks.length; to += step) {
+    if (tasks[to].completed || tasks[to].dueDate !== tasks[from].dueDate) continue;
+    const reordered = [...tasks];
+    [reordered[from], reordered[to]] = [reordered[to], reordered[from]];
+    return reordered;
+  }
+  return tasks;
 }
 
 /** Completion recency, not due date. Missing dates go last; ties stay stable. */
@@ -55,8 +76,8 @@ export type TaskGroup = {
  * agree on what "overdue" means and on the order within a bucket, and a copy
  * in each is a copy that can be fixed in one and not the other.
  *
- * Within a bucket the nearest due date comes first, ties broken by creation
- * order so the list never reshuffles under you. Completed tasks are ordered by
+ * Within a bucket the nearest due date comes first, with saved manual order
+ * deciding ties. Completed tasks are ordered by
  * when they were finished, most recent first, which is the opposite question:
  * you want to see what you just did, not what is most overdue.
  */

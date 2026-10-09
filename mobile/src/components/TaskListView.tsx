@@ -1,6 +1,6 @@
 import { View } from "react-native";
 import { DateKey } from "../../../lib/dates";
-import { groupTasks } from "../../../lib/grouping";
+import { groupTasks, type TaskMoveDirection } from "../../../lib/grouping";
 import { Task } from "../../../lib/types";
 import { TaskProgress } from "../../../lib/tracking";
 import TaskRow from "./TaskRow";
@@ -13,6 +13,7 @@ export default function TaskListView({
   activeId,
   onToggle,
   onEdit,
+  onMove,
 }: {
   entries: TaskProgress[];
   today: DateKey;
@@ -20,6 +21,7 @@ export default function TaskListView({
   activeId: string | null;
   onToggle: (id: string) => void;
   onEdit: (task: Task) => void;
+  onMove: (id: string, direction: TaskMoveDirection) => void;
 }) {
   if (entries.length === 0) {
     return <Empty lines={["No tasks yet.", "Tap + to add your first one."]} />;
@@ -31,7 +33,7 @@ export default function TaskListView({
       {groupTasks(entries, today).map((group) => (
         <View key={group.key}>
           <GroupLabel label={group.label} count={group.items.length} tone={group.tone} />
-          {group.items.map((entry) => (
+          {group.items.map((entry, index) => (
             <TaskRow
               key={entry.task.id}
               task={entry.task}
@@ -40,6 +42,9 @@ export default function TaskListView({
               active={activeId === entry.task.id}
               onToggle={() => onToggle(entry.task.id)}
               onEdit={() => onEdit(entry.task)}
+              canMoveUp={!entry.task.completed && group.items[index - 1]?.task.dueDate === entry.task.dueDate}
+              canMoveDown={!entry.task.completed && group.items[index + 1]?.task.dueDate === entry.task.dueDate}
+              onMove={direction => onMove(entry.task.id, direction)}
             />
           ))}
         </View>

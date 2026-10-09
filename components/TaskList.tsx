@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import { type DateKey, formatDueDate } from "@/lib/dates";
-import { compareCompletedOrder, compareListOrder, dueBucket } from "@/lib/grouping";
+import { compareCompletedOrder, compareListOrder, dueBucket, type TaskMoveDirection } from "@/lib/grouping";
 import type { Task } from "@/lib/types";
 import { type TaskProgress, formatDuration } from "@/lib/tracking";
 
@@ -13,10 +13,12 @@ type Props = {
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (id: string, patch: Partial<Task>) => void;
+  onMove: (id: string, direction: TaskMoveDirection) => void;
 };
 
-export default function TaskList({ entries, today, activeId, onToggle, onDelete, onUpdate }: Props) {
+export default function TaskList({ entries, today, activeId, onToggle, onDelete, onUpdate, onMove }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [moveNotice, setMoveNotice] = useState("");
 
   if (entries.length === 0) {
     return (
@@ -29,7 +31,7 @@ export default function TaskList({ entries, today, activeId, onToggle, onDelete,
 
   const open = entries.filter(entry => !entry.task.completed).sort((a, b) => compareListOrder(a.task, b.task));
   const completed = entries.filter(entry => entry.task.completed).sort((a, b) => compareCompletedOrder(a.task, b.task));
-  const renderEntry = (entry: TaskProgress) => (
+  const renderEntry = (entry: TaskProgress, index: number) => (
     <li key={entry.task.id}>
       {editingId === entry.task.id ? (
         <TaskEditor
@@ -51,6 +53,12 @@ export default function TaskList({ entries, today, activeId, onToggle, onDelete,
           active={activeId === entry.task.id && !entry.task.completed}
           onToggle={() => onToggle(entry.task.id)}
           onEdit={() => setEditingId(entry.task.id)}
+          canMoveUp={!entry.task.completed && open[index - 1]?.task.dueDate === entry.task.dueDate}
+          canMoveDown={!entry.task.completed && open[index + 1]?.task.dueDate === entry.task.dueDate}
+          onMove={direction => {
+            onMove(entry.task.id, direction);
+            setMoveNotice(`Moved ${entry.task.title} ${direction} among tasks due ${formatDueDate(entry.task.dueDate, today)}.`);
+          }}
         />
       )}
     </li>
@@ -58,6 +66,7 @@ export default function TaskList({ entries, today, activeId, onToggle, onDelete,
 
   return (
     <>
+      <span className="sr-only" role="status">{moveNotice}</span>
       {open.length > 0 ? (
         <ul className="task-list" aria-label="Open tasks, ordered by due date">{open.map(renderEntry)}</ul>
       ) : (
@@ -74,12 +83,15 @@ export default function TaskList({ entries, today, activeId, onToggle, onDelete,
   );
 }
 
-function TaskRow({ entry, today, active, onToggle, onEdit }: {
+function TaskRow({ entry, today, active, onToggle, onEdit, canMoveUp, canMoveDown, onMove }: {
   entry: TaskProgress;
   today: DateKey;
   active: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMove: (direction: TaskMoveDirection) => void;
 }) {
   const { task, trackedMs } = entry;
   const bucket = dueBucket(task, today);
@@ -102,13 +114,34 @@ function TaskRow({ entry, today, active, onToggle, onEdit }: {
             {formatDueDate(task.dueDate, today)}
           </time>
           <span className="sep" aria-hidden="true">·</span>
-          <span className="task-total" title="Total tracked across all days">{formatDuration(trackedMs)} tracked</span>
+          <span className="task-total" title="Resets at local midnight">{formatDuration(trackedMs)} tracked today</span>
           {active && <span className="task-current">Tracking</span>}
         </div>
       </div>
-      <button type="button" className="icon-btn" onClick={onEdit} aria-label={`Edit ${task.title}`}>
-        Edit
-      </button>
+      <div className="task-actions">
+        {(canMoveUp || canMoveDown) && (
+          <div className="task-order" role="group" aria-label={`Reorder ${task.title} within its due date`}>
+            {(["up", "down"] as const).map(direction => (
+              <button
+                key={direction}
+                type="button"
+                className="icon-btn task-move"
+                disabled={direction === "up" ? !canMoveUp : !canMoveDown}
+                onClick={() => onMove(direction)}
+                aria-label={`Move ${task.title} ${direction}`}
+                title={`Move ${direction} (same due date)`}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d={direction === "up" ? "M4 10l4-4 4 4" : "M4 6l4 4 4-4"} />
+                </svg>
+              </button>
+            ))}
+          </div>
+        )}
+        <button type="button" className="icon-btn" onClick={onEdit} aria-label={`Edit ${task.title}`}>
+          Edit
+        </button>
+      </div>
     </div>
   );
 }

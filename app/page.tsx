@@ -17,6 +17,7 @@ import { shouldAdoptRemote } from "@/lib/sync";
 import { AppState, Recommendation, Schedule, Task, User } from "@/lib/types";
 import { createTaskRetentionHook } from "@/lib/use-task-retention";
 import { pruneCompletedTasks } from "@/lib/task-retention";
+import { moveTaskWithinDueDate, type TaskMoveDirection } from "@/lib/grouping";
 
 /** Identifies which store the in-memory state belongs to. */
 function storeKey(user: User | null): string {
@@ -437,6 +438,10 @@ export default function Page() {
     setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   }, []);
 
+  const moveTask = useCallback((id: string, direction: TaskMoveDirection) => {
+    setTasks(prev => moveTaskWithinDueDate(prev, id, direction));
+  }, []);
+
   // Global hotkeys. Typing in a field always wins over a shortcut.
   const modalOpen = quickAddOpen || authDialog !== null || helpOpen;
   useEffect(() => {
@@ -545,6 +550,7 @@ export default function Page() {
               onToggle={toggleTask}
               onDelete={deleteTask}
               onUpdate={updateTask}
+              onMove={moveTask}
             />
           ) : (
             <div className="empty">Loading…</div>
@@ -553,7 +559,7 @@ export default function Page() {
           {ready && tasks.length > 0 && (
             <div className="stats">
               <span>
-                Due date order · tracked time carries across days
+                Due date order · tracked time resets at midnight
               </span>
             </div>
           )}

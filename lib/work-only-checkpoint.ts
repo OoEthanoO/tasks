@@ -1,5 +1,5 @@
 import type { TaskProgress, TrackingState } from "./legacy-tracking";
-import { compareListOrder } from "./grouping";
+import { compareLegacyListOrder as compareListOrder } from "./grouping";
 
 /** Attribute an in-flight work-only interval before restoring day/ratio limits.
  * The caller checks the date and clock first. No notifications are replayed.

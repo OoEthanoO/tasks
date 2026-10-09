@@ -9,6 +9,7 @@ import { createTracking as legacyCreate } from "../../lib/legacy-tracking";
 import { createTracking as pacedCreate } from "../../lib/paced-tracking";
 import { TRACKING_UPDATE_REQUIRED } from "../../lib/tracking-protocol";
 import type { Task } from "../../lib/types";
+import { moveTaskWithinDueDate } from "../../lib/grouping";
 import type { DayPlan } from "../../lib/plan";
 import type { ApiReply } from "../src/contract";
 import type { AlertDiagnostic } from "../src/diagnostics";
@@ -91,6 +92,24 @@ test("guest Start runs hourly turns continuously until Pause", async () => {
   assert.equal(statusModel(x.engine.view()).done, false);
 });
 
+test("same-date manual order reaches the desktop picker and preserves paused progress", async () => {
+  const x = setup(); configure(x, [task, second, third]);
+  await x.engine.command({ type: "start" });
+  tickMinutes(x, 10);
+  await x.engine.command({ type: "pause" });
+  const before = x.engine.view().state;
+  configure(x, moveTaskWithinDueDate([task, second, third], "b", "up"));
+  const after = x.engine.view().state;
+  assert.equal(after.mode, "idle");
+  assert.equal(after.workMs, before.workMs);
+  assert.deepEqual(after.rotation?.totals, before.rotation?.totals);
+  assert.equal(statusModel(x.engine.view()).title, "Expo");
+  await x.engine.command({ type: "start" });
+  assert.equal(x.engine.view().state.taskId, "b");
+  assert.equal(statusModel(x.engine.view()).remaining, HOUR);
+  assert.equal(x.notifications.length, 0);
+});
+
 test("new middle tasks catch up in consecutive one-hour turns", async () => {
   const saved = createTracking([task, second, third], "10:01", "UTC", T, PLAN);
   saved.rotation!.totals = { a: 2 * HOUR, b: 0, c: 2 * HOUR };
@@ -133,9 +152,9 @@ test("50 tracked minutes leave 10 on Windows and switch to the untouched task at
   saved.controllerId = "windows_test";
   const x = setup(saved); await x.engine.identity(null); x.engine.tick();
   const view = x.engine.view(), m = statusModel(view);
-  assert.equal(x.written?.rotation?.version, 2); assert.equal(m.remaining, 10 * MIN);
+  assert.equal(x.written?.rotation?.version, 3); assert.equal(m.remaining, 10 * MIN);
   assert.equal(view.state.mode, "idle"); assert.equal(view.state.workMs, saved.workMs);
-  assert.deepEqual(view.state.rotation?.totals, saved.rotation?.totals);
+  assert.deepEqual(view.state.rotation?.totals, saved.taskMs);
   assert.equal(view.state.controllerId, "windows_test"); assert.equal(x.notifications.length, 0);
   const writes = x.writes; x.engine.tick(); assert.equal(x.writes, writes);
   await x.engine.command({ type: "start" }); tickMinutes(x, 10);
@@ -190,17 +209,48 @@ test("sleep resumes the ongoing rotation without replaying old alerts", async ()
   assert.deepEqual(x.engine.view().state.rotation?.totals, { a: HOUR, b: HOUR });
 });
 
-test("midnight resets today's counters while rotation survives desktop restart", async () => {
+test("midnight resets all times and pauses through desktop restart until explicit Start", async () => {
   const midnight = Date.parse("2026-09-16T00:00:00Z");
   const x = setup(taskBoundary(midnight - HOUR), midnight - HOUR); await x.engine.identity(null);
   tickMinutes(x, 60);
   assert.equal(x.written?.workMs, 0); assert.deepEqual(x.written?.taskMs, {});
-  assert.equal(x.written?.mode, "work"); assert.equal(x.written?.taskId, "b");
-  assert.deepEqual(x.written?.rotation?.totals, { a: HOUR });
+  assert.equal(x.written?.mode, "idle"); assert.equal(x.written?.taskId, null);
+  assert.deepEqual(x.written?.rotation?.totals, {}); assert.equal(x.written?.rotation?.turn, null);
+  assert.equal(x.notifications.length, 0); assert.equal(statusModel(x.engine.view()).remaining, HOUR);
   const reopened = setup(x.written, x.now); await reopened.engine.identity(null);
   tickMinutes(reopened, 1);
-  assert.equal(reopened.engine.view().state.workMs, MIN);
-  assert.deepEqual(taskProgress(reopened.engine.view().state).map(p => p.trackedMs), [HOUR, MIN]);
+  assert.equal(reopened.engine.view().state.workMs, 0);
+  assert.deepEqual(taskProgress(reopened.engine.view().state).map(p => p.trackedMs), [0, 0]);
+  await reopened.engine.command({ type: "start" }); tickMinutes(reopened, 1);
+  assert.equal(reopened.engine.view().state.taskId, "a");
+  assert.deepEqual(taskProgress(reopened.engine.view().state).map(p => p.trackedMs), [MIN, 0]);
+});
+
+test("sleep across midnight clears a partial turn and yesterday's in-app notice", async () => {
+  const at = Date.parse("2026-09-15T22:30:00Z");
+  const x = setup(taskBoundary(at), at); await x.engine.identity(null); tickMinutes(x, 60);
+  assert.equal(x.notifications.length, 1); assert.ok(x.engine.view().message);
+  x.now += 8 * HOUR; await x.engine.resume();
+  const view = x.engine.view();
+  assert.equal(view.state.mode, "idle"); assert.equal(view.state.workMs, 0);
+  assert.deepEqual(view.state.rotation?.totals, {}); assert.equal(view.state.rotation?.turn, null);
+  assert.equal(view.message, null); assert.equal(x.notifications.length, 1);
+  assert.equal(statusModel(view).remaining, HOUR); assert.equal(hasLiveCountdown(view.state), false);
+});
+
+test("v2 desktop migration keeps today's work without carrying yesterday into the picker", async () => {
+  const saved = createTracking([task, second], "23:00", "UTC", T, PLAN);
+  saved.rotation!.version = 2; saved.rotation!.totals = { a: 2 * HOUR, b: HOUR + 17 * MIN };
+  saved.rotation!.turn = { taskId: "b", elapsedMs: 17 * MIN, durationMs: HOUR };
+  saved.workMs = 5 * MIN; saved.taskMs = { b: 5 * MIN }; saved.controllerId = "windows_test";
+  const x = setup(saved); await x.engine.identity(null); x.engine.tick();
+  assert.equal(x.writes, 1); assert.equal(x.written?.rotation?.version, 3);
+  assert.equal(x.written?.workMs, 5 * MIN); assert.deepEqual(x.written?.rotation?.totals, { b: 5 * MIN });
+  assert.equal(x.written?.controllerId, saved.controllerId); assert.equal(x.written?.mode, "idle");
+  assert.equal(statusModel(x.engine.view()).remaining, HOUR); assert.equal(x.notifications.length, 0);
+  const reopened = setup(x.written); await reopened.engine.identity(null); reopened.engine.tick();
+  assert.equal(reopened.writes, 0); await reopened.engine.command({ type: "start" });
+  assert.equal(reopened.engine.view().state.taskId, "a");
 });
 
 test("legacy and pacing migrations persist once without losing work, ownership or alert choices", async () => {
@@ -209,7 +259,7 @@ test("legacy and pacing migrations persist once without losing work, ownership o
     Object.assign(saved, { workMs: 45 * MIN, taskMs: { a: 45 * MIN }, controllerId: "windows_test" });
     const x = setup(saved); x.engine.settings = { alerts: false, sound: false, mini: true, launchAtLogin: true };
     await x.engine.identity(null); x.engine.tick();
-    assert.equal(x.written?.rotation?.version, 2); assert.equal(x.written?.pacing, undefined);
+    assert.equal(x.written?.rotation?.version, 3); assert.equal(x.written?.pacing, undefined);
     assert.equal(x.written?.workMs, 45 * MIN); assert.deepEqual(x.written?.rotation?.totals, { a: 45 * MIN });
     assert.equal(x.written?.controllerId, "windows_test");
     assert.deepEqual(x.engine.view().settings, { alerts: false, sound: false, mini: true, launchAtLogin: true });
@@ -220,11 +270,12 @@ test("legacy and pacing migrations persist once without losing work, ownership o
   }
 });
 
-test("legacy reset clears only today's counters and leaves cumulative hours intact", async () => {
+test("manual reset clears today's times and partial turn without changing tasks", async () => {
   const x = setup(); configure(x); await x.engine.command({ type: "start" }); tickMinutes(x, 5);
   await x.engine.command({ type: "reset" });
   assert.equal(x.written?.workMs, 0); assert.equal(x.written?.mode, "idle");
-  assert.deepEqual(x.written?.rotation?.totals, { a: 5 * MIN });
+  assert.deepEqual(x.written?.rotation?.totals, {}); assert.equal(x.written?.rotation?.turn, null);
+  assert.deepEqual(x.written?.tasks, [task]);
 });
 
 test("account timer creation preserves saved compatibility fields", async () => {
@@ -234,7 +285,7 @@ test("account timer creation preserves saved compatibility fields", async () => 
     : { state: { tasks: [task], endTime: "23:00", unweighted: true, minimumEnabled: false, minimumMinutes: 15 } } }));
   await x.engine.identity("user");
   assert.equal(x.engine.view().state.unweighted, true); assert.equal(x.engine.view().state.minimumEnabled, false);
-  assert.equal(x.engine.view().state.minimumMinutes, 15); assert.equal(x.engine.view().state.rotation?.version, 2);
+  assert.equal(x.engine.view().state.minimumMinutes, 15); assert.equal(x.engine.view().state.rotation?.version, 3);
 });
 
 test("sync checkpoints cannot swallow or duplicate boundaries in either timer/refresh ordering", async () => {
@@ -286,14 +337,14 @@ test("guest task edits preserve a due notification with the latest task title", 
   assert.equal(x.notifications.length, 1); assert.match(x.notifications[0].body, /Expo edited/);
 });
 
-test("midnight server checkpoint recovery preserves the alert and cumulative history", async () => {
+test("midnight account checkpoint pauses all clients without a misleading turn notification", async () => {
   const at = Date.parse("2026-09-16T00:00:00Z"), initial = taskBoundary(at - HOUR);
   const fixture = await accountBeforeBoundary(initial, at); const { x } = fixture;
   fixture.remote = { ...advanceTracking(initial, x.now).state, revision: 1 };
   await x.engine.refresh(); x.engine.tick(); await x.engine.refresh();
-  assert.equal(x.notifications.length, 1); assert.equal(x.notifications[0].at, at);
-  assert.equal(x.engine.view().state.workMs, 25);
-  assert.deepEqual(x.engine.view().state.rotation?.totals, { a: HOUR, b: 25 });
+  assert.equal(x.notifications.length, 0); assert.equal(x.engine.view().state.mode, "idle");
+  assert.equal(x.engine.view().state.workMs, 0); assert.equal(x.engine.view().state.rotation?.turn, null);
+  assert.deepEqual(x.engine.view().state.rotation?.totals, {});
 });
 
 test("a server migration checkpoint preserves command sequence, ownership and following hour alerts", async () => {

@@ -1,6 +1,6 @@
 import { Task } from "./types";
 import { isPriority, taskWeight, WeightedTask } from "./weights";
-import { compareListOrder } from "./grouping";
+import { compareLegacyListOrder as compareListOrder } from "./grouping";
 import { DEFAULT_PLAN, DayPlan, samePlan, sanitizePlan } from "./plan";
 import { DEFAULT_MINIMUM_MINUTES, sanitizeMinimumMinutes } from "./minimum";
 import { checkpointCoverage } from "./coverage-checkpoint";

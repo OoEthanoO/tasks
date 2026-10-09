@@ -22,11 +22,12 @@ release should be signed with the project's own code-signing certificate.
   the Start Menu shortcut needed for Windows notification identity.
 - Alerts follow the device that last started, paused or reset tracking, avoiding a
   second set of PC alerts for a timer controlled from the phone or website.
-- Start follows the shared picker in task-list order. Turns switch automatically
-  after one hour; a fractional catch-up turn stops when it reaches its predecessor.
-  Newly added tasks catch up one hour at a time. Rotation continues until you
-  pause or there are no open tasks, including across midnight. Completing or
-  removing the current task switches to the next eligible task.
+- Start follows the shared picker in task-list order. Normal turns end at the
+  next hour mark of today's tracked time; 50 minutes tracked leaves 10 minutes.
+  Newly added tasks catch up one hour at a time. At local midnight, task times
+  and partial turns reset and tracking pauses, including after sleep or restart.
+  Press Start to begin at the top again. Tasks and completion checkboxes are kept.
+  Completing or removing the current task switches to the next eligible task.
 - Quitting does **not** pause an account timer. Pause tracking first if finished.
 
 ### Battery and notification boundaries

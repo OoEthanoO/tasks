@@ -37,9 +37,9 @@ export default function SupportPage() {
           One-hour turns
         </h2>
         <p>Tasks appear by due date, then by when they were created. Press Start to work on the task chosen by the rotation. The timer advances automatically after each hour. Press Pause when you stop working; Start resumes the remaining time in your turn.</p>
-        <p>Each task’s tracked time adds up across days. A new task starts at zero and catches up to the task before it before the next round begins. For example, with totals of 2 hours, 0 hours, and 2 hours in list order, the middle task gets two consecutive one-hour turns. Once they are level, the rotation continues in order.</p>
-        <p>A catch-up turn can be shorter than an hour when older tracked totals leave a fractional gap. The countdown shows that turn’s actual remaining time.</p>
-        <p>Only checking a task’s box marks it complete. Use Edit to change its title, description, or due date, or to delete it. Completed tasks stay in the Completed section with their tracked totals; uncheck one to reopen it.</p>
+        <p>Tracked time is for today only. At midnight in your timer’s time zone, task times and unfinished turns reset and tracking pauses. Press Start the next day to begin at the top again. This also works after the app has been closed or your device has been asleep.</p>
+        <p>A new task starts at zero and catches up to the task before it. For example, with today’s totals of 2 hours, 0 hours, and 2 hours in list order, the middle task gets two consecutive one-hour turns. Normal turns end at the next hour mark: 50 minutes tracked leaves 10 minutes, not another full hour. A shorter catch-up may repair a fractional gap after reordering tasks.</p>
+        <p>The nightly reset never deletes tasks or changes their completion checkboxes. Only checking a task’s box marks it complete. Use Edit to change its title, description, or due date, or to delete it. Completed tasks stay in the Completed section until one month after completion; uncheck one to reopen it.</p>
         <h2 className="card-title" style={{ marginTop: 26 }}>Notifications</h2>
         <p>Use Enable notifications beneath the timer to allow turn alerts. Browser notifications need this page open. Alerts follow the device that last controlled tracking, and your browser or operating system may silence them.</p>
 
@@ -61,7 +61,7 @@ export default function SupportPage() {
         </h2>
         <p>
           You do not need an account. Without one, everything stays on the device you
-          typed it on. Sign in and your tasks, cumulative tracked time, and active timer sync between
+          typed it on. Sign in and your tasks, today’s tracked time, and active timer sync between
           your devices. If you already have tasks on a device and
           sign in to an empty account, you will be asked before anything moves.
         </p>

@@ -10,6 +10,7 @@ const protocol = require("../.test-build/tracking-protocol.js");
 const { setSql, ensureSchema } = require("../.test-build/sql.js");
 const db = require("../.test-build/tracking-db.js");
 const { saveState, loadState } = require("../.test-build/db.js");
+const { moveTaskWithinDueDate } = require("../.test-build/grouping.js");
 const MIN = 60_000, H = 60*MIN, T = Date.parse("2026-10-06T08:00:00Z");
 const PLAN = { startTime:"06:30",workParts:1,idleParts:1 };
 const task=(id,days=0)=>({id,title:id,description:"",dueDate:new Date(T+days*86_400_000).toISOString().slice(0,10),createdAt:new Date(T).toISOString(),priority:"low",completed:false,completedAt:null});
@@ -26,6 +27,7 @@ check("only matching tracking protocols may read or command the new calculation"
  assert.equal(protocol.supportsTrackingProtocol(new Headers()),false);
  assert.equal(protocol.supportsTrackingProtocol(new Headers({[protocol.TRACKING_PROTOCOL_HEADER]:"pacing-v1"})),false);
  assert.equal(protocol.supportsTrackingProtocol(new Headers({[protocol.TRACKING_PROTOCOL_HEADER]:"rotation-v1"})),false);
+ assert.equal(protocol.supportsTrackingProtocol(new Headers({[protocol.TRACKING_PROTOCOL_HEADER]:"rotation-v2"})),false);
  assert.equal(protocol.supportsTrackingProtocol(new Headers({[protocol.TRACKING_PROTOCOL_HEADER]:protocol.TRACKING_PROTOCOL})),true);
 });
 
@@ -94,10 +96,10 @@ const oldFractionalTurn=()=>{
 check("the reported paused snapshot migrates from 15m40s to 9m09s without altering recorded work",()=>{
  const s=oldFractionalTurn(),copy=structuredClone(s),r=tr.advanceTracking(s,T);
  assert.equal(tr.parseTracking(s).rotation.version,1);
- assert.deepEqual(r.state.rotation.totals,s.rotation.totals);assert.deepEqual(r.state.taskMs,s.taskMs);near(r.state.workMs,s.workMs);
+ assert.deepEqual(r.state.rotation.totals,s.taskMs);assert.deepEqual(r.state.taskMs,s.taskMs);near(r.state.workMs,s.workMs);
  assert.equal(r.state.mode,"idle");assert.equal(r.state.taskId,null);assert.equal(r.state.controllerId,"owner");
  near(tr.turnLeftMs(r.state),549608);near(r.state.rotation.turn.elapsedMs,3050392);near(r.state.rotation.turn.durationMs,H);
- assert.deepEqual(r.events,[]);assert.deepEqual(s,copy);assert.equal(r.state.rotation.version,2);
+ assert.deepEqual(r.events,[]);assert.deepEqual(s,copy);assert.equal(r.state.rotation.version,tr.ROTATION_VERSION);
  assert.deepEqual(tr.advanceTracking(r.state,T).state,r.state);
  const resumed=tr.actOnTracking(r.state,{type:"start"},"owner",T+H);
  assert.equal(tr.advanceTracking(resumed,T+H+549608).state.taskId,"c");
@@ -127,10 +129,44 @@ check("date distance and retired priority/settings never change a turn's duratio
  s=tr.advanceTracking(start(s),T+10*H).state;near(s.rotation.totals.a,5*H);near(s.rotation.totals.b,5*H);assert.equal(s.mode,"work");
  assert.equal(tr.trackingConfigKey(list,"08:01",PLAN),tr.trackingConfigKey(list.map(t=>({...t,priority:"medium"})),"01:00",{...PLAN,workParts:15},false,false,0));
 });
-check("picker order exactly matches displayed due-date/creation/stable tie order",()=>{
+check("picker order exactly matches displayed due-date/saved tie order",()=>{
  const a=task("z"),b={...task("a"),createdAt:new Date(T+1000).toISOString()},c={...a,id:"stable-second"};
- const s=fresh([a,c,b]);assert.deepEqual(tr.rotationQueue(s).map(t=>t.id),["z","stable-second","a"]);
- assert.equal(start(s).taskId,"z");
+ const s=fresh([b,c,a]);assert.deepEqual(tr.rotationQueue(s).map(t=>t.id),["a","stable-second","z"]);
+ assert.equal(start(s).taskId,"a");
+});
+check("manual moves reconfigure active and paused turns without losing time or starting paused work",()=>{
+ const list=[task("a"),task("b"),task("c",1)], moved=moveTaskWithinDueDate(list,"b","up");
+ assert.notEqual(tr.trackingConfigKey(list),tr.trackingConfigKey(moved));
+ for(const paused of [false,true]){
+  let s=tr.advanceTracking(start(fresh(list)),T+10*MIN).state;
+  if(paused)s=tr.actOnTracking(s,{type:"pause"},"desktop",s.cursor);
+  const before=structuredClone(s),r=tr.configureTracking(s,moved,"21:30",s.cursor);
+  assert.equal(r.mode,paused?"idle":"work");assert.equal(r.taskId,paused?null:"b");
+  assert.equal(tr.suggestedTask(r).id,"b");near(tr.turnLeftMs(r),H);
+  assert.deepEqual(r.taskMs,before.taskMs);assert.deepEqual(r.rotation.totals,before.rotation.totals);
+  assert.equal(r.workMs,before.workMs);assert.equal(r.controllerId,before.controllerId);assert.deepEqual(s,before);
+  const nextDay=tr.advanceTracking(r,T+24*H).state;
+  assert.deepEqual(tr.rotationQueue(nextDay).map(t=>t.id),["b","a","c"]);
+  assert.equal(start(nextDay).taskId,"b");
+ }
+});
+check("reordering unrelated future turns leaves the current hour intact",()=>{
+ const list=[task("a"),task("b",1),task("c",1)];
+ const s=tr.configureTracking(start(fresh(list)),moveTaskWithinDueDate(list,"c","up"),"21:30",T+17*MIN);
+ assert.equal(s.taskId,"a");near(tr.turnLeftMs(s),43*MIN);
+ assert.equal(tr.advanceTracking(s,T+H).state.taskId,"c");
+});
+check("v1/v2 checkpoints keep historical creation ordering before enabling saved-order turns",()=>{
+ for(const version of [1,2]){
+  const a=task("older"),b={...task("newer"),createdAt:new Date(T+1000).toISOString()};
+  const s=fresh([b,a]);s.rotation.version=version;s.mode="work";s.taskId=a.id;s.controllerId="desktop";
+  s.rotation.turn={taskId:a.id,elapsedMs:0,durationMs:H};
+  assert.deepEqual(tr.rotationQueue(s).map(t=>t.id),["older","newer"]);
+  const r=tr.advanceTracking(s,T+70*MIN).state;
+  assert.deepEqual(r.taskMs,{older:H,newer:10*MIN});assert.deepEqual(r.rotation.totals,r.taskMs);
+  near(r.workMs,70*MIN);assert.equal(r.controllerId,"desktop");
+  assert.deepEqual(tr.rotationQueue(r).map(t=>t.id),["newer","older"]);assert.equal(r.taskId,"newer");
+ }
 });
 check("paused time never becomes work, idle debt or a recommendation",()=>{
  const s=fresh(),r=tr.advanceTracking(s,T+14*86_400_000);
@@ -187,24 +223,42 @@ check("all tasks completed pauses and reopening never restarts work",()=>{
  assert.equal(s.mode,"idle");assert.equal(s.taskId,null);near(s.rotation.totals.a,MIN);assert.equal(tr.canTrackWork(s),false);
  const reopened=tr.configureTracking(s,tasks,"21:30",T+2*MIN);assert.equal(reopened.mode,"idle");
 });
-check("legacy reset clears only daily counters, never accumulated hours",()=>{
+check("manual reset clears the daily rotation without changing tasks",()=>{
  const s=tr.advanceTracking(start(fresh()),T+70*MIN).state;
  const r=tr.actOnTracking(s,{type:"reset"},"phone",T+80*MIN);
- near(r.workMs,0);assert.deepEqual(r.taskMs,{});assert.deepEqual(r.rotation.totals,{a:H,b:20*MIN});assert.equal(r.mode,"idle");near(tr.turnLeftMs(r),40*MIN);
+ near(r.workMs,0);assert.deepEqual(r.taskMs,{});assert.deepEqual(r.rotation.totals,{});assert.equal(r.mode,"idle");near(tr.turnLeftMs(r),H);
+ assert.equal(r.rotation.turn,null);assert.deepEqual(r.tasks,s.tasks);assert.equal(tr.suggestedTask(r).id,"a");
 });
-check("midnight keeps tracking and turn history, resetting only today's statistic",()=>{
+check("local midnight clears times and partial turns, pauses and restarts at the top",()=>{
  const now=Date.parse("2026-10-07T03:50:00Z");
  const s=start(tr.createTracking(tasks,"21:30","America/Toronto",now,PLAN));
- const r=tr.advanceTracking(s,now+20*MIN);assert.equal(r.state.dayKey,"2026-10-07");near(r.state.workMs,10*MIN);
- near(r.state.rotation.totals.a,20*MIN);near(tr.turnLeftMs(r.state),40*MIN);assert.equal(r.state.mode,"work");assert.deepEqual(r.events,[]);
+ const before=tr.advanceTracking(s,now+10*MIN-1).state;near(before.workMs,10*MIN-1);assert.equal(before.mode,"work");
+ for(const elapsed of [10*MIN,20*MIN,7*24*H]){
+  const r=tr.advanceTracking(s,now+elapsed);near(r.state.workMs,0);
+  assert.deepEqual(r.state.taskMs,{});assert.deepEqual(r.state.rotation.totals,{});assert.equal(r.state.rotation.turn,null);
+  near(tr.turnLeftMs(r.state),H);assert.equal(r.state.mode,"idle");assert.equal(r.state.taskId,null);assert.deepEqual(r.events,[]);
+  assert.deepEqual(r.state.tasks,s.tasks);assert.equal(r.state.controllerId,s.controllerId);
+  assert.equal(tr.suggestedTask(r.state).id,"a");assert.ok(tr.taskProgress(r.state).every(p=>p.trackedMs===0));
+  assert.deepEqual(tr.advanceTracking(r.state,r.state.cursor).state,r.state);
+ }
+ const resumed=start(tr.advanceTracking(s,now+20*MIN).state);
+ assert.equal(resumed.taskId,"a");near(tr.advanceTracking(resumed,resumed.cursor+5*MIN).state.workMs,5*MIN);
 });
-check("DST days preserve exact elapsed time and cumulative history",()=>{
+check("paused and closed apps reset on reopening without uncompleting tasks",()=>{
+ const list=[{...tasks[0],completed:true,completedAt:new Date(T).toISOString()},tasks[1],tasks[2]];
+ const paused=tr.actOnTracking(start(fresh(list)),{type:"pause"},"owner",T+17*MIN);
+ const restored=tr.advanceTracking(tr.parseTracking(JSON.parse(JSON.stringify(paused))),T+3*24*H).state;
+ assert.equal(restored.mode,"idle");assert.equal(restored.rotation.turn,null);assert.deepEqual(restored.rotation.totals,{});
+ assert.deepEqual(restored.tasks,list);assert.equal(tr.suggestedTask(restored).id,"b");near(tr.turnLeftMs(restored),H);
+});
+check("DST days preserve exact elapsed work until the correct local midnight",()=>{
  for(const [date,hours]of [["2026-03-08T05:00:00Z",23],["2026-11-01T04:00:00Z",25]]){
   const now=Date.parse(date),s=start(tr.createTracking(tasks,"21:30","America/Toronto",now,PLAN));
   const r=tr.advanceTracking(s,now+hours*H-1000).state;
   near(r.workMs,hours*H-1000);near(Object.values(r.rotation.totals).reduce((a,b)=>a+b,0),r.workMs);
   assert.ok(tr.parseTracking(JSON.parse(JSON.stringify(r))));
-  const midnight=tr.advanceTracking(r,now+hours*H).state;near(midnight.workMs,0);assert.equal(midnight.mode,"work");
+  const midnight=tr.advanceTracking(r,now+hours*H).state;near(midnight.workMs,0);assert.equal(midnight.mode,"idle");
+  assert.deepEqual(midnight.rotation.totals,{});assert.equal(midnight.rotation.turn,null);
  }
 });
 check("one-second ticks and a long projection give the same state and events",()=>{
@@ -214,15 +268,18 @@ check("one-second ticks and a long projection give the same state and events",()
 });
 check("future alerts describe automatic transitions and survive pause/resume",()=>{
  const s=start(fresh()),events=tr.upcomingTrackingEvents(s,T);
- assert.equal(events.length,24);assert.equal(events[0].at,T+H);assert.match(events[0].body,/Now tracking b/);
- assert.deepEqual(events,tr.advanceTracking(s,T+24*H).events);
+ assert.equal(events.length,15);assert.equal(events[0].at,T+H);assert.match(events[0].body,/Now tracking b/);
+ assert.deepEqual(events,tr.advanceTracking(s,T+16*H-1).events);
+ assert.deepEqual(tr.advanceTracking(s,T+16*H).events,[]);
  const paused=tr.actOnTracking(s,{type:"pause"},"desktop",T+10*MIN);assert.deepEqual(tr.upcomingTrackingEvents(paused,T+11*MIN),[]);
  const resumed=tr.actOnTracking(paused,{type:"start"},"desktop",T+H);
  const later=tr.upcomingTrackingEvents(resumed,T+H);assert.equal(later[0].at,T+110*MIN);assert.notEqual(later[0].id,events[0].id);
 });
-check("an expired day setting never blocks tracking and no daily cap exists",()=>{
- const s=start(fresh([task("x",10000)],T+15*H)),r=tr.advanceTracking(s,s.cursor+30*H).state;
- near(r.rotation.totals.x,30*H);assert.equal(r.mode,"work");
+check("retired work windows never block tracking but midnight ends the day",()=>{
+ const s=start(fresh([task("x",10000)],T+15*H)),r=tr.advanceTracking(s,s.cursor+30*MIN).state;
+ near(r.rotation.totals.x,30*MIN);assert.equal(r.mode,"work");
+ const next=tr.advanceTracking(s,s.cursor+30*H).state;
+ assert.deepEqual(next.rotation.totals,{});assert.equal(next.mode,"idle");assert.equal(start(next).taskId,"x");
 });
 check("clock reversal and non-finite clock values cannot mutate or erase work",()=>{
  const s=tr.advanceTracking(start(fresh()),T+10*MIN).state;
@@ -240,7 +297,7 @@ check("special object keys are safe task IDs",()=>{
 });
 check("parser rejects malformed rotation state",()=>{
  const s=start(fresh());
- for(const patch of[{version:3},{commandSeq:-1},{totals:[]},{totals:{a:NaN}},{totals:{a:-1}},{turn:null},{turn:{taskId:"b",elapsedMs:0,durationMs:H}},{turn:{taskId:"a",elapsedMs:H+1,durationMs:H}},{turn:{taskId:"a",elapsedMs:0,durationMs:0}},{turn:{taskId:"a",elapsedMs:0,durationMs:2*H}}])
+ for(const patch of[{version:4},{commandSeq:-1},{totals:[]},{totals:{a:NaN}},{totals:{a:-1}},{turn:null},{turn:{taskId:"b",elapsedMs:0,durationMs:H}},{turn:{taskId:"a",elapsedMs:H+1,durationMs:H}},{turn:{taskId:"a",elapsedMs:0,durationMs:0}},{turn:{taskId:"a",elapsedMs:0,durationMs:2*H}}])
   assert.equal(tr.parseTracking({...s,rotation:{...s.rotation,...patch}}),null);
  assert.deepEqual(tr.parseTracking(JSON.parse(JSON.stringify(s))),s);
 });
@@ -256,20 +313,36 @@ check("500 migrations checkpoint old actual time exactly, never old weighted sco
   const now=T+(60+seed%400)*MIN,copy=structuredClone(s),expected=source.advanceTracking(s,now).state;
   const r=tr.advanceTracking(s,now);
   for(const key of["workMs","taskMs","controllerId","dayKey","cursor","revision"])assert.deepEqual(r.state[key],expected[key],"seed "+seed+" "+key);
-  assert.deepEqual(r.state.rotation.totals,expected.taskMs);assert.equal(r.state.rotation.version,2);assert.equal(r.state.pacing,undefined);
+  assert.deepEqual(r.state.rotation.totals,expected.taskMs);assert.equal(r.state.rotation.version,tr.ROTATION_VERSION);assert.equal(r.state.pacing,undefined);
   assert.deepEqual(r.events,[]);assert.deepEqual(s,copy);assert.deepEqual(tr.advanceTracking(r.state,now).state,r.state);
  }
 });
-check("migration across midnight retains saved actual history rather than virtual service",()=>{
+check("migration across midnight discards yesterday's progress rather than importing it",()=>{
  let s=paced.createTracking(tasks,"21:30","UTC",T,PLAN);s.workMs=95*MIN;s.taskMs={a:95*MIN};s.pacing.service={a:99999*H};
- const r=tr.advanceTracking(s,T+2*86_400_000).state;near(r.workMs,0);near(r.rotation.totals.a,95*MIN);
+ const r=tr.advanceTracking(s,T+2*86_400_000).state;near(r.workMs,0);assert.deepEqual(r.rotation.totals,{});assert.equal(r.mode,"idle");
+});
+check("v2 migration keeps today's time but removes older rotation progress",()=>{
+ for(const working of [false,true]){
+  const s=oldFractionalTurn();s.rotation.version=2;s.taskMs={b:10*MIN};s.workMs=10*MIN;
+  s.rotation.turn={taskId:"b",elapsedMs:s.rotation.totals.b,durationMs:H};
+  s.mode=working?"work":"idle";s.taskId=working?"b":null;
+  const original=structuredClone(s),r=tr.advanceTracking(s,T+5*MIN);
+  assert.deepEqual(s,original);assert.equal(r.state.rotation.version,tr.ROTATION_VERSION);
+  assert.deepEqual(r.state.taskMs,{b:(working?15:10)*MIN});assert.deepEqual(r.state.rotation.totals,r.state.taskMs);
+  near(r.state.workMs,(working?15:10)*MIN);assert.equal(r.state.mode,s.mode);assert.equal(r.state.controllerId,s.controllerId);
+  assert.equal(tr.suggestedTask(r.state).id,"a");assert.deepEqual(r.events,[]);
+  assert.deepEqual(tr.advanceTracking(r.state,r.state.cursor).state,r.state);
+ }
+ const oldDay=oldFractionalTurn();oldDay.rotation.version=2;
+ const next=tr.advanceTracking(oldDay,T+24*H).state;
+ assert.deepEqual(next.rotation.totals,{});assert.deepEqual(next.taskMs,{});assert.equal(next.mode,"idle");near(tr.turnLeftMs(next),H);
 });
 
 console.log("== account synchronization (in-process Postgres) ==");
 const pg=new PGlite();
 setSql({query:async(text,params=[])=>(await pg.query(text,params)).rows,transaction:async statements=>pg.transaction(async tx=>{for(const s of statements)await tx.query(s.text,s.params??[]);})});
 await ensureSchema();
-for(const id of["alice","bob","migration","hour-boundary"])await pg.query("INSERT INTO users(id,username,username_lower,password_hash,created_at) VALUES($1,$1,$1,'test',$2)",[id,new Date(T).toISOString()]);
+for(const id of["alice","bob","migration","hour-boundary","reordering"])await pg.query("INSERT INTO users(id,username,username_lower,password_hash,created_at) VALUES($1,$1,$1,'test',$2)",[id,new Date(T).toISOString()]);
 const prefs={tasks,recommendation:null,schedule:null,endTime:"21:30",plan:PLAN};
 await saveState("alice",prefs);
 let shared=await db.commandTracking("alice",0,{type:"start"},"web","UTC",tasks,"21:30",PLAN,T);
@@ -294,16 +367,47 @@ assert.deepEqual(await db.readAccountTracking("migration",T+71*MIN),migrated);
 await assert.rejects(db.commandTracking("migration",0,{type:"pause"},"stale","UTC",tasks,"21:30",PLAN,T+72*MIN),db.TrackingConflict);count++;
 const active=await db.commandTracking("migration",1,{type:"start"},"owner","UTC",tasks,"21:30",PLAN,T+72*MIN);
 const checkpoint=await db.readAccountTracking("migration",T+24*H);
-assert.equal(checkpoint.mode,"work");assert.equal(checkpoint.rotation.version,2);assert.ok(Object.values(checkpoint.rotation.totals).reduce((a,b)=>a+b,0)>12*H);
+assert.equal(checkpoint.mode,"idle");assert.equal(checkpoint.rotation.version,tr.ROTATION_VERSION);assert.deepEqual(checkpoint.rotation.totals,{});
+assert.equal(checkpoint.rotation.turn,null);assert.deepEqual(checkpoint.taskMs,{});assert.equal(checkpoint.workMs,0);
 assert.deepEqual(await db.readAccountTracking("migration",T+24*H+MIN),checkpoint);count++;
-const remaining=tasks.filter(t=>t.id!==checkpoint.taskId);
+await assert.rejects(db.commandTracking("migration",active.revision,{type:"start"},"stale","UTC",tasks,"21:30",PLAN,T+24*H+MIN),db.TrackingConflict);count++;
+const restarted=await db.commandTracking("migration",checkpoint.revision,{type:"start"},"owner","UTC",tasks,"21:30",PLAN,T+24*H+MIN);
+assert.equal(restarted.taskId,"a");count++;
+const remaining=tasks.filter(t=>t.id!==restarted.taskId);
 await db.configureAccountTracking("migration",remaining,"21:30",PLAN,T+24*H+2*MIN);
-const edited=await db.loadTracking("migration");assert.equal(edited.mode,"work");assert.notEqual(edited.taskId,checkpoint.taskId);assert.equal(edited.controllerId,"owner");count++;
+const edited=await db.loadTracking("migration");assert.equal(edited.mode,"work");assert.notEqual(edited.taskId,restarted.taskId);assert.equal(edited.controllerId,"owner");count++;
 await pg.query("DELETE FROM users WHERE id=$1",["migration"]);assert.equal(await db.loadTracking("migration"),null);count++;
 await pg.query("INSERT INTO tracking(user_id,state) VALUES($1,$2)",["hour-boundary",JSON.stringify(oldFractionalTurn())]);
 const aligned=await db.readAccountTracking("hour-boundary",T);
-assert.equal(aligned.revision,1);assert.equal(aligned.rotation.version,2);near(tr.turnLeftMs(aligned),549608);
-assert.equal(aligned.mode,"idle");assert.deepEqual(aligned.rotation.totals,oldFractionalTurn().rotation.totals);
+assert.equal(aligned.revision,1);assert.equal(aligned.rotation.version,tr.ROTATION_VERSION);near(tr.turnLeftMs(aligned),549608);
+assert.equal(aligned.mode,"idle");assert.deepEqual(aligned.rotation.totals,oldFractionalTurn().taskMs);
 assert.deepEqual(await db.readAccountTracking("hour-boundary",T+MIN),aligned);count++;
+const [webReset,desktopReset]=await Promise.all([
+ db.readAccountTracking("hour-boundary",T+24*H),db.readAccountTracking("hour-boundary",T+24*H)
+]);
+assert.deepEqual(webReset,desktopReset);assert.equal(webReset.revision,aligned.revision+1);
+assert.equal(webReset.mode,"idle");assert.equal(webReset.rotation.turn,null);assert.deepEqual(webReset.rotation.totals,{});
+assert.deepEqual(webReset.tasks,aligned.tasks);assert.deepEqual(await db.readAccountTracking("hour-boundary",T+24*H+MIN),webReset);count++;
+// Saving task array positions is the same account path used by all clients.
+const realNow=Date.now;
+Date.now=()=>T;
+try{
+ const sameDate=[task("first"),{...task("second"),createdAt:new Date(T+1000).toISOString()}];
+ await saveState("reordering",{...prefs,tasks:sameDate});
+ await db.commandTracking("reordering",0,{type:"start"},"desktop","UTC",sameDate,"21:30",PLAN,T);
+ const paused=await db.commandTracking("reordering",1,{type:"pause"},"desktop","UTC",sameDate,"21:30",PLAN,T+10*MIN);
+ const saved=await loadState("reordering"),moved=moveTaskWithinDueDate(saved.tasks,"second","up");
+ Date.now=()=>T+10*MIN;
+ await saveState("reordering",{...saved,tasks:moved});
+ const fromWeb=await loadState("reordering"),fromPhone=await db.readAccountTracking("reordering");
+ assert.deepEqual(fromWeb,{...saved,tasks:moved});assert.deepEqual(fromPhone.tasks,moved);
+ assert.deepEqual(fromPhone.taskMs,paused.taskMs);assert.deepEqual(fromPhone.rotation.totals,paused.rotation.totals);
+ assert.equal(fromPhone.workMs,paused.workMs);assert.equal(fromPhone.mode,"idle");assert.equal(fromPhone.controllerId,"desktop");
+ assert.equal(fromPhone.revision,paused.revision+1);assert.equal(tr.suggestedTask(fromPhone).id,"second");
+ const fromWindows=tr.parseTracking(JSON.parse(JSON.stringify(fromPhone)));
+ assert.deepEqual(tr.rotationQueue(fromWindows).map(t=>t.id),["second","first"]);
+ await assert.rejects(db.commandTracking("reordering",paused.revision,{type:"start"},"stale","UTC",sameDate,"21:30",PLAN,T+10*MIN),db.TrackingConflict);
+ assert.equal(await db.loadTracking("bob"),null);count++;
+}finally{Date.now=realNow;}
 await pg.close();setSql(null);
 console.log(count+" rotation and database scenarios passed (including 150 generated histories and 500 migrations)");

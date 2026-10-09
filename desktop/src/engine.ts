@@ -41,10 +41,11 @@ export class TrackerEngine {
   }
 
   view(): DesktopState {
+    const state = advanceTracking(this.snapshot, this.d.now() + this.offset).state;
     return {
-      state: advanceTracking(this.snapshot, this.d.now() + this.offset).state,
+      state,
       accountId: this.accountId, ready: this.ready, busy: this.busy,
-      error: this.error, message: this.message,
+      error: this.error, message: state.dayKey === this.snapshot.dayKey ? this.message : null,
       connected: !this.accountId || this.d.now() - this.checkedAt < 90_000,
       settings: this.settings,
     };
@@ -123,6 +124,7 @@ export class TrackerEngine {
     const reason = this.suppression(serverNow, previousTick) ?? (ownsAlerts(next, this.controllerId) ? null : "different-controller");
     const recovered = next.cursor > previousTick && next.cursor <= serverNow ? checkpointEvents(this.snapshot, next) : null;
     const events = advanceTracking(next, serverNow).events;
+    if (next.dayKey !== this.snapshot.dayKey) { this.message = null; this.delivered.clear(); }
     this.offset = serverNow - this.d.now();
     this.snapshot = next;
     this.checkedAt = this.d.now(); this.ready = true; this.error = null;
@@ -227,6 +229,7 @@ export class TrackerEngine {
     this.lastTick = now;
     if (!this.ready) { this.publish(); return; }
     const { state, events } = advanceTracking(this.snapshot, now);
+    if (state.dayKey !== this.snapshot.dayKey) { this.message = null; this.delivered.clear(); }
     // No stale flood after sleep/restart, nor misleading alerts after losing
     // contact with another device. Alerts belong to the last controlling device.
     this.deliver(events, previous, now, this.suppression(now, previous), "tick");

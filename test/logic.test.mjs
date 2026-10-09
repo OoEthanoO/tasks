@@ -741,7 +741,7 @@ console.log("== the four task buckets, shared by both apps ==");
     "a completed overdue task files as done, not overdue",
   );
 
-  // Nearest first, ties broken by creation order so the list never reshuffles.
+  // Nearest first, ties keep the saved manual order regardless of creation date.
   eq(
     shape(groupTasks([task("c", 5), task("a", 1), task("b", 3)], today))[0][1],
     ["a", "b", "c"],
@@ -757,8 +757,8 @@ console.log("== the four task buckets, shared by both apps ==");
         today,
       ),
     )[0][1],
-    ["first", "second"],
-    "same due date -> oldest first",
+    ["second", "first"],
+    "same due date -> saved order",
   );
   eq(
     shape(groupTasks([task("older", -1), task("oldest", -9)], today))[0][1],

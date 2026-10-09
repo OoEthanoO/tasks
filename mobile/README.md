@@ -67,15 +67,17 @@ The existing EAS configuration is retained as a manual fallback.
 
 ## Timer alerts
 
-Start picks a task automatically and moves through one-hour turns until Pause.
-Tracked totals carry across days. New tasks begin at zero and catch up in
+Start picks a task automatically and moves through one-hour turns until Pause
+or local midnight. New tasks begin at zero and catch up in
 one-hour turns before the normal ordered rounds resume; totals of 2h, 0h, 2h
-give the middle task two one-hour turns. A fractional catch-up gap gets a shorter
-turn so it cannot exceed the preceding task's total. Pause saves an unfinished
-turn. Tracking continues across midnight; only the daily counter resets.
+give the middle task two one-hour turns. Each normal turn ends at the next
+hour mark of today's tracked time, so 50 minutes tracked leaves 10 minutes.
+Pause saves an unfinished turn within the day. At midnight in the timer's saved
+time zone, all task times and the partial turn reset, and tracking pauses until
+Start is pressed again. Tasks and their completion checkboxes stay unchanged.
 
 Enable alerts directly below the tracker. `expo-notifications` schedules
-upcoming turn changes for the next 24 hours (at most 48 alerts) with iOS. Open the
+upcoming turn changes until midnight (at most 48 alerts) with iOS. Open the
 app after changing tracking on
 another device so iOS can replace any old scheduled alerts. Time itself is
 computed by the shared tracker from timestamps and does not rely on notifications.
